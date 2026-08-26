@@ -498,6 +498,15 @@ def suggest_next(context: str, prefix: str, limit: int = 10) -> dict[str, Any]:
 # must be encoded in chunks and the chunks concatenated (losslessly).
 _CMD_BUDGET = 24000
 
+# Most inputs to hand one ffmpeg call. Every input gets its own decoder with its
+# own reference-frame buffers, so peak memory scales with this number and not
+# with how long the sentence is. Sixty-one at once reached 2.3 GB resident and
+# 26 GB virtual, and the container's memory cap killed it -- an OOM kill, so
+# ffmpeg died without printing anything and the failure looked like nothing at
+# all. Twenty keeps a batch to a few hundred megabytes, which makes the length
+# of a sentence a question of how many batches rather than whether it works.
+_MAX_INPUTS_PER_CALL = 20
+
 
 def _trim(stderr: str, limit: int = 2000) -> str:
     """Keep the beginning and the end of ffmpeg's complaint.
@@ -515,22 +524,31 @@ def _trim(stderr: str, limit: int = 2000) -> str:
 
 
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -> None:
-    """Encode *segments* to *out_path*, splitting into multiple FFmpeg calls
-    when the input args would exceed the Windows command-line limit."""
+    """Encode *segments* to *out_path* in batches, then join them.
+
+    Split on two limits: the command-line length, and the number of inputs one
+    call may open. The second is the one that bounds memory -- see
+    _MAX_INPUTS_PER_CALL.
+    """
     def _say(stage: str, done: int, total: int) -> None:
         if progress:
             progress(stage, done, total)
 
-    # Split into chunks by estimated command-line cost.
+    # Split by command-line cost and by input count, whichever bites first.
     chunks: list[list[dict]] = [[]]
     used = 0
     for seg in segments:
         cost = len(seg["source_file"]) + 40   # "-ss 123.4567 -t 12.3456 -i <path>"
-        if chunks[-1] and used + cost > _CMD_BUDGET:
+        too_long = used + cost > _CMD_BUDGET
+        too_many = len(chunks[-1]) >= _MAX_INPUTS_PER_CALL
+        if chunks[-1] and (too_long or too_many):
             chunks.append([])
             used = 0
         chunks[-1].append(seg)
         used += cost
+
+    if len(chunks) > 1:
+        log.info("  BATCH    %d clips -> %d ffmpeg calls", len(segments), len(chunks))
 
     if len(chunks) == 1:
         _say("encoding", 0, 1)

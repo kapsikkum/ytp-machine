@@ -121,13 +121,20 @@ def _run(job: Job) -> None:
     except RuntimeError as exc:
         detail = str(exc)
         crowded = "temporarily unavailable" in detail or "Too many open files" in detail
-        job.error_kind = "crowded" if crowded else "encoder"
-        job.error = (
-            "Too much at once — that resolved to more clips than the video "
-            "encoder can open in one go. Try a shorter sentence."
-            if crowded else
-            "The video encoder failed on this input."
-        )
+        # An OOM kill leaves nothing behind: ffmpeg dies on a signal without
+        # printing, so the complaint is empty. Reporting "the encoder failed"
+        # for that was true and useless -- an empty error is itself the clue.
+        killed = not detail.split("FFmpeg failed:")[-1].strip()
+        if crowded or killed:
+            job.error_kind = "crowded"
+            job.error = (
+                "Ran out of room part-way through. That usually means the "
+                "sentence produced more clips than one encode can hold — "
+                "try a shorter one."
+            )
+        else:
+            job.error_kind = "encoder"
+            job.error = "The video encoder failed on this input."
         job.status = "error"
         log.error("JOB %s failed: %s", job.id, detail[-500:])
     except Exception as exc:  # noqa: BLE001 -- a worker thread must not die
