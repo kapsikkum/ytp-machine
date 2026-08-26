@@ -930,6 +930,64 @@
   // Mirror the backend tokeniser: strip non-word chars, lowercase.
   const cleanWord = (t) => t.replace(/[^\w]/g, '').toLowerCase();
 
+  // Mirrors _expand_token in app/generate.py, minus the number spelling:
+  // numeric parts are skipped here, exactly as they were before, because they
+  // always expand to ordinary counting words the corpus has.
+  //
+  // Duplicated on purpose. This runs on every keystroke to say how much
+  // splicing is coming, and a round trip per keystroke would cost more than
+  // it is worth. If it drifts from the backend the symptom is a wrong count
+  // on one line -- the video is tokenised server-side and is unaffected.
+  const UNIT_WORDS = {
+    km: 'kilometers', kmh: 'kilometers per hour', kph: 'kilometers per hour',
+    mph: 'miles per hour', kg: 'kilograms', hp: 'horsepower', kw: 'kilowatts',
+    nm: 'newton metres', mm: 'millimeters', cm: 'centimeters', ml: 'millilitres',
+  };
+  const UNITS_AFTER_NUM = {
+    l: 'litres', m: 'meters', g: 'grams', k: 'thousand', t: 'tonnes', s: 'seconds',
+  };
+  const PER_UNITS = {
+    h: 'hour', hr: 'hour', s: 'second', sec: 'second', min: 'minute',
+    km: 'kilometre', '100km': 'hundred kilometers', l: 'litre', kg: 'kilogram', m: 'metre',
+  };
+  const ABBREV = { mk: 'mark' };
+  const STRIP = /^[.,!?;:'"()\[\]]+|[.,!?;:'"()\[\]]+$/g;
+
+  function checkableWords(tok) {
+    const out = [];
+    const rate = tok.replace(STRIP, '').toLowerCase().match(/^([a-z]+)\/(\d*[a-z]+)$/);
+    if (rate && PER_UNITS[rate[2]] && (UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]])) {
+      const top = UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]];
+      return [...top.split(' '), 'per', ...PER_UNITS[rate[2]].split(' ')]
+        .filter(w => !/^\d+$/.test(w));
+    }
+    for (let atom of tok.split(/[/–—-]+/)) {
+      atom = atom.replace(/^[$£€]/, '').replace(/%$/, '').replace(STRIP, '').toLowerCase();
+      if (!atom) continue;
+      if (/^\d+(\.\d+)?$/.test(atom)) continue;          // a number: always expands
+      if (/^\d+(st|nd|rd|th)$/.test(atom)) continue;      // an ordinal: likewise
+      if (/^\d+x\d+$/.test(atom)) { out.push('by'); continue; }   // 4x4 -> four by four
+      if (UNIT_WORDS[atom]) { out.push(...UNIT_WORDS[atom].split(' ')); continue; }
+      if (ABBREV[atom]) { out.push(ABBREV[atom]); continue; }
+      const parts = atom.match(/\d+|[a-z]+/g) || [];
+      if (parts.length > 1) {
+        let afterNum = false;
+        for (const p of parts) {
+          if (/^\d+$/.test(p)) { afterNum = true; continue; }
+          if (UNIT_WORDS[p]) out.push(...UNIT_WORDS[p].split(' '));
+          else if (afterNum && UNITS_AFTER_NUM[p]) out.push(...UNITS_AFTER_NUM[p].split(' '));
+          else if (ABBREV[p]) out.push(ABBREV[p]);
+          else out.push(p);
+          afterNum = false;
+        }
+        continue;
+      }
+      const w = atom.replace(/[^\w]/g, '');
+      if (w) out.push(w);
+    }
+    return out;
+  }
+
   // Split the text before the caret into (context words, partial word, start
   // offset of the partial word) for suggestion queries and acceptance.
   function caretParts() {
@@ -1029,9 +1087,9 @@
     const unknown = [];
     for (const tok of context.split(/\s+/)) {
       if (!tok || /^\*[A-Za-z]+\*$/.test(tok)) continue;   // *noise* tokens
-      const w = cleanWord(tok);
-      if (!w || /^\d+$/.test(w)) continue;                 // digits expand
-      if (!(w in vocab) && !unknown.includes(w)) unknown.push(w);
+      for (const w of checkableWords(tok)) {
+        if (!(w in vocab) && !unknown.includes(w)) unknown.push(w);
+      }
     }
     // Cap what is listed. A paragraph can put several hundred words in here,
     // and printing all of them turned this line into a wall of text that grew
@@ -1089,8 +1147,7 @@
     let unknown = 0;
     if (vocab) {
       for (const tok of words) {
-        const w = cleanWord(tok);
-        if (w && !/^\d+$/.test(w) && !(w in vocab)) unknown++;
+        for (const w of checkableWords(tok)) if (!(w in vocab)) unknown++;
       }
     }
     // Roughly: direct clips are quick, spliced ones are not. Calibrated on the

@@ -158,8 +158,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--skip", type=int, default=0, metavar="N",
-        help="Skip the first N videos of the listing, to resume or to sample "
-             "a different part of the channel.",
+        help="Skip the first N videos of the listing, to sample a different "
+             "part of the channel. Not needed to resume -- videos already in "
+             "the corpus are skipped anyway.",
+    )
+    parser.add_argument(
+        "--reingest", action="store_true",
+        help="Ingest videos even if they are already in this corpus. Adds a "
+             "second copy of their clips rather than replacing them.",
     )
     parser.add_argument(
         "--max-height", type=int, default=None, metavar="PX",
@@ -187,6 +193,27 @@ def main() -> None:
         sys.exit("No videos found matching the criteria.")
 
     total_found = len(videos)
+
+    # Drop anything already in this corpus before counting off skip/limit.
+    #
+    # persist() inserts a source unconditionally, so ingesting a video twice
+    # does not update it -- it adds a second copy of every word clip, and the
+    # corpus quietly doubles the weight of that speaker's material. Counting
+    # positions in the channel listing is no defence either: the listing is
+    # newest-first, so a single upload shifts every index by one and "resume
+    # from 10" silently re-ingests one and skips another.
+    if not args.reingest:
+        from app.database import init_db, get_db
+        init_db()
+        with get_db() as conn:
+            known = {r[0] for r in conn.execute("SELECT video_id FROM sources")}
+        if known:
+            before = len(videos)
+            videos = [v for v in videos if v["id"] not in known]
+            if before != len(videos):
+                print(f"\nSkipping {before - len(videos)} video(s) already in "
+                      f"this corpus (pass --reingest to force).")
+
     if args.skip:
         videos = videos[args.skip:]
     if args.limit is not None:

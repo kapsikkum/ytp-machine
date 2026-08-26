@@ -4,6 +4,7 @@ import re
 import uuid
 import random
 import subprocess
+from functools import lru_cache
 from typing import Any
 
 from app.database import get_db, resolve_path
@@ -265,19 +266,203 @@ def _pick_idle(duration: float) -> dict[str, Any] | None:
 
 # ── Tokeniser ─────────────────────────────────────────────────────────────────
 
+# Units as they are said out loud. Expanding these is not cosmetic: "km" has no
+# CMU pronunciation, so it cannot even be phoneme-spliced -- it can only ever
+# come out missing. "kilometres" can be built from parts even when the corpus
+# has never said the whole word.
+#
+# Australian spellings, because that is what the speaker says and the lookup is
+# against words someone actually spoke.
+_UNITS = {
+    "km": "kilometres", "kmh": "kilometres per hour", "kph": "kilometres per hour",
+    "mph": "miles per hour", "kg": "kilograms", "hp": "horsepower",
+    "kw": "kilowatts", "nm": "newton metres", "mm": "millimetres",
+    "cm": "centimetres", "ml": "millilitres",
+}
+
+# Only expanded when written against a number, because standing alone they are
+# ordinary letters or words: "l" is a letter, "t" is a letter, "m" could be
+# metres or the letter m. "5l" is unambiguous; a bare "l" is not.
+_UNITS_AFTER_NUMBER = {
+    "l": "litres", "m": "metres", "g": "grams",
+    "k": "thousand", "t": "tonnes", "s": "seconds",
+}
+
+# Model-code shorthands that are pronounced as a word rather than as letters.
+_ABBREV = {"mk": "mark"}
+
+# The denominator of a rate, said after "per". Only consulted for a token with
+# a slash in it, so a bare "h" or "s" is never dragged into this.
+_PER_UNITS = {
+    "h": "hour", "hr": "hour", "s": "second", "sec": "second",
+    "min": "minute", "km": "kilometre", "100km": "hundred kilometres",
+    "l": "litre", "kg": "kilogram", "m": "metre",
+}
+
+_CURRENCY = {"$": "dollars", "£": "pounds", "€": "euros"}
+
+
+def _split_words(s: str) -> list[str]:
+    """A spoken phrase into lookup words: no hyphens, no commas."""
+    return [w for w in re.split(r"[\s-]+", s.replace(",", "")) if w]
+
+
+# British spelling -> American, for the endings that differ. Ordered longest
+# first so "-res" is tried before "-re".
+_SPELLING_SWAPS = (("res", "ers"), ("re", "er"), ("our", "or"),
+                   ("ise", "ize"), ("ised", "ized"), ("yse", "yze"))
+
+
+@lru_cache(maxsize=512)
+def _known_spelling(word: str) -> str:
+    """The spelling the pronunciation dictionary actually knows.
+
+    The unit names below are written the way the speaker says them, but the
+    lookup key is the spelling the *transcriber* wrote, and CMU is American.
+    "kilometres" has no pronunciation at all, so expanding "km" to it swapped a
+    missing token for a differently-missing one that could not even be spliced.
+    "kilometers" is in the dictionary -- and, as it turns out, is what Whisper
+    wrote for this corpus, twelve times.
+
+    Only used as a fallback, so a word the dictionary already knows is left
+    exactly as written.
+    """
+    from app.phonemes import word_to_phonemes
+    if word_to_phonemes(word):
+        return word
+    for british, american in _SPELLING_SWAPS:
+        if word.endswith(british):
+            alt = word[: -len(british)] + american
+            if word_to_phonemes(alt):
+                return alt
+    return word
+
+
+def _unit_words(phrase: str) -> list[str]:
+    """A unit's spoken form, each word in a spelling that can be looked up."""
+    return [_known_spelling(w) for w in _split_words(phrase)]
+
+
+def _say_number(n: int, ordinal: bool = False) -> list[str]:
+    from num2words import num2words
+    return _split_words(num2words(n, to="ordinal" if ordinal else "cardinal"))
+
+
+def _expand_atom(atom: str) -> list[str]:
+    """One separator-free token into the words a person would say for it."""
+    if not atom:
+        return []
+
+    out: list[str] = []
+
+    # Currency and percent live outside the word characters, so they have to be
+    # read before anything strips punctuation -- which is exactly how "$50" and
+    # "50%" both used to come out as a bare "fifty", quietly losing the unit.
+    suffix: list[str] = []
+    if atom[0] in _CURRENCY:
+        suffix.append(_CURRENCY[atom[0]])
+        atom = atom[1:]
+    if atom.endswith("%"):
+        suffix.append("percent")
+        atom = atom[:-1]
+
+    atom = atom.strip(".,!?;:'\"()[]").lower()
+    if not atom:
+        return suffix
+
+    # Thousands separators, before anything treats the comma as a boundary:
+    # "1,500" split into "1" and "500" and said "one five hundred".
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+", atom):
+        atom = atom.replace(",", "")
+
+    # 2.0 -> two point zero. Stripping punctuation first turned this into "20"
+    # and said "twenty" -- not a miss but a wrong answer, which is worse.
+    # The trailing unit is part of the same match because "3.5l" is the way an
+    # engine size is actually written, and matching only a bare decimal sent it
+    # down the letters-and-digits path, which dropped the "point".
+    m = re.fullmatch(r"(\d+)\.(\d+)([a-z]+)?", atom)
+    if m:
+        out += _say_number(int(m.group(1))) + ["point"]
+        for digit in m.group(2):
+            out += _say_number(int(digit))
+        unit = m.group(3)
+        if unit:
+            out += _unit_words(_UNITS.get(unit)
+                                or _UNITS_AFTER_NUMBER.get(unit)
+                                or unit)
+        return out + suffix
+
+    # 1st, 2nd, 21st
+    m = re.fullmatch(r"(\d+)(?:st|nd|rd|th)", atom)
+    if m:
+        return _say_number(int(m.group(1)), ordinal=True) + suffix
+
+    # 4x4 is said "four by four", not "four x four".
+    m = re.fullmatch(r"(\d+)x(\d+)", atom)
+    if m:
+        return (_say_number(int(m.group(1))) + ["by"]
+                + _say_number(int(m.group(2))) + suffix)
+
+    if atom.isdigit():
+        return _say_number(int(atom)) + suffix
+
+    if atom in _UNITS:
+        return _unit_words(_UNITS[atom]) + suffix
+
+    if atom in _ABBREV:
+        return [_ABBREV[atom]] + suffix
+
+    # Letters and digits run together: i30, v8, mk2, 50km, 330i. Said as their
+    # parts, so they are looked up as their parts. Left whole, a token like
+    # "i30" matches nothing and has no pronunciation to splice from either.
+    parts = re.findall(r"\d+|[a-z]+", atom)
+    if len(parts) > 1:
+        after_number = False
+        for part in parts:
+            if part.isdigit():
+                out += _say_number(int(part))
+                after_number = True
+                continue
+            if part in _UNITS:
+                out += _unit_words(_UNITS[part])
+            elif after_number and part in _UNITS_AFTER_NUMBER:
+                out += _unit_words(_UNITS_AFTER_NUMBER[part])
+            elif part in _ABBREV:
+                out.append(_ABBREV[part])
+            else:
+                out.append(part)
+            after_number = False
+        return out + suffix
+
+    return [re.sub(r"[^\w]", "", atom)] + suffix if re.sub(r"[^\w]", "", atom) else suffix
+
+
 def _expand_token(token: str) -> list[str]:
     """Return one or more lowercase words for a single input token.
-    Numbers are converted to their spoken-word equivalents."""
-    clean = re.sub(r"[^\w]", "", token).lower()
-    if not clean:
-        return []
-    if clean.isdigit():
-        from num2words import num2words
-        spoken = num2words(int(clean))
-        # "forty-two" → ["forty", "two"]  |  "one thousand" stays split
-        spoken = spoken.replace("-", " ").replace(",", "")
-        return [w for w in re.split(r"\s+", spoken.strip()) if w]
-    return [clean]
+
+    Hyphens and slashes separate words rather than disappearing: stripping them
+    joined "four-cylinder" into "fourcylinder", a word nobody has ever said, so
+    every hyphenated compound was a guaranteed miss.
+    """
+    # A rate: km/h, l/100km. Both halves are units and the slash is the word
+    # "per", so it has to be read before the generic split, which would
+    # otherwise leave the denominator as a bare letter nobody has ever said.
+    # Deliberately narrow -- only when both sides are known units -- because
+    # a slash is not always "per", and "and/or" is not "and per or".
+    m = re.fullmatch(r"([a-z]+)/(\d*[a-z]+)", token.strip(".,!?;:").lower())
+    if m and m.group(2) in _PER_UNITS:
+        # The numerator may be a single letter -- "l/100km" is the standard way
+        # fuel economy is written -- so both unit maps are in play here. A
+        # slash makes it a unit unambiguously, which a bare "l" would not be.
+        top = _UNITS.get(m.group(1)) or _UNITS_AFTER_NUMBER.get(m.group(1))
+        if top:
+            return (_unit_words(top) + ["per"]
+                    + _unit_words(_PER_UNITS[m.group(2)]))
+
+    out: list[str] = []
+    for atom in re.split(r"[/\-–—]+", token):
+        out.extend(_expand_atom(atom))
+    return out
 
 
 def tokenize(text: str) -> list[str]:
@@ -299,7 +484,9 @@ def tokenize_marked(text: str) -> list[tuple[str, bool, bool]]:
     for token in re.split(r"\s+", text.strip()):
         if not token:
             continue
-        ends = bool(re.search(r"[.!?]", token))
+        # Trailing only. Any period anywhere used to end a sentence, so "2.0"
+        # planted a full stop -- and its pause -- in the middle of a phrase.
+        ends = bool(re.search(r"[.!?][\"')\]]*$", token))
         m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
         if m:
             out.append((m.group(1).lower(), ends, True))

@@ -25,6 +25,14 @@ jobs:
       - name: Corpus tool is runnable
         run: python scripts/corpus.py --help
 
+      - name: Tokeniser
+        # The tokeniser decides which words get looked up, so a mistake in it
+        # is either a word reported missing that the corpus has, or a different
+        # word said confidently -- and only the first of those is visible.
+        run: |
+          pip install num2words nltk
+          python tests/test_tokenize.py
+
   image:
     # Only publish from the default branch: a pull request should prove the
     # image builds without also pushing a tag anyone could pull by accident.
