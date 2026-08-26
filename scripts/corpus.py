@@ -130,7 +130,19 @@ def _open_write(path: str):
 
 def _open_read(path: str):
     if path.endswith(".zst"):
-        import zstandard
+        try:
+            import zstandard
+        except ImportError:
+            # _open_write quietly falls back to gzip when zstandard is absent,
+            # so it is entirely possible to build a bundle on one machine and
+            # be unable to open it on another. Say which, rather than letting a
+            # bare ModuleNotFoundError surface from inside a container start.
+            raise SystemExit(
+                f"cannot read {os.path.basename(path)}: zstandard is not "
+                f"installed here.\n"
+                f"  pip install zstandard\n"
+                f"  (or re-pack as .tar.gz, which needs nothing extra)"
+            ) from None
 
         dctx = zstandard.ZstdDecompressor()
         raw = open(path, "rb")
