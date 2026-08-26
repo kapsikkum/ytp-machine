@@ -87,6 +87,25 @@ _OVERRIDES = {
     # use one of those whole clips — no cuts, and it already sounds right.
     "sex": ["S", "IH", "K", "S"],
     "shhhh": ["SH"],                  # the long shush in Harrybo's Grandad
+
+    # Australian and workshop vocabulary. CMU is an American dictionary, so
+    # none of these are in it -- and a word with no pronunciation cannot be
+    # spliced at all, however many of its sounds the corpus happens to hold.
+    # They were simply unsayable, which for a channel with a video called
+    # "Dodgy Bogan Exhaust Repairs" is a real gap rather than a nicety.
+    #
+    # This makes a splice possible, not certain: the corpus still has to
+    # contain the sounds.
+    "ute":       ["Y", "UW", "T"],
+    "utes":      ["Y", "UW", "T", "S"],
+    "dyno":      ["D", "AY", "N", "OW"],
+    "esky":      ["EH", "S", "K", "IY"],
+    "tradie":    ["T", "R", "EY", "D", "IY"],
+    "dodgy":     ["D", "AA", "JH", "IY"],
+    "donk":      ["D", "AA", "NG", "K"],
+    "knackered": ["N", "AE", "K", "ER", "D"],
+    "shonky":    ["SH", "AA", "NG", "K", "IY"],
+    "bodgy":     ["B", "AA", "JH", "IY"],
 }
 
 
