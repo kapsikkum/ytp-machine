@@ -11,10 +11,19 @@ Usage:
 import argparse
 import os
 import re
+import subprocess
 import sys
 
 # Make project root importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# See the note in ingest_channel.py: a redirected stdout on Windows is cp1252,
+# and this prints transcribed words, which are not promised to be Latin-1.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:
+        pass
 
 from app.database import init_db, get_db
 
@@ -33,15 +42,28 @@ def _ydl_base_opts(cookies_from_browser: str | None) -> dict:
 
 
 def download_video(
-    url: str, download_dir: str, cookies_from_browser: str | None = None
+    url: str, download_dir: str, cookies_from_browser: str | None = None,
+    max_height: int | None = None,
 ) -> tuple[str, str, str]:
-    """Return (absolute_file_path, video_id, title)."""
+    """Return (absolute_file_path, video_id, title).
+
+    *max_height* caps the rendition fetched. The corpus is stored at 480x270
+    (see normalise_video), so pulling a 1080p master only to throw the pixels
+    away costs bandwidth and a slower transcode for nothing.
+    """
     import yt_dlp
+
+    if max_height:
+        fmt = (f"bestvideo[ext=mp4][height<={max_height}]+bestaudio[ext=m4a]/"
+               f"best[ext=mp4][height<={max_height}]/"
+               f"best[height<={max_height}]/best[ext=mp4]/best")
+    else:
+        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
     ydl_opts = {
         **_ydl_base_opts(cookies_from_browser),
         "outtmpl": os.path.join(download_dir, "%(id)s.%(ext)s"),
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": fmt,
         "merge_output_format": "mp4",
         "quiet": False,
         "no_warnings": False,
@@ -59,9 +81,77 @@ def download_video(
     return file_path, video_id, title
 
 
+# ── Normalisation ─────────────────────────────────────────────────────────────
+
+# The shape every corpus video is stored in. app/generate.py puts every clip
+# through scale=480:270 unconditionally, so this is the format the generator
+# wants anyway -- storing it is just doing that work once at ingest instead of
+# on every clip of every generation.
+CORPUS_WIDTH, CORPUS_HEIGHT, CORPUS_FPS = 480, 270, 25
+
+# A keyframe every second. Cuts are word-length, and -ss seeks to a keyframe
+# and decodes forward from there; with the sparse GOPs a 13-minute YouTube
+# upload ships with, that forward decode is most of the cost of extracting a
+# half-second clip. Denser keyframes cost a little size and make every
+# subsequent cut cheap.
+CORPUS_GOP = 25
+
+# Quality point for the stored video. The picture is a thumbnail and the audio
+# is the entire point of the project, so the video is compressed hard and the
+# audio is not.
+#
+# libx264 rather than the GPU encoder, despite CUDA being right there: measured
+# on a 9-minute source, NVENC at comparable quality produced 48 MB against
+# libx264's 21 MB. Encoding is not the bottleneck -- transcription is, and it
+# has the GPU -- so the smaller file wins, and a corpus that has to be shipped
+# to a server is worth less than half the bytes.
+CORPUS_CRF = "28"
+CORPUS_AUDIO_BITRATE = "96k"
+
+
+def normalise_video(path: str) -> str:
+    """Re-encode in place to the corpus format. Returns the path.
+
+    Two reasons this is worth a pass. Size: a corpus travels as one bundle and
+    ships to a server, and 480x270 is roughly a tenth of the 480p rendition
+    YouTube serves. Memory: the generator hands ffmpeg one input per clip, up
+    to twenty per call, and every one of those is a live decoder -- at 1080p
+    that many decoders is what put the container over its memory cap before.
+    Storing small keeps the encode budget the one it was tuned against.
+    """
+    tmp = os.path.splitext(path)[0] + ".norm.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path,
+        "-vf", f"scale={CORPUS_WIDTH}:{CORPUS_HEIGHT}:force_original_aspect_ratio=decrease,"
+               f"pad={CORPUS_WIDTH}:{CORPUS_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
+               f"fps={CORPUS_FPS},setsar=1",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", CORPUS_CRF,
+        "-g", str(CORPUS_GOP), "-keyint_min", str(CORPUS_GOP),
+        "-c:a", "aac", "-b:a", CORPUS_AUDIO_BITRATE, "-ar", "44100", "-ac", "2",
+        "-movflags", "+faststart", tmp,
+    ]
+    before = os.path.getsize(path)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.exists(tmp):
+        # Not fatal: an un-normalised video still transcribes and still cuts,
+        # it is just bigger and slower. Better a working corpus than none.
+        print(f"  WARNING: normalise failed, keeping the original\n"
+              f"    {(result.stderr or '').strip()[-300:]}")
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return path
+
+    os.replace(tmp, path)
+    after = os.path.getsize(path)
+    print(f"  Normalised to {CORPUS_WIDTH}x{CORPUS_HEIGHT} {CORPUS_FPS}fps "
+          f"({before / 1e6:.0f} MB -> {after / 1e6:.0f} MB)")
+    return path
+
+
 # ── Transcription ─────────────────────────────────────────────────────────────
 
-def transcribe(video_path: str, model_name: str = "base") -> list[dict]:
+def transcribe(video_path: str, model_name: str = "base",
+               device: str | None = None) -> list[dict]:
     """
     Transcribe with stable-whisper for accurate word-level timestamps.
 
@@ -69,9 +159,11 @@ def transcribe(video_path: str, model_name: str = "base") -> list[dict]:
     attention patterns, giving ~50ms accuracy vs ~200ms for plain Whisper.
     """
     import stable_whisper
+    from app.device import get as get_device, describe
 
-    print(f"  Loading stable-whisper model '{model_name}' …")
-    model = stable_whisper.load_model(model_name)
+    dev = get_device(device)
+    print(f"  Loading stable-whisper model '{model_name}' on {describe(dev)} …")
+    model = stable_whisper.load_model(model_name, device=dev)
 
     print(f"  Transcribing {os.path.basename(video_path)} …")
     result = model.transcribe(video_path, word_timestamps=True)
@@ -147,13 +239,29 @@ def persist(
 
 # ── Main entry ────────────────────────────────────────────────────────────────
 
+def _default_download_dir() -> str:
+    """downloads/ inside whichever corpus is active.
+
+    Not "downloads" relative to the working directory: with more than one
+    corpus installed that path belongs to none of them in particular, and an
+    ingest run from the wrong directory would file its videos where the
+    database it just wrote could never find them.
+    """
+    from app.database import active
+    return os.path.join(active()["dir"], "downloads")
+
+
 def ingest(
     input_path: str,
-    download_dir: str = "downloads",
+    download_dir: str | None = None,
     model_name: str = "base",
     cookies_from_browser: str | None = None,
+    device: str | None = None,
+    max_height: int | None = None,
+    normalise: bool = False,
 ) -> None:
     init_db()
+    download_dir = download_dir or _default_download_dir()
     os.makedirs(download_dir, exist_ok=True)
 
     is_url = input_path.startswith("http://") or input_path.startswith("https://")
@@ -161,9 +269,11 @@ def ingest(
     if is_url:
         print(f"Downloading: {input_path}")
         source_file, video_id, title = download_video(
-            input_path, download_dir, cookies_from_browser
+            input_path, download_dir, cookies_from_browser, max_height
         )
         url: str | None = input_path
+        if normalise:
+            source_file = normalise_video(source_file)
     else:
         source_file = os.path.abspath(input_path)
         if not os.path.exists(source_file):
@@ -171,10 +281,18 @@ def ingest(
         video_id = os.path.splitext(os.path.basename(source_file))[0]
         title = video_id
         url = None
+        if normalise:
+            # Into the corpus first. normalise_video rewrites in place, and in
+            # place here would mean overwriting the file the user pointed at.
+            import shutil
+            copy = os.path.join(download_dir, f"{video_id}.mp4")
+            if os.path.abspath(copy) != source_file:
+                shutil.copy2(source_file, copy)
+            source_file = normalise_video(os.path.abspath(copy))
 
     print(f"Source file : {source_file}")
 
-    words = transcribe(source_file, model_name)
+    words = transcribe(source_file, model_name, device)
     print(f"  Found {len(words)} word timestamps")
 
     count = persist(video_id, source_file, title, url, words)
@@ -197,9 +315,10 @@ def main() -> None:
     parser.add_argument("input", help="YouTube URL or path to a local video file")
     parser.add_argument(
         "--download-dir",
-        default="downloads",
+        default=None,
         metavar="DIR",
-        help="Directory for downloaded videos (default: downloads/)",
+        help="Directory for downloaded videos (default: downloads/ inside the "
+             "active corpus)",
     )
     parser.add_argument(
         "--model",
@@ -215,9 +334,23 @@ def main() -> None:
              "(e.g. chrome, firefox, edge, chromium). "
              "The browser must be installed and logged in to YouTube.",
     )
+    parser.add_argument(
+        "--max-height", type=int, default=None, metavar="PX",
+        help="Cap the rendition downloaded (e.g. 480). Pointless above the "
+             "corpus format unless you are keeping the originals.",
+    )
+    parser.add_argument(
+        "--normalise", "--normalize", action="store_true", dest="normalise",
+        help=f"Re-encode to the corpus format ({CORPUS_WIDTH}x{CORPUS_HEIGHT} "
+             f"{CORPUS_FPS}fps) after download. Much smaller bundles and "
+             f"cheaper generation; recommended for any new corpus.",
+    )
+    from app.device import add_argument as _device_arg
+    _device_arg(parser)
     args = parser.parse_args()
 
-    ingest(args.input, args.download_dir, args.model, args.cookies_from_browser)
+    ingest(args.input, args.download_dir, args.model, args.cookies_from_browser,
+           args.device, args.max_height, args.normalise)
     print("Done.")
 
 

@@ -28,17 +28,54 @@ _SR = 16000
 _model = None
 _labels = None
 _DICT = None
+_device = "cpu"
+
+# How much audio goes through the model at once. Wav2Vec2 emits a frame per
+# 20ms and attends over all of them, so cost grows with the square of this
+# number: 40s is ~2,000 frames, which is comfortable on a laptop GPU and still
+# gives the aligner plenty of context either side of every word.
+_WINDOW_SECONDS = 40.0
+
+# Extra audio at each end of a window, so a word sitting on the boundary is not
+# asked to align against a sound that has been cut in half.
+_WINDOW_PAD = 0.5
 
 
-def _load_model():
-    global _model, _labels, _DICT
+def _group_words(words: list[dict], window: float) -> list[list[int]]:
+    """Word indices split into windows of at most *window* seconds.
+
+    Whole words only: a word split across two windows would be aligned twice
+    against two half-sounds and land worse than the timestamp it started with.
+    """
+    groups: list[list[int]] = []
+    current: list[int] = []
+    start = 0.0
+    for i, w in enumerate(words):
+        if not current:
+            current, start = [i], w["start_time"]
+        elif w["end_time"] - start > window:
+            groups.append(current)
+            current, start = [i], w["start_time"]
+        else:
+            current.append(i)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _load_model(device: str | None = None):
+    global _model, _labels, _DICT, _device
     if _model is not None:
         return
     import torchaudio
+    from app.device import get as get_device, describe
+
     bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
-    _model = bundle.get_model()
+    _device = get_device(device)
+    _model = bundle.get_model().to(_device)
     _labels = bundle.get_labels()
     _DICT = {c: i for i, c in enumerate(_labels)}
+    print(f"  aligner on {describe(_device)}")
 
 
 def _load_wav(path):
@@ -70,39 +107,68 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                    capture_output=True)
     wav = _load_wav(tmp)
     try:
-        with torch.inference_mode():
-            emission, _ = _model(wav)
+        # Aligned a window at a time, not a source at a time.
+        #
+        # This used to push the entire source through Wav2Vec2 in one forward
+        # pass, which worked only because the original corpus was 22-second
+        # poetry clips. Self-attention is quadratic in sequence length, and the
+        # model emits a frame per 20ms: a 22-second clip is ~1,100 frames and
+        # costs nothing, but a 13-minute video is ~39,000, and the attention
+        # matrix alone would be over a billion entries. Long-form sources did
+        # not align slowly, they died allocating -- on the GPU and on the CPU
+        # both. Windowing makes the cost linear in length instead of quadratic.
+        #
+        # Words are never split across a window, and each window is padded so a
+        # word at the edge still has its surrounding audio to align against.
+        fa: list[tuple[float, float] | None] = [None] * len(words)
+        groups = _group_words(words, _WINDOW_SECONDS)
+        total_samples = wav.size(1)
 
-        # Flatten all words' characters; remember each word's char range.
-        chars: list[int] = []
-        ranges: list[tuple[int, int] | None] = []
-        for w in words:
-            cw = [_DICT[c] for c in w["word"].upper() if c in _DICT]
-            if not cw:
-                ranges.append(None)
+        for group in groups:
+            first, last = words[group[0]], words[group[-1]]
+            w_start = max(0.0, first["start_time"] - _WINDOW_PAD)
+            w_end = last["end_time"] + _WINDOW_PAD
+            s0 = max(0, int(w_start * _SR))
+            s1 = min(total_samples, int(w_end * _SR))
+            if s1 - s0 < _SR // 10:       # under 100ms of audio, nothing to do
                 continue
-            s = len(chars)
-            chars.extend(cw)
-            ranges.append((s, len(chars)))
+            segment = wav[:, s0:s1].to(_device)
 
-        if not chars or emission.size(1) <= len(chars):
-            return (0, len(words), 0.0)  # too short to align safely
+            # Flatten this window's characters; remember each word's range.
+            chars: list[int] = []
+            ranges: list[tuple[int, int] | None] = []
+            for idx in group:
+                cw = [_DICT[c] for c in words[idx]["word"].upper() if c in _DICT]
+                if not cw:
+                    ranges.append(None)
+                    continue
+                s = len(chars)
+                chars.extend(cw)
+                ranges.append((s, len(chars)))
+            if not chars:
+                continue
 
-        targets = torch.tensor([chars], dtype=torch.int32)
-        aligned, scores = torchaudio.functional.forced_align(emission, targets, blank=0)
-        spans = merge_tokens(aligned[0], scores[0])
-        if len(spans) != len(chars):
-            return (0, len(words), 0.0)  # index mismatch — skip for safety
+            with torch.inference_mode():
+                emission, _ = _model(segment)
+            if emission.size(1) <= len(chars):
+                continue                   # too short to align safely
 
-        ratio = wav.size(1) / emission.size(1) / _SR
+            targets = torch.tensor([chars], dtype=torch.int32, device=emission.device)
+            aligned, scores = torchaudio.functional.forced_align(emission, targets, blank=0)
+            spans = merge_tokens(aligned[0].cpu(), scores[0].cpu())
+            if len(spans) != len(chars):
+                continue                   # index mismatch — skip this window
 
-        # FA onset/core-offset per word (None where the word had no usable chars)
-        fa: list[tuple[float, float] | None] = []
-        for rng in ranges:
-            if rng is None:
-                fa.append(None)
-            else:
-                fa.append((spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio))
+            ratio = segment.size(1) / emission.size(1) / _SR
+            # Window-relative back to source-relative.
+            for idx, rng in zip(group, ranges):
+                if rng is None:
+                    continue
+                fa[idx] = (w_start + spans[rng[0]].start * ratio,
+                           w_start + spans[rng[1] - 1].end * ratio)
+
+        if not any(f is not None for f in fa):
+            return (0, len(words), 0.0)
 
         updates = []
         shifts = []
@@ -139,16 +205,23 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
 
 
 def main() -> None:
+    global _WINDOW_SECONDS
     ap = argparse.ArgumentParser()
     ap.add_argument("--source-id", type=int)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--start-from-id", type=int)
     ap.add_argument("--end-at-id", type=int)
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--window", type=float, default=_WINDOW_SECONDS, metavar="SEC",
+                    help=f"Seconds of audio aligned at once (default "
+                         f"{_WINDOW_SECONDS:g}). Lower it if you run out of memory.")
+    from app.device import add_argument as _device_arg
+    _device_arg(ap)
     args = ap.parse_args()
+    _WINDOW_SECONDS = args.window
 
     init_db()
-    _load_model()
+    _load_model(args.device)
 
     with get_db() as conn:
         if args.source_id is not None:

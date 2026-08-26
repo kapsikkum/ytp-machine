@@ -20,13 +20,23 @@ mkdir -p "$DATA/output" "$DATA/corpora"
 SEED_DIR="$DATA/corpora/${CORPUS_NAME:-michael-rosen}"
 
 seed() {
-  # A loose corpus mounted at /corpus wins: that is what a clone of this repo
-  # has, since the database and the videos are committed and a single packed
-  # bundle is not (103 MB, and GitHub refuses anything over 100).
-  if [ -f /corpus/michael_rosen.db ]; then
+  # A loose corpus directory mounted at /corpus wins: that is what a clone of
+  # this repo has, since the database and the videos are committed and a single
+  # packed bundle is not (103 MB, and GitHub refuses anything over 100).
+  #
+  # corpus.db is the name every corpus uses now; michael_rosen.db is accepted
+  # so a volume seeded from an older checkout still works.
+  SRC_DB=""
+  if [ -f /corpus/corpus.db ]; then
+    SRC_DB=/corpus/corpus.db
+  elif [ -f /corpus/michael_rosen.db ]; then
+    SRC_DB=/corpus/michael_rosen.db
+  fi
+
+  if [ -n "$SRC_DB" ]; then
     echo "seeding corpus into $SEED_DIR from the files mounted at /corpus"
     mkdir -p "$SEED_DIR/downloads"
-    cp /corpus/michael_rosen.db "$SEED_DIR/corpus.db"
+    cp "$SRC_DB" "$SEED_DIR/corpus.db"
     # Written as `if` rather than `[ -d x ] && cp ...` on purpose: under set -e
     # a bare test-and-command list that fails its test returns non-zero as a
     # statement, and the script exits. A missing transcripts directory would
@@ -90,6 +100,13 @@ have_corpus() {
 
 case "${1:-serve}" in
   serve)
+    # Fold any legacy loose install into corpora/<name>/ before looking for a
+    # corpus, so a volume created by an older image comes up in the same shape
+    # as a fresh one. No-op once done, and a no-op on a volume that never had
+    # the old layout, so it costs nothing to run every start.
+    python /app/scripts/corpus.py migrate --apply --quiet \
+      --name "${CORPUS_NAME:-michael-rosen}" || echo "  migration skipped"
+
     # Only serving needs a corpus. Requiring one to run anything at all meant
     # `podman run ... python somescript.py` died before it started, which is
     # exactly the situation where you are trying to build or repair a corpus.

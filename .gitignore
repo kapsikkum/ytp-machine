@@ -9,8 +9,11 @@ venv/
 # clone is a working install. Not as a single tarball -- that comes to 103 MB
 # and GitHub refuses any file over 100 MB. As 49 loose files none of which
 # exceeds 9 MB, it goes in fine.
-michael_rosen.db-wal
-michael_rosen.db-shm
+#
+# SQLite's sidecar files are per-corpus and are pure runtime state; the
+# checkpointed .db beside them holds everything they do.
+corpora/*/*.db-wal
+corpora/*/*.db-shm
 
 # Generated videos stay out: ~1 GB, and every one is reproducible in seconds.
 output/

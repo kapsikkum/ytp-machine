@@ -14,11 +14,10 @@ services:
       - "8765:8765"
     volumes:
       - ytp-data:/app/data
-      # Seeds an empty volume and is ignored once the database exists, so it is
-      # safe to leave mounted. A packed bundle in corpus/ works here too.
-      - ./michael_rosen.db:/corpus/michael_rosen.db:ro
-      - ./downloads:/corpus/downloads:ro
-      - ./transcripts:/corpus/transcripts:ro
+      # Seeds an empty volume and is ignored once a corpus exists, so it is
+      # safe to leave mounted. One corpus directory, mounted whole -- a packed
+      # bundle dropped in here works the same way.
+      - ./corpora/michael-rosen:/corpus:ro
       # Drop more bundles in packs/ to add voices. Each is installed as a
       # corpus named after the file, once, and selectable in the UI.
       - ./packs:/packs:ro

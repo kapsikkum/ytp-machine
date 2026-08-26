@@ -39,6 +39,25 @@ _noise_by_word:       dict[str, list[dict[str, Any]]] = {}  # "click"/"spew"/…
 _all_noises:          list[dict[str, Any]] = []  # every noise clip (for the "noise" token)
 _splice_scores:       dict[tuple[str, int], int] | None = None  # (word, clip_id) → user score
 
+# How a vote bends the odds. Each net vote multiplies or divides a clip's
+# selection weight by this, so one downvote makes a clip half as likely, three
+# make it eight times less likely, and the same in reverse for upvotes.
+_VOTE_BASE = 2.0
+
+# A downvoted clip is never ruled out entirely, only starved: when it is the
+# only clip a word has, a quiet 50:1 outsider still beats reporting the word
+# missing. Upvotes saturate so one enthusiastic clip cannot crowd out the
+# variety that makes repeated generations differ.
+_VOTE_FLOOR = 0.02
+_VOTE_CEIL = 8.0
+
+
+def _vote_weight(score: int) -> float:
+    """A net vote count as a multiplier on a clip's chance of being picked."""
+    if not score:
+        return 1.0
+    return min(_VOTE_CEIL, max(_VOTE_FLOOR, _VOTE_BASE ** score))
+
 
 def _ensure_cache() -> None:
     """Build all lookup structures from the DB in a single pass.
@@ -162,12 +181,18 @@ def invalidate_cache() -> None:
 
 
 def _penalty_for(word: str) -> dict[int, int]:
-    """clip_id → penalty magnitude (downvotes) for splicing *word*.  Only
-    down-rated clips (score < 0) appear; clean clips are omitted."""
+    """clip_id → cost adjustment for splicing *word*; unvoted clips are omitted.
+
+    Positive means avoid (downvotes), negative means prefer (upvotes) — the
+    splice planner adds this straight into a candidate's cost, so an upvoted
+    clip becomes cheaper by the same amount a downvoted one becomes dearer.
+    Upvotes used to be dropped here, which meant they were recorded, reported
+    back to the user, and then had no effect on anything.
+    """
     _ensure_cache()
     word = word.lower()
     return {cid: -score for (w, cid), score in (_splice_scores or {}).items()
-            if w == word and score < 0}
+            if w == word and score}
 
 
 def rate_splice(word: str, clip_ids: list[int], delta: int = -1) -> dict[str, int]:
@@ -181,11 +206,20 @@ def rate_splice(word: str, clip_ids: list[int], delta: int = -1) -> dict[str, in
         return {}
     with get_db() as conn:
         for cid in ids:
-            conn.execute(
-                "INSERT INTO splice_ratings (word, clip_id, score) VALUES (?, ?, ?) "
-                "ON CONFLICT(word, clip_id) DO UPDATE SET score = score + ?",
-                (word, cid, delta, delta),
-            )
+            if delta == 0:
+                # An explicit "unvote": back to neutral in one step, rather than
+                # leaving the caller to guess how many votes it takes to undo.
+                conn.execute(
+                    "INSERT INTO splice_ratings (word, clip_id, score) VALUES (?, ?, 0) "
+                    "ON CONFLICT(word, clip_id) DO UPDATE SET score = 0",
+                    (word, cid),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO splice_ratings (word, clip_id, score) VALUES (?, ?, ?) "
+                    "ON CONFLICT(word, clip_id) DO UPDATE SET score = score + ?",
+                    (word, cid, delta, delta),
+                )
         new = {cid: conn.execute(
             "SELECT score FROM splice_ratings WHERE word=? AND clip_id=?",
             (word, cid)).fetchone()[0] for cid in ids}
@@ -331,11 +365,20 @@ def pick_clip(rows: list[dict], word: str) -> dict[str, Any] | None:
         # Bias toward well-aligned sources (quality**3) and away from clips whose
         # next word is a vowel butted right up against this one ("hot air"),
         # which bleeds — but still allow them if that's all there is.
+        # User votes are folded in here rather than as a filter, so that a clip
+        # you disliked becomes rare instead of forbidden. The old behaviour only
+        # applied to phoneme splices, which is why a merely bad *found* clip
+        # kept coming back no matter how often it was rated down.
+        scores = _splice_scores or {}
+        key = word.lower()
         weights = []
         for r in good:
             w = _source_quality.get(r["source_id"], 1.0) ** 3 if _source_quality else 1.0
             if r.get("bleed_risk"):
                 w *= 0.05
+            cid = r.get("id")
+            if cid is not None:
+                w *= _vote_weight(scores.get((key, int(cid)), 0))
             weights.append(max(w, 1e-6))
         if sum(weights) > 0:
             return random.choices(good, weights=weights, k=1)[0]
@@ -802,7 +845,18 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                 segments.append(merged)
                 found.extend(words[i:i + cap])
                 runs.append(merged["word"])
-                tokens.extend({"word": w, "status": "run"} for w in words[i:i + cap])
+                # Each word of the run carries its own clip id rather than the
+                # run's, so a vote lands on the (word, clip) pair the selector
+                # actually looks up. A merged run inherits the id of its first
+                # word, so rating "the run" would have silently rated one clip
+                # under a multi-word key nothing ever reads back.
+                _seq = _ordered_by_source[src]           # type: ignore[index]
+                tokens.extend(
+                    {"word": w, "status": "run",
+                     "clips": ([int(_seq[s + k]["id"])]
+                               if _seq[s + k].get("id") is not None else [])}
+                    for k, w in enumerate(words[i:i + cap])
+                )
                 fname = merged["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
                 log.info("  RUN      %-22s  %d words  (%s)", merged["word"], cap, fname)
                 last_idx = i + cap - 1
@@ -814,7 +868,10 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
             clip = _find_clip(word, cbw)   # noises only via explicit *word* tokens
             if clip:
                 found.append(word)
-                tokens.append({"word": word, "status": "found"})
+                tokens.append({
+                    "word": word, "status": "found",
+                    "clips": ([int(clip["id"])] if clip.get("id") is not None else []),
+                })
                 segments.append(clip)
                 fname = clip["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
                 log.info("  FOUND    %-14s  %.3f->%.3f  (%s)",

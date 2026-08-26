@@ -50,10 +50,25 @@ python -m uvicorn main:app --port 8765
 
 # The corpus
 
-The database and the source videos are one unit: the database stores clip
-timings that point at files in `downloads/`, so neither is much use alone. The
-Michael Rosen corpus is about 110 MB — 48 videos, ~9,500 word clips, ~1,400
-distinct words.
+A corpus is one voice: a directory holding one database and the videos that
+database indexes.
+
+```
+corpora/michael-rosen/corpus.db      timings: this word, this file, 4.12s–4.61s
+corpora/michael-rosen/downloads/     the videos those timings point into
+corpora/michael-rosen/transcripts/   true text, where there is any
+```
+
+The two halves are one unit — the database stores only timings, so on its own
+it points at files that are not there, and the videos alone are just videos.
+That is why a corpus always moves as a whole. Every corpus has the same shape
+and its own `downloads/`, so any number of them sit side by side without
+colliding. The Michael Rosen corpus is about 110 MB — 48 videos, ~9,500 word
+clips, ~1,400 distinct words.
+
+Paths inside are stored relative to the corpus directory, never absolute, which
+is what makes a corpus portable: copy the directory anywhere and the clips
+still resolve.
 
 It is **not in git**. Those are binary blobs that never delta-compress, so
 committing them would put the whole lot in every clone's history permanently and
@@ -63,10 +78,10 @@ transcripts.
 
 ## Getting the existing Michael Rosen corpus
 
-It is already here. `michael_rosen.db` and `downloads/` are committed, so a
-clone is a working install and `docker compose up` needs nothing else — compose
-mounts them read-only at `/corpus` and the entrypoint copies them into the
-volume the first time it finds no database.
+It is already here. `corpora/michael-rosen/` is committed, so a clone is a
+working install and `docker compose up` needs nothing else — compose mounts the
+directory read-only at `/corpus` and the entrypoint copies it into the volume
+the first time it finds no corpus.
 
 It is committed as loose files rather than one packed bundle for a dull reason:
 the bundle is 103 MB and GitHub refuses any single file over 100 MB. As 49 files
@@ -95,6 +110,27 @@ reproducible in seconds.
 Any speaker with a decent amount of clear, single-voice footage will work. The
 more distinct words, the fewer phoneme splices are needed and the better it
 sounds.
+
+**Use a GPU if you have one.** Building a corpus is the only expensive thing
+here, and all of the cost is transcription and alignment. Every script takes
+`--device auto|cuda|cpu` (or `$MRS_DEVICE`), defaulting to `auto` — CUDA when
+there is a usable one, CPU otherwise. On an RTX 3070 Ti, transcription runs at
+about 10× realtime against roughly 1× on the CPU, which is the difference
+between an afternoon and a week for a large channel.
+
+The catch is that `requirements.txt` installs the **CPU** build of torch on
+purpose: the container is headless and a CUDA build drags in gigabytes of
+driver payload it would never use. So a GPU ingest wants its own environment:
+
+```bash
+python -m venv .venv-cuda
+.venv-cuda/bin/pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
+.venv-cuda/bin/pip install -r requirements.txt
+```
+
+On Windows, put that environment somewhere OneDrive does not sync — the sync
+engine locks DLLs mid-install and torch fails to load with a `WinError 32`
+naming a file that looks entirely innocent.
 
 **1. Ingest.** One video, a local file, or a whole channel:
 
@@ -182,7 +218,7 @@ without a restart.
 
 ## Paths are stored portably
 
-Clip paths are stored relative to the project root with forward slashes.
+Clip paths are stored relative to the corpus directory with forward slashes.
 `os.path.join` on Windows writes `downloads\clip.mp4`, which on Linux is not a
 directory and a file but a single filename containing a backslash — every lookup
 misses and nothing generates. `app/database.py` normalises on read and on write,
@@ -228,15 +264,37 @@ main.py                       FastAPI app; serves the API, the frontend and outp
 app/generate.py               sentence -> clips -> ffmpeg
 app/phonemes.py               CMU pronunciations, phoneme-level splice planning
 app/forced_align.py           torchaudio CTC alignment for sub-word timings
-app/database.py               SQLite schema and portable path handling
+app/database.py               SQLite schema, corpus selection, portable paths
+app/device.py                 CPU or CUDA, chosen once for every model
 scripts/ingest.py             download, transcribe, store word clips
 scripts/ingest_channel.py     the same, for a whole channel
 scripts/realign.py            better word timestamps via stable-ts
 scripts/refine_boundaries.py  frame-accurate boundaries via CTC alignment
 scripts/correct.py            relabel misheard words from a real transcript
 scripts/find_noises.py        pull non-verbal noises out of the gaps
-scripts/corpus.py             pack / unpack / inspect a corpus bundle
+scripts/corpus.py             pack / unpack / migrate / inspect a corpus
+corpora/<name>/               one voice: corpus.db + downloads/ + transcripts/
+packs/                        drop bundles here to install them on next start
 ```
+
+## Upgrading an install made before the corpora/ layout
+
+Older installs kept the database loose in the data directory with `downloads/`
+beside it. That still works and is still read, but it is the one corpus that
+cannot sit next to another, since there is only one `downloads/` to go round.
+
+The container migrates itself on start, so a redeploy is enough. To do it by
+hand, or to see what it would do first:
+
+```bash
+python scripts/corpus.py migrate            # report only
+python scripts/corpus.py migrate --apply    # move it into corpora/michael-rosen/
+```
+
+It moves rather than copies, so a 100 MB `downloads/` is never briefly
+duplicated, and it is a no-op once done. If you pinned `MRS_CORPUS=default`,
+change it to the migrated name — `default` was never really a setting, it was
+the name the code gave to the old layout.
 
 ## Source material
 

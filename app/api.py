@@ -24,7 +24,7 @@ class CorpusRequest(BaseModel):
 class RateRequest(BaseModel):
     word: str
     clips: list[int]
-    rating: int = -1   # < 0 down-vote, > 0 up-vote (undo)
+    rating: int = -1   # < 0 down-vote, > 0 up-vote, 0 clears the vote
 
 
 @router.post("/generate")
@@ -111,17 +111,27 @@ def queue_stats():
 
 @router.post("/rate")
 def rate(req: RateRequest):
-    """Record feedback on a phoneme splice.  A down-vote makes the splicer avoid
-    the clips that built this splice for this word next time (unless it has no
-    other option)."""
+    """Record feedback on the clips behind a word, however it was made.
+
+    Applies to found clips and runs as well as phoneme splices: a vote shifts
+    how likely those clips are to be chosen for this word next time, rather
+    than ruling them in or out. rating 0 clears an earlier vote.
+    """
     word = req.word.strip().lower()
     if not word or not req.clips:
         raise HTTPException(status_code=400, detail="word and clips are required")
-    from app.generate import rate_splice
-    delta = 1 if req.rating > 0 else -1
+    from app.generate import rate_splice, _vote_weight
+    delta = 0 if req.rating == 0 else (1 if req.rating > 0 else -1)
     scores = rate_splice(word, req.clips, delta)
     log.info("RATE  %s  clips=%s  delta=%+d  -> %s", word, req.clips, delta, scores)
-    return {"status": "ok", "word": word, "scores": scores}
+    return {
+        "status": "ok",
+        "word": word,
+        "scores": scores,
+        # What the vote actually did, so the UI can say so rather than implying
+        # a downvote banned the clip.
+        "weights": {str(cid): round(_vote_weight(s), 3) for cid, s in scores.items()},
+    }
 
 
 @router.post("/reload")

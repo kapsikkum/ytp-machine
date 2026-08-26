@@ -73,10 +73,16 @@ def active() -> dict:
     if _active is None:
         available = list_corpora()
         if not available:
-            # Nothing installed. Point at the legacy path so init_db() can
-            # create an empty database rather than raising on import.
-            _active = {"slug": "default", "name": "Default",
-                       "dir": os.path.dirname(LEGACY_DB) or ".", "db": LEGACY_DB}
+            # Nothing installed yet, so this is where the first corpus gets
+            # laid out. It goes in the modern one-directory-per-corpus form:
+            # pointing a fresh install at the legacy loose path meant the very
+            # first ingest recreated the layout everything else is migrating
+            # away from, and it would need migrating again immediately.
+            slug = _slugify(os.environ.get("MRS_CORPUS") or "default")
+            directory = os.path.join(CORPORA_DIR, slug)
+            _active = {"slug": slug, "name": slug.replace("-", " ").title(),
+                       "dir": directory,
+                       "db": os.path.join(directory, "corpus.db")}
         else:
             # Order of preference: what MRS_CORPUS asks for, then the legacy
             # "default" corpus, then whatever sorts first. Without the middle
@@ -140,7 +146,11 @@ def relativize_path(p: str) -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(active()["db"])
+    target = active()["db"]
+    # sqlite will not create a missing parent, and reports it as the same
+    # "unable to open database file" it gives for a permissions problem.
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    conn = sqlite3.connect(target)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

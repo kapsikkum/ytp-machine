@@ -15,6 +15,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# A redirected stdout on Windows encodes as the locale codepage (cp1252), not
+# UTF-8, and this script prints box rules and whatever titles a channel happens
+# to use. Piping an ingest to a log file -- the obvious thing to do with a run
+# that takes hours -- therefore died on the first character outside Latin-1,
+# before a single video had been fetched.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:
+        pass
+
 from scripts.ingest import ingest
 
 
@@ -81,19 +92,27 @@ def list_channel_videos(
     if raw and isinstance(raw[0], dict) and "entries" in raw[0]:
         raw = raw[0].get("entries") or []
 
-    all_ids = [e["id"] for e in raw if e and e.get("id")]
+    entries = [e for e in raw if e and e.get("id")]
+    all_ids = [e["id"] for e in entries]
     print(f"Found {len(all_ids)} videos in channel listing.")
 
     if not all_ids:
         return []
 
     if year is None:
+        # The flat listing already carries titles and durations, so use them.
+        # Discarding them meant every progress line of a long unfiltered run
+        # printed an empty title, which is precisely the run where you need to
+        # know which video is being worked on.
         return [
             {
-                "id": vid_id, "title": "", "upload_date": "",
-                "url": f"https://www.youtube.com/watch?v={vid_id}",
+                "id": e["id"],
+                "title": e.get("title") or e["id"],
+                "upload_date": "",
+                "duration": e.get("duration"),
+                "url": f"https://www.youtube.com/watch?v={e['id']}",
             }
-            for vid_id in all_ids
+            for e in entries
         ]
 
     # Need upload dates — sequential requests avoid bot-detection
@@ -129,7 +148,29 @@ def main() -> None:
         help="Whisper model size (default: base)",
     )
     parser.add_argument("--skip-errors", action="store_true", help="Continue on per-video failures")
-    parser.add_argument("--download-dir", default="downloads", metavar="DIR")
+    parser.add_argument("--download-dir", default=None, metavar="DIR",
+                        help="Directory for downloaded videos (default: "
+                             "downloads/ inside the active corpus)")
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Ingest at most N videos. Vocabulary saturates long before a big "
+             "channel runs out, so this is usually what you want.",
+    )
+    parser.add_argument(
+        "--skip", type=int, default=0, metavar="N",
+        help="Skip the first N videos of the listing, to resume or to sample "
+             "a different part of the channel.",
+    )
+    parser.add_argument(
+        "--max-height", type=int, default=None, metavar="PX",
+        help="Cap the rendition downloaded (e.g. 480).",
+    )
+    parser.add_argument(
+        "--normalise", "--normalize", action="store_true", dest="normalise",
+        help="Re-encode each video to the corpus format after download.",
+    )
+    from app.device import add_argument as _device_arg
+    _device_arg(parser)
     parser.add_argument(
         "--cookies-from-browser",
         default=None,
@@ -144,6 +185,17 @@ def main() -> None:
 
     if not videos:
         sys.exit("No videos found matching the criteria.")
+
+    total_found = len(videos)
+    if args.skip:
+        videos = videos[args.skip:]
+    if args.limit is not None:
+        videos = videos[:args.limit]
+    if not videos:
+        sys.exit(f"--skip {args.skip} leaves nothing of {total_found} videos.")
+    if len(videos) != total_found:
+        print(f"\nSelected {len(videos)} of {total_found} videos "
+              f"(skip={args.skip}, limit={args.limit}).")
 
     print(f"\nFound {len(videos)} video(s):\n")
     for v in videos:
@@ -163,6 +215,9 @@ def main() -> None:
                 download_dir=args.download_dir,
                 model_name=args.model,
                 cookies_from_browser=args.cookies_from_browser,
+                device=args.device,
+                max_height=args.max_height,
+                normalise=args.normalise,
             )
             ok += 1
         except Exception as exc:

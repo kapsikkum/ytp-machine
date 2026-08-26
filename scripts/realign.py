@@ -21,13 +21,17 @@ from app.database import init_db, get_db
 from scripts.ingest import transcribe
 
 
-def realign_source(source: dict, model_name: str) -> int:
+def realign_source(source: dict, model_name: str, device: str | None = None) -> int:
     """Replace word_clips for one source. Returns number of new clips stored."""
-    source_file = source["source_file"]
+    from app.database import resolve_path
+    # Stored paths are relative to the corpus directory, not to wherever this
+    # was run from -- without resolving, every source looks missing as soon as
+    # the corpus is not the current directory.
+    source_file = resolve_path(source["source_file"])
     if not os.path.exists(source_file):
         raise FileNotFoundError(f"Download not found: {source_file}")
 
-    words = transcribe(source_file, model_name)
+    words = transcribe(source_file, model_name, device)
     print(f"  {len(words)} words transcribed")
 
     with get_db() as conn:
@@ -58,6 +62,8 @@ def main() -> None:
                         metavar="N", help="Stop after source id N (inclusive)")
     parser.add_argument("--skip-errors", action="store_true",
                         help="Continue if one source fails")
+    from app.device import add_argument as _device_arg
+    _device_arg(parser)
     args = parser.parse_args()
 
     init_db()
@@ -91,7 +97,7 @@ def main() -> None:
         print(f"\n[{i}/{len(sources)}] {s['title'] or s['video_id']}")
         print(f"  {s['source_file']}")
         try:
-            n = realign_source(s, args.model)
+            n = realign_source(s, args.model, args.device)
             print(f"  OK stored {n} clips")
             ok += 1
         except Exception as exc:

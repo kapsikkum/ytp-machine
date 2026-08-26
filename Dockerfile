@@ -50,14 +50,17 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # The corpus lives in a volume, not the image: it is ~110 MB of mp4 that
 # changes on its own schedule, and baking it in would mean rebuilding the whole
-# image to add one video. /app/downloads and /app/output are symlinks into that
-# volume because the database stores clip paths relative to the project root
-# and main.py mounts ./output as static files -- both expect those names here.
+# image to add one video. /app/output is a symlink into that volume because
+# main.py mounts ./output as static files and expects that name here.
+#
+# There is deliberately no /app/downloads symlink any more. Clip paths are
+# stored relative to the corpus directory rather than the project root, so
+# there is no single downloads/ to point at -- each corpus has its own, and
+# resolving through a shared symlink is exactly the collision the per-corpus
+# layout exists to prevent.
 ENV MRS_DATA_DIR=/app/data \
-    MRS_DB_PATH=/app/data/michael_rosen.db \
     PORT=8765
 RUN mkdir -p /app/data \
- && ln -s /app/data/downloads /app/downloads \
  && ln -s /app/data/output    /app/output \
  && ln -s /app/data/app.log   /app/app.log
 

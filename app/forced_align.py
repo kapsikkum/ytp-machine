@@ -26,21 +26,29 @@ _SR = 16000
 _model = None
 _labels: tuple[str, ...] | None = None
 _dict: dict[str, int] | None = None
+_device: str = "cpu"
 
 
 def _ensure_model() -> bool:
     """Load the alignment model once.  Returns False if unavailable."""
-    global _model, _labels, _dict
+    global _model, _labels, _dict, _device
     if _model is not None:
         return True
     try:
         import torch  # noqa: F401
         import torchaudio
+        from app.device import get as _get_device, describe as _describe
+
         bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
-        _model = bundle.get_model()
+        _device = _get_device()
+        # This pass is the long one when building a corpus -- one Wav2Vec2
+        # forward per word clip, and a corpus is tens of thousands of them --
+        # so leaving the model on the CPU was quietly costing hours.
+        _model = bundle.get_model().to(_device)
         _labels = bundle.get_labels()
         _dict = {c: i for i, c in enumerate(_labels)}
-        log.info("  forced-aligner loaded (%d labels)", len(_labels))
+        log.info("  forced-aligner loaded (%d labels) on %s",
+                 len(_labels), _describe(_device))
         return True
     except Exception as exc:  # pragma: no cover
         log.warning("  forced-aligner unavailable: %s", exc)
@@ -101,14 +109,17 @@ def _align(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
              "-i", resolve_path(clip["source_file"]), "-ac", "1", "-ar", str(_SR), tmp],
             capture_output=True,
         )
-        wav = _load_wav_mono16k(tmp)
+        wav = _load_wav_mono16k(tmp).to(_device)
         with torch.inference_mode():
             emission, _ = _model(wav)  # type: ignore[misc]
-        targets = torch.tensor([[_dict[c] for c in word]], dtype=torch.int32)  # type: ignore[index]
+        targets = torch.tensor([[_dict[c] for c in word]], dtype=torch.int32,  # type: ignore[index]
+                               device=emission.device)
         if emission.size(1) <= targets.size(1):
             return None  # still too short — caller falls back to whole clip
         aligned, scores = torchaudio.functional.forced_align(emission, targets, blank=0)
-        spans = merge_tokens(aligned[0], scores[0])
+        # Back to the host for merge_tokens: it walks the sequence element by
+        # element, which on a GPU tensor is a synchronising read per step.
+        spans = merge_tokens(aligned[0].cpu(), scores[0].cpu())
         ratio = wav.size(1) / emission.size(1) / _SR
 
         out: list[tuple[str, float, float]] = []
