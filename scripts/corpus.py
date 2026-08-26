@@ -291,6 +291,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     if src.startswith(("http://", "https://")):
         tmp = src = _fetch(src)
 
+    # Whether this call is the one that created the directory, so that a
+    # failure can undo exactly what it did and no more.
+    created = not os.path.isdir(target)
     os.makedirs(target, exist_ok=True)
     try:
         tar = _open_read(src)
@@ -301,6 +304,15 @@ def cmd_install(args: argparse.Namespace) -> int:
                 tar.extractall(target)  # noqa: S202
         finally:
             tar.close()
+    except BaseException:
+        # Leave nothing that looks like an install. An empty directory left by
+        # a failed unpack is worse than no directory at all: whatever decides
+        # what is already installed sees it, skips the bundle, and the failure
+        # becomes permanent instead of being retried on the next start.
+        # SystemExit included, which is how an unreadable bundle now reports.
+        if created:
+            shutil.rmtree(target, ignore_errors=True)
+        raise
     finally:
         if tmp:
             os.unlink(tmp)

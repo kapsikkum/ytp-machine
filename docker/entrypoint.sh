@@ -73,12 +73,23 @@ seed() {
 # Extra source packs, installed each start so dropping a bundle in the packs
 # directory is all it takes to add a voice. Installing is skipped when the
 # corpus already exists, so this is cheap on every restart but the first.
+# Whether a corpus of this name is really installed -- that is, has a database.
+# A directory on its own proves nothing: a failed install leaves an empty one
+# behind, and treating that as "already installed" made the failure permanent,
+# with every later start skipping the pack it had never actually unpacked.
+corpus_installed() {
+  for f in "$DATA/corpora/$1"/*.db; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+
 install_packs() {
   [ -d /packs ] || return 0
   for bundle in /packs/*.tar.zst /packs/*.tar.gz; do
     [ -e "$bundle" ] || continue
     name=$(basename "$bundle"); name=${name%%.tar.*}
-    if [ -d "$DATA/corpora/$name" ]; then
+    if corpus_installed "$name"; then
       continue
     fi
     echo "installing source pack: $name"
