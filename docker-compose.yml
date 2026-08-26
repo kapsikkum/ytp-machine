@@ -1,0 +1,23 @@
+# `docker compose up --build`, then open http://localhost:8765
+#
+# Seed the corpus first, if this is a fresh volume:
+#   python scripts/corpus.py pack --out corpus/corpus.tar.gz
+# The bundle is mounted read-only and unpacked into the volume on first start.
+services:
+  app:
+    build: .
+    environment:
+      # Affects nothing in the app itself, but keeps container logs readable
+      # next to the host's.
+      TZ: ${TZ:-Australia/Sydney}
+    ports:
+      - "8765:8765"
+    volumes:
+      - ytp-data:/app/data
+      # Optional. Present only to seed an empty volume; ignored once the
+      # database exists, so it is safe to leave mounted.
+      - ./corpus:/corpus:ro
+    restart: unless-stopped
+
+volumes:
+  ytp-data:

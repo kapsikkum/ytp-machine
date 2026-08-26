@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Database
+michael_rosen.db
+michael_rosen.db-wal
+michael_rosen.db-shm
+
+# Downloaded / generated media
+downloads/
+output/
+
+# Whisper model cache
+~/.cache/whisper/
+
+# Runtime log
+app.log
+
+# Corpus bundles — built artefacts, not source; see scripts/corpus.py
+corpus/
+corpus-*.tar.zst
+corpus-*.tar.gz

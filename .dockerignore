@@ -1,0 +1,18 @@
+# The corpus travels as a bundle, not in the build context: ~110 MB of mp4
+# would be sent to the daemon on every build for no reason.
+downloads/
+output/
+corpus/
+*.tar.zst
+*.tar.gz
+michael_rosen.db
+michael_rosen.db-wal
+michael_rosen.db-shm
+
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+app.log
+.claude/

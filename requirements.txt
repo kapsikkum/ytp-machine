@@ -1,0 +1,9 @@
+fastapi>=0.111.0
+nltk>=3.8
+num2words>=0.5.13
+uvicorn[standard]>=0.29.0
+yt-dlp>=2024.4.9
+openai-whisper>=20231117
+stable-ts>=2.17.0
+sqlalchemy>=2.0.0
+python-multipart>=0.0.9

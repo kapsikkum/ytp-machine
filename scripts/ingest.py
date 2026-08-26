@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""
+Ingest a YouTube URL or local video file into the Michael Rosen Says database.
+
+Usage:
+    python scripts/ingest.py <url_or_file>
+    python scripts/ingest.py https://www.youtube.com/watch?v=XXXXXXXXXXX
+    python scripts/ingest.py /path/to/video.mp4
+    python scripts/ingest.py /path/to/video.mp4 --model medium
+"""
+import argparse
+import os
+import re
+import sys
+
+# Make project root importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.database import init_db, get_db
+
+
+# ── Download ──────────────────────────────────────────────────────────────────
+
+def _ydl_base_opts(cookies_from_browser: str | None) -> dict:
+    """Return base yt-dlp options including JS runtime and optional cookies."""
+    opts: dict = {
+        # Node.js must be in PATH; EJS solver is cached after first --remote-components run
+        "js_runtimes": {"node": {}},
+    }
+    if cookies_from_browser:
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    return opts
+
+
+def download_video(
+    url: str, download_dir: str, cookies_from_browser: str | None = None
+) -> tuple[str, str, str]:
+    """Return (absolute_file_path, video_id, title)."""
+    import yt_dlp
+
+    ydl_opts = {
+        **_ydl_base_opts(cookies_from_browser),
+        "outtmpl": os.path.join(download_dir, "%(id)s.%(ext)s"),
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
+        "quiet": False,
+        "no_warnings": False,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        video_id: str = info["id"]
+        title: str = info.get("title", video_id)
+        candidate = ydl.prepare_filename(info)
+        if not os.path.exists(candidate):
+            candidate = os.path.splitext(candidate)[0] + ".mp4"
+        file_path = os.path.abspath(candidate)
+
+    return file_path, video_id, title
+
+
+# ── Transcription ─────────────────────────────────────────────────────────────
+
+def transcribe(video_path: str, model_name: str = "base") -> list[dict]:
+    """
+    Transcribe with stable-whisper for accurate word-level timestamps.
+
+    stable-ts refines Whisper's output using audio-energy curves and modified
+    attention patterns, giving ~50ms accuracy vs ~200ms for plain Whisper.
+    """
+    import stable_whisper
+
+    print(f"  Loading stable-whisper model '{model_name}' …")
+    model = stable_whisper.load_model(model_name)
+
+    print(f"  Transcribing {os.path.basename(video_path)} …")
+    result = model.transcribe(video_path, word_timestamps=True)
+
+    words: list[dict] = []
+    for segment in result.segments:
+        for wi in segment.words:
+            clean = re.sub(r"[^\w]", "", wi.word).lower().strip()
+            if clean:
+                words.append({
+                    "word":  clean,
+                    "start": float(wi.start),
+                    "end":   float(wi.end),
+                })
+
+    return words
+
+
+def _transcribe_plain_whisper(video_path: str, model_name: str = "base") -> list[dict]:
+    """Fallback using plain openai-whisper (kept for reference)."""
+    import whisper
+
+    print(f"  Loading Whisper model '{model_name}' …")
+    model = whisper.load_model(model_name)
+
+    print(f"  Transcribing {os.path.basename(video_path)} …")
+    result = model.transcribe(video_path, word_timestamps=True)
+
+    words: list[dict] = []
+    for segment in result.get("segments", []):
+        for wi in segment.get("words", []):
+            clean = re.sub(r"[^\w]", "", wi["word"]).lower().strip()
+            if clean:
+                words.append({
+                    "word": clean,
+                    "start": float(wi["start"]),
+                    "end": float(wi["end"]),
+                })
+
+    return words
+
+
+# ── Database persistence ──────────────────────────────────────────────────────
+
+def persist(
+    video_id: str,
+    source_file: str,
+    title: str,
+    url: str | None,
+    words: list[dict],
+) -> int:
+    """Insert source + word clips into DB; return number of words stored."""
+    from app.database import relativize_path
+    source_file = relativize_path(source_file)   # store portable relative paths
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO sources (video_id, source_file, title, url) VALUES (?, ?, ?, ?)",
+            (video_id, source_file, title, url),
+        )
+        source_id = cur.lastrowid
+
+        conn.executemany(
+            "INSERT INTO word_clips (source_id, word, start_time, end_time, source_file) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (source_id, w["word"], w["start"], w["end"], source_file)
+                for w in words
+            ],
+        )
+
+    return len(words)
+
+
+# ── Main entry ────────────────────────────────────────────────────────────────
+
+def ingest(
+    input_path: str,
+    download_dir: str = "downloads",
+    model_name: str = "base",
+    cookies_from_browser: str | None = None,
+) -> None:
+    init_db()
+    os.makedirs(download_dir, exist_ok=True)
+
+    is_url = input_path.startswith("http://") or input_path.startswith("https://")
+
+    if is_url:
+        print(f"Downloading: {input_path}")
+        source_file, video_id, title = download_video(
+            input_path, download_dir, cookies_from_browser
+        )
+        url: str | None = input_path
+    else:
+        source_file = os.path.abspath(input_path)
+        if not os.path.exists(source_file):
+            sys.exit(f"File not found: {source_file}")
+        video_id = os.path.splitext(os.path.basename(source_file))[0]
+        title = video_id
+        url = None
+
+    print(f"Source file : {source_file}")
+
+    words = transcribe(source_file, model_name)
+    print(f"  Found {len(words)} word timestamps")
+
+    count = persist(video_id, source_file, title, url, words)
+    try:
+        from app.generate import invalidate_cache
+        invalidate_cache()
+    except Exception:
+        pass
+
+    unique = sorted({w["word"] for w in words})
+    sample = ", ".join(unique[:25]) + ("…" if len(unique) > 25 else "")
+    print(f"  Stored {count} clips  ({len(unique)} unique words)")
+    print(f"  Sample: {sample}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Ingest a YouTube URL or local video file into the Michael Rosen Says database."
+    )
+    parser.add_argument("input", help="YouTube URL or path to a local video file")
+    parser.add_argument(
+        "--download-dir",
+        default="downloads",
+        metavar="DIR",
+        help="Directory for downloaded videos (default: downloads/)",
+    )
+    parser.add_argument(
+        "--model",
+        default="base",
+        choices=["tiny", "base", "small", "medium", "large"],
+        help="Whisper model size (default: base)",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=None,
+        metavar="BROWSER",
+        help="Pass cookies from this browser to bypass YouTube bot-detection "
+             "(e.g. chrome, firefox, edge, chromium). "
+             "The browser must be installed and logged in to YouTube.",
+    )
+    args = parser.parse_args()
+
+    ingest(args.input, args.download_dir, args.model, args.cookies_from_browser)
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

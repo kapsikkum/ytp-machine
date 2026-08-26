@@ -1,0 +1,6 @@
+# The container and its shell scripts are built on Linux; CRLF in entrypoint.sh
+# makes the shebang unparseable and the image fails at start with a message
+# that names neither the file nor the reason.
+* text=auto eol=lf
+*.mp4 binary
+*.db binary
