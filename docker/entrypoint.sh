@@ -11,47 +11,84 @@ DATA="${MRS_DATA_DIR:-/app/data}"
 DB="${MRS_DB_PATH:-$DATA/michael_rosen.db}"
 PORT="${PORT:-8765}"
 
-mkdir -p "$DATA/downloads" "$DATA/output"
+mkdir -p "$DATA/output" "$DATA/corpora"
+
+# Corpora live one per directory under $DATA/corpora. An older install has its
+# database loose in $DATA with downloads/ beside it; that layout still works
+# and shows up as the corpus named "default", so nothing is moved and nothing
+# breaks. New installs land in the tidy layout from the start.
+SEED_DIR="$DATA/corpora/${CORPUS_NAME:-michael-rosen}"
 
 seed() {
   # A loose corpus mounted at /corpus wins: that is what a clone of this repo
   # has, since the database and the videos are committed and a single packed
   # bundle is not (103 MB, and GitHub refuses anything over 100).
   if [ -f /corpus/michael_rosen.db ]; then
-    echo "seeding corpus from the files mounted at /corpus"
-    cp /corpus/michael_rosen.db "$DATA/michael_rosen.db"
+    echo "seeding corpus into $SEED_DIR from the files mounted at /corpus"
+    mkdir -p "$SEED_DIR/downloads"
+    cp /corpus/michael_rosen.db "$SEED_DIR/corpus.db"
     # Written as `if` rather than `[ -d x ] && cp ...` on purpose: under set -e
     # a bare test-and-command list that fails its test returns non-zero as a
     # statement, and the script exits. A missing transcripts directory would
     # have killed the container instead of being skipped.
     if [ -d /corpus/downloads ]; then
-      cp -r /corpus/downloads/. "$DATA/downloads/"
+      cp -r /corpus/downloads/. "$SEED_DIR/downloads/"
     fi
     if [ -d /corpus/transcripts ]; then
-      mkdir -p "$DATA/transcripts"
-      cp -r /corpus/transcripts/. "$DATA/transcripts/"
+      mkdir -p "$SEED_DIR/transcripts"
+      cp -r /corpus/transcripts/. "$SEED_DIR/transcripts/"
     fi
-    echo "  $(ls "$DATA/downloads" | wc -l) videos"
+    echo "  $(ls "$SEED_DIR/downloads" | wc -l) videos"
     return 0
   fi
 
   # A packed bundle, which is how a corpus travels to a server.
   for bundle in /corpus/*.tar.zst /corpus/*.tar.gz; do
     [ -e "$bundle" ] || continue
-    echo "seeding corpus from $bundle"
-    python /app/scripts/corpus.py unpack "$bundle" --into "$DATA"
+    echo "seeding corpus into $SEED_DIR from $bundle"
+    mkdir -p "$SEED_DIR"
+    python /app/scripts/corpus.py unpack "$bundle" --into "$SEED_DIR"
     return 0
   done
 
   if [ -n "${CORPUS_URL:-}" ]; then
-    echo "seeding corpus from \$CORPUS_URL"
-    python /app/scripts/corpus.py unpack "$CORPUS_URL" --into "$DATA"
+    echo "seeding corpus into $SEED_DIR from \$CORPUS_URL"
+    mkdir -p "$SEED_DIR"
+    python /app/scripts/corpus.py unpack "$CORPUS_URL" --into "$SEED_DIR"
     return 0
   fi
   return 1
 }
 
-if [ ! -f "$DB" ]; then
+# Extra source packs, installed each start so dropping a bundle in the packs
+# directory is all it takes to add a voice. Installing is skipped when the
+# corpus already exists, so this is cheap on every restart but the first.
+install_packs() {
+  [ -d /packs ] || return 0
+  for bundle in /packs/*.tar.zst /packs/*.tar.gz; do
+    [ -e "$bundle" ] || continue
+    name=$(basename "$bundle"); name=${name%%.tar.*}
+    if [ -d "$DATA/corpora/$name" ]; then
+      continue
+    fi
+    echo "installing source pack: $name"
+    python /app/scripts/corpus.py install "$bundle" --name "$name" ||       echo "  failed, skipping $name"
+  done
+}
+
+# Anything already installed under corpora/ counts, as does a legacy database.
+have_corpus() {
+  [ -f "$DB" ] && return 0
+  for d in "$DATA"/corpora/*/; do
+    [ -e "$d" ] || continue
+    for f in "$d"*.db; do
+      [ -e "$f" ] && return 0
+    done
+  done
+  return 1
+}
+
+if ! have_corpus; then
   if ! seed; then
     echo "----------------------------------------------------------------"
     echo "No corpus found and none to seed from."
@@ -66,6 +103,8 @@ if [ ! -f "$DB" ]; then
     exit 1
   fi
 fi
+
+install_packs
 
 case "${1:-serve}" in
   serve)

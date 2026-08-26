@@ -26,3 +26,7 @@ app.log
 corpus/
 corpus-*.tar.zst
 corpus-*.tar.gz
+
+# Source packs are large binaries; the directory is tracked, its contents are not.
+packs/*
+!packs/README.md

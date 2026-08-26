@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.database import get_db
+from app.database import active, get_db, init_db, list_corpora, set_active
 from app.generate import generate_video
 
 router = APIRouter()
@@ -13,6 +13,10 @@ log = logging.getLogger(__name__)
 
 class GenerateRequest(BaseModel):
     text: str
+
+
+class CorpusRequest(BaseModel):
+    slug: str
 
 
 class RateRequest(BaseModel):
@@ -98,6 +102,58 @@ def suggest(context: str = "", prefix: str = "", limit: int = 10):
     return suggest_next(context, prefix, max(1, min(limit, 25)))
 
 
+def _corpus_totals() -> dict:
+    with get_db() as conn:
+        return {
+            "clips": conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0],
+            "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
+            "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
+        }
+
+
+@router.get("/corpora")
+def corpora():
+    """Every installed corpus, with the size of each.
+
+    Counting means opening each database in turn, which is cheap at this scale
+    and saves the frontend from having to switch corpus just to find out how
+    big one is.
+    """
+    current = active()
+    out = []
+    for c in list_corpora():
+        entry = {"slug": c["slug"], "name": c["name"], "active": c["slug"] == current["slug"]}
+        try:
+            set_active(c["slug"])
+            entry.update(_corpus_totals())
+        except Exception as exc:
+            entry["error"] = str(exc)
+        out.append(entry)
+    # Always put the selection back, including when a corpus above failed to
+    # open -- otherwise merely listing them would change which one is live.
+    set_active(current["slug"])
+    return {"corpora": out, "active": current["slug"]}
+
+
+@router.post("/corpus")
+def switch_corpus(req: CorpusRequest):
+    """Select a corpus. Everything cached from the old one is dropped."""
+    try:
+        chosen = set_active(req.slug)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No corpus called {req.slug!r}")
+
+    # The clip cache, the word positions and the splice scores are all built
+    # from the previous database. Left in place they would splice the new
+    # corpus's words out of the old corpus's video files.
+    from app.generate import invalidate_cache
+    invalidate_cache()
+    init_db()
+
+    log.info("CORPUS  switched to %s", chosen["slug"])
+    return {"status": "ok", "active": chosen["slug"], "name": chosen["name"], **_corpus_totals()}
+
+
 @router.get("/stats")
 def stats():
     with get_db() as conn:
@@ -109,9 +165,12 @@ def stats():
         sample = conn.execute(
             "SELECT DISTINCT word FROM word_clips ORDER BY RANDOM() LIMIT 30"
         ).fetchall()
+    current = active()
     return {
         "total_clips": total_clips,
         "unique_words": unique_words,
         "sources": sources,
         "sample_words": [r[0] for r in sample],
+        "corpus": current["slug"],
+        "corpus_name": current["name"],
     }

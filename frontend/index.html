@@ -305,6 +305,9 @@
 </header>
 
 <div id="stats-bar">
+  <div id="corpus-wrap" style="display:none">voice:
+    <select id="corpus-select"></select>
+  </div>
   <div>clips in database: <span id="stat-clips">—</span></div>
   <div>unique words: <span id="stat-words">—</span></div>
   <div>video sources: <span id="stat-sources">—</span></div>
@@ -368,6 +371,54 @@
     } catch { /* ignore */ }
   }
   loadStats();
+
+  // ── Corpora ─────────────────────────────────────────────────────────────────
+  // The selector only appears when there is more than one installed: a single
+  // corpus needs no choosing, and an empty dropdown is worse than none.
+  const corpusWrap   = document.getElementById('corpus-wrap');
+  const corpusSelect = document.getElementById('corpus-select');
+
+  async function loadCorpora() {
+    try {
+      const r = await fetch('/api/corpora');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d.corpora || d.corpora.length < 2) return;
+      corpusSelect.innerHTML = '';
+      for (const c of d.corpora) {
+        const opt = document.createElement('option');
+        opt.value = c.slug;
+        opt.textContent = c.error ? `${c.name} (unreadable)` : `${c.name} — ${(c.words || 0).toLocaleString()} words`;
+        opt.disabled = !!c.error;
+        if (c.active) opt.selected = true;
+        corpusSelect.appendChild(opt);
+      }
+      corpusWrap.style.display = '';
+    } catch { /* ignore */ }
+  }
+
+  corpusSelect.addEventListener('change', async () => {
+    const slug = corpusSelect.value;
+    corpusSelect.disabled = true;
+    try {
+      const r = await fetch('/api/corpus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
+      });
+      if (!r.ok) throw new Error('switch failed');
+      // The vocabulary belongs to the old corpus; everything derived from it
+      // has to be rebuilt or the word checker will lie about what is available.
+      await loadStats();
+      await loadWords();
+    } catch {
+      await loadCorpora();   // put the selector back where it really is
+    } finally {
+      corpusSelect.disabled = false;
+    }
+  });
+
+  loadCorpora();
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   function setStatus(msg, isError = false) {
@@ -509,11 +560,22 @@
   const suggestBox = document.getElementById('suggest-box');
   const wordCheck  = document.getElementById('word-check');
 
-  let vocab = null;                 // word → clip count (full corpus)
-  fetch('/api/words')
-    .then(r => r.ok ? r.json() : null)
-    .then(d => { if (d) { vocab = d.words; checkWords(); } })
-    .catch(() => {});
+  let vocab = null;                 // word → clip count (active corpus)
+
+  // A named declaration, not an inline fetch, because switching corpus has to
+  // be able to pull the vocabulary again -- the old one describes a different
+  // set of videos and would report words as available that this corpus has
+  // never heard. Hoisted, so the corpus selector above can call it.
+  async function loadWords() {
+    try {
+      const r = await fetch('/api/words');
+      if (!r.ok) return;
+      const d = await r.json();
+      vocab = d.words;
+      checkWords();
+    } catch { /* ignore */ }
+  }
+  loadWords();
 
   // Mirror the backend tokeniser: strip non-word chars, lowercase.
   const cleanWord = (t) => t.replace(/[^\w]/g, '').toLowerCase();

@@ -19,6 +19,9 @@ services:
       - ./michael_rosen.db:/corpus/michael_rosen.db:ro
       - ./downloads:/corpus/downloads:ro
       - ./transcripts:/corpus/transcripts:ro
+      # Drop more bundles in packs/ to add voices. Each is installed as a
+      # corpus named after the file, once, and selectable in the UI.
+      - ./packs:/packs:ro
     restart: unless-stopped
 
 volumes:

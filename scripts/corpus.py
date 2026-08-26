@@ -212,6 +212,69 @@ def cmd_unpack(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install(args: argparse.Namespace) -> int:
+    """Put a bundle in as a named corpus, alongside any already installed.
+
+    This is what makes a second voice possible: each corpus is a directory of
+    its own holding one database and the videos it indexes, so two of them
+    never argue over a downloads/ filename.
+    """
+    import sys as _sys
+    _sys.path.insert(0, PROJECT_ROOT)
+    from app.database import install_dir  # noqa: E402
+
+    target = install_dir(args.name)
+    if os.path.exists(target) and os.listdir(target) and not args.force:
+        print(f"{target} already exists and is not empty (pass --force)", file=sys.stderr)
+        return 1
+
+    src = args.bundle
+    tmp = None
+    if src.startswith(("http://", "https://")):
+        tmp = src = _fetch(src)
+
+    os.makedirs(target, exist_ok=True)
+    try:
+        tar = _open_read(src)
+        try:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(target, filter="data")
+            else:  # Python < 3.12
+                tar.extractall(target)  # noqa: S202
+        finally:
+            tar.close()
+    finally:
+        if tmp:
+            os.unlink(tmp)
+
+    print(f"installed as {os.path.basename(target)} in {target}")
+    for m in MEMBERS:
+        pth = os.path.join(target, m)
+        if os.path.isdir(pth):
+            print(f"  {m:18} {sum(len(f) for _, _, f in os.walk(pth))} files")
+        elif os.path.exists(pth):
+            print(f"  {m:18} {_human(os.path.getsize(pth))}")
+    print("")
+    print("Restart the app, or POST /api/corpus to switch to it.")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    import sys as _sys
+    _sys.path.insert(0, PROJECT_ROOT)
+    from app.database import list_corpora, active  # noqa: E402
+
+    corpora = list_corpora()
+    if not corpora:
+        print("no corpora installed")
+        return 0
+    current = active()["slug"]
+    for c in corpora:
+        mark = "*" if c["slug"] == current else " "
+        print(f" {mark} {c['slug']:24} {c['dir']}")
+    return 0
+
+
 def cmd_info(args: argparse.Namespace) -> int:
     src = args.bundle
     print(f"{src}")
@@ -245,6 +308,15 @@ def main() -> int:
     p.add_argument("--into", help="target directory (default the data dir)")
     p.add_argument("--force", action="store_true", help="overwrite an existing corpus")
     p.set_defaults(func=cmd_unpack)
+
+    p = sub.add_parser("install", help="install a bundle as a named corpus")
+    p.add_argument("bundle")
+    p.add_argument("--name", required=True, help="what to call it, e.g. attenborough")
+    p.add_argument("--force", action="store_true", help="overwrite an existing corpus")
+    p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("list", help="list installed corpora")
+    p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("info", help="describe a bundle without unpacking it")
     p.add_argument("bundle")
