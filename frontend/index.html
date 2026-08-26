@@ -943,8 +943,13 @@
     mph: 'miles per hour', kg: 'kilograms', hp: 'horsepower', kw: 'kilowatts',
     nm: 'newton metres', mm: 'millimeters', cm: 'centimeters', ml: 'millilitres',
   };
+  // No 's' for seconds: "80s" is a decade far more often than eighty seconds.
   const UNITS_AFTER_NUM = {
-    l: 'litres', m: 'meters', g: 'grams', k: 'thousand', t: 'tonnes', s: 'seconds',
+    l: 'litres', m: 'meters', g: 'grams', k: 'thousand', t: 'tonnes',
+  };
+  const DECADES = {
+    20: 'twenties', 30: 'thirties', 40: 'forties', 50: 'fifties',
+    60: 'sixties', 70: 'seventies', 80: 'eighties', 90: 'nineties',
   };
   const PER_UNITS = {
     h: 'hour', hr: 'hour', s: 'second', sec: 'second', min: 'minute',
@@ -955,6 +960,12 @@
 
   function checkableWords(tok) {
     const out = [];
+    // What the corpus says beats what the rules would make of it: it holds
+    // clips labelled "v8" and "80s", and expanding those walks away from a
+    // recording of the exact thing being asked for.
+    const raw = tok.replace(/[^\w]/g, '').toLowerCase();
+    if (raw && vocab && (raw in vocab)) return [raw];
+
     const rate = tok.replace(STRIP, '').toLowerCase().match(/^([a-z]+)\/(\d*[a-z]+)$/);
     if (rate && PER_UNITS[rate[2]] && (UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]])) {
       const top = UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]];
@@ -967,6 +978,8 @@
       if (/^\d+(\.\d+)?$/.test(atom)) continue;          // a number: always expands
       if (/^\d+(st|nd|rd|th)$/.test(atom)) continue;      // an ordinal: likewise
       if (/^\d+x\d+$/.test(atom)) { out.push('by'); continue; }   // 4x4 -> four by four
+      const dec = atom.match(/^(?:19|20)?(\d0)s$/);               // 80s -> eighties
+      if (dec && DECADES[dec[1]]) { out.push(DECADES[dec[1]]); continue; }
       if (UNIT_WORDS[atom]) { out.push(...UNIT_WORDS[atom].split(' ')); continue; }
       if (ABBREV[atom]) { out.push(ABBREV[atom]); continue; }
       const parts = atom.match(/\d+|[a-z]+/g) || [];

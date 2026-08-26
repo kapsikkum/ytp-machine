@@ -285,8 +285,15 @@ _UNITS = {
 # metres or the letter m. "5l" is unambiguous; a bare "l" is not.
 _UNITS_AFTER_NUMBER = {
     "l": "litres", "m": "metres", "g": "grams",
-    "k": "thousand", "t": "tonnes", "s": "seconds",
+    "k": "thousand", "t": "tonnes",
 }
+# Deliberately no "s" for seconds: "80s" is a decade far more often than it is
+# eighty seconds, and reading it as a unit turned "the 80s" into "the eighty
+# seconds". A bare "5s" now splits into "five" and "s", which is a visible miss
+# rather than a confident wrong answer.
+
+_DECADES = {"20": "twenties", "30": "thirties", "40": "forties", "50": "fifties",
+            "60": "sixties", "70": "seventies", "80": "eighties", "90": "nineties"}
 
 # Model-code shorthands that are pronounced as a word rather than as letters.
 _ABBREV = {"mk": "mark"}
@@ -397,6 +404,13 @@ def _expand_atom(atom: str) -> list[str]:
     if m:
         return _say_number(int(m.group(1)), ordinal=True) + suffix
 
+    # Decades: 80s, 1980s. Without this the letters-and-digits split read them
+    # as a number followed by a stray letter.
+    m = re.fullmatch(r"(?:(19|20))?(\d0)s", atom)
+    if m and m.group(2) in _DECADES:
+        century = _say_number(int(m.group(1))) if m.group(1) else []
+        return century + [_DECADES[m.group(2)]] + suffix
+
     # 4x4 is said "four by four", not "four x four".
     m = re.fullmatch(r"(\d+)x(\d+)", atom)
     if m:
@@ -437,6 +451,17 @@ def _expand_atom(atom: str) -> list[str]:
     return [re.sub(r"[^\w]", "", atom)] + suffix if re.sub(r"[^\w]", "", atom) else suffix
 
 
+def _known_word(word: str) -> bool:
+    """Does the corpus hold a clip labelled exactly this?"""
+    if not word:
+        return False
+    try:
+        _ensure_cache()
+    except Exception:
+        return False                      # no corpus to consult; just expand
+    return bool(_clips_by_word_cache) and word in _clips_by_word_cache
+
+
 def _expand_token(token: str) -> list[str]:
     """Return one or more lowercase words for a single input token.
 
@@ -444,6 +469,15 @@ def _expand_token(token: str) -> list[str]:
     joined "four-cylinder" into "fourcylinder", a word nobody has ever said, so
     every hyphenated compound was a guaranteed miss.
     """
+    # What the corpus actually says wins over what the rules would make of it.
+    # The transcriber writes some tokens in a form the rules would expand right
+    # past: this corpus has nineteen clips labelled "v8" and seventeen labelled
+    # "80s", and expanding those to "v eight" and "eighty ..." walked away from
+    # real recordings of the exact thing being asked for. Expansion is the
+    # fallback for tokens nobody has said, not the first move.
+    raw = re.sub(r"[^\w]", "", token).lower()
+    if _known_word(raw):
+        return [raw]
     # A rate: km/h, l/100km. Both halves are units and the slash is the word
     # "per", so it has to be read before the generic split, which would
     # otherwise leave the denominator as a bare letter nobody has ever said.

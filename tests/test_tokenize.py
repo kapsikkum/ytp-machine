@@ -12,9 +12,16 @@ the corpus has, or -- worse -- a different word said confidently.
 """
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# An empty corpus, so the expansion rules are tested on their own. _expand_token
+# prefers a word the corpus actually has, and pointing this at the real corpus
+# would make the expected values depend on what someone happened to say.
+os.environ["MRS_DATA_DIR"] = tempfile.mkdtemp(prefix="ytp-tokenize-")
+
+from app import generate  # noqa: E402
 from app.generate import _expand_token, tokenize_marked  # noqa: E402
 
 CASES: list[tuple[str, list[str]]] = [
@@ -35,7 +42,13 @@ CASES: list[tuple[str, list[str]]] = [
     ("100kg",         ["one", "hundred", "kilograms"]),
     ("50mm",          ["fifty", "millimeters"]),
     ("2l",            ["two", "litres"]),
-    ("5s",            ["five", "seconds"]),
+
+    # Decades, not units. "s" is deliberately not seconds: reading it that way
+    # turned "the 80s" into "the eighty seconds".
+    ("80s",           ["eighties"]),
+    ("90s",           ["nineties"]),
+    ("1980s",         ["nineteen", "eighties"]),
+    ("5s",            ["five", "s"]),
 
     # Rates: the slash is the word "per".
     ("km/h",          ["kilometers", "per", "hour"]),
@@ -87,6 +100,23 @@ def main() -> int:
         failures.append("  the last token should always end a sentence")
     if not tokenize_marked("it died. then what")[1][1]:
         failures.append("  a real full stop stopped ending a sentence")
+
+    # What the corpus says beats what the rules would make of it. The
+    # transcriber writes some tokens in a form the rules would expand right
+    # past -- a real corpus has clips labelled "v8" and "80s" -- and expanding
+    # those walks away from a recording of the exact thing being asked for.
+    saved = generate._clips_by_word_cache
+    try:
+        generate._clips_by_word_cache = {"v8": [{}], "80s": [{}]}
+        for token, expected in (("v8", ["v8"]), ("80s", ["80s"]),
+                                ("V8.", ["v8"]),          # punctuation and case
+                                ("i30", ["i", "thirty"])):  # still expands
+            got = _expand_token(token)
+            if got != expected:
+                failures.append(
+                    f"  corpus-first {token!r}: expected {expected}, got {got}")
+    finally:
+        generate._clips_by_word_cache = saved
 
     if failures:
         print(f"FAILED ({len(failures)}):")
