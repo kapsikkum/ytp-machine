@@ -499,6 +499,21 @@ def suggest_next(context: str, prefix: str, limit: int = 10) -> dict[str, Any]:
 _CMD_BUDGET = 24000
 
 
+def _trim(stderr: str, limit: int = 2000) -> str:
+    """Keep the beginning and the end of ffmpeg's complaint.
+
+    The first error is the one that caused the failure; everything after it is
+    usually a consequence. Keeping only the tail, as this used to, reported the
+    consequences and threw away the cause.
+    """
+    text = (stderr or "").strip()
+    if len(text) <= limit:
+        return text
+    head, tail = limit * 2 // 3, limit // 3
+    marker = f"  … {len(text) - limit} chars elided …"
+    return "\n".join([text[:head], marker, text[-tail:]])
+
+
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -> None:
     """Encode *segments* to *out_path*, splitting into multiple FFmpeg calls
     when the input args would exceed the Windows command-line limit."""
@@ -537,7 +552,8 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -
         with open(list_path, "w", encoding="utf-8") as f:
             for p in part_paths:
                 f.write(f"file '{os.path.abspath(p).replace(chr(92), '/')}'\n")
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-f", "concat", "-safe", "0", "-i", list_path,
                "-c", "copy", "-movflags", "+faststart", out_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -566,7 +582,12 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     the chunk holding the overall last word, which gets the generous tail pad.
     """
     n = len(segments)
-    cmd = ["ffmpeg", "-y"]
+    # -loglevel error, because the captured stderr is the only thing we get to
+    # diagnose a failure from. ffmpeg dumps a full stream description per input
+    # and there is one input per clip, so on a long sentence the last 3000
+    # characters were entirely other files' metadata -- the actual fatal line
+    # had scrolled past thousands of lines earlier and never reached the log.
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
 
     # ── Inputs  (precompute durations so we can use them in filter_complex) ──
     clip_durations: list[float] = []
