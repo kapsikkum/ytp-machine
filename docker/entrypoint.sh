@@ -88,26 +88,27 @@ have_corpus() {
   return 1
 }
 
-if ! have_corpus; then
-  if ! seed; then
-    echo "----------------------------------------------------------------"
-    echo "No corpus found and none to seed from."
-    echo
-    echo "  $DB does not exist, no bundle is mounted at /corpus, and"
-    echo "  CORPUS_URL is unset."
-    echo
-    echo "Build one from a working copy with"
-    echo "    python scripts/corpus.py pack"
-    echo "then mount it read-only at /corpus, or point CORPUS_URL at it."
-    echo "----------------------------------------------------------------"
-    exit 1
-  fi
-fi
-
-install_packs
-
 case "${1:-serve}" in
   serve)
+    # Only serving needs a corpus. Requiring one to run anything at all meant
+    # `podman run ... python somescript.py` died before it started, which is
+    # exactly the situation where you are trying to build or repair a corpus.
+    if ! have_corpus; then
+      if ! seed; then
+        echo "----------------------------------------------------------------"
+        echo "No corpus found and none to seed from."
+        echo
+        echo "  $DB does not exist, no corpus is installed under $DATA/corpora,"
+        echo "  no bundle is mounted at /corpus, and CORPUS_URL is unset."
+        echo
+        echo "Build one from a working copy with"
+        echo "    python scripts/corpus.py pack"
+        echo "then mount it read-only at /corpus, or point CORPUS_URL at it."
+        echo "----------------------------------------------------------------"
+        exit 1
+      fi
+    fi
+    install_packs
     exec uvicorn main:app --host 0.0.0.0 --port "$PORT"
     ;;
   corpus)
