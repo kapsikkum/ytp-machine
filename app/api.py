@@ -34,7 +34,30 @@ def generate(req: GenerateRequest):
     log.info("GENERATE  %r", text)
     t0 = time.perf_counter()
 
-    result = generate_video(text)
+    try:
+        result = generate_video(text)
+    except RuntimeError as exc:
+        # ffmpeg refused the job. Almost always because the sentence resolved to
+        # so many clips that it ran out of something -- threads, file handles --
+        # opening one input per clip. Answer with JSON either way: an
+        # unhandled error here returns a plain-text 500, and the page parses
+        # every response as JSON, so the user was shown "JSON.parse: unexpected
+        # character" rather than anything about what went wrong.
+        detail = str(exc)
+        crowded = "temporarily unavailable" in detail or "Too many open files" in detail
+        log.error("GENERATE failed  %r  %s", text, detail[-500:])
+        raise HTTPException(
+            status_code=503 if crowded else 500,
+            detail={
+                "message": (
+                    "Too much at once — that resolved to more clips than the "
+                    "video encoder can open in one go. Try a shorter sentence."
+                    if crowded else
+                    "The video encoder failed on this input."
+                ),
+                "words": len(text.split()),
+            },
+        ) from exc
 
     elapsed = time.perf_counter() - t0
     log.info(

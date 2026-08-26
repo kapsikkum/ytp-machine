@@ -505,7 +505,22 @@
         body: JSON.stringify({ text }),
       });
 
-      const data = await res.json();
+      // Not res.json() directly: anything that answers with a non-JSON body --
+      // a proxy timing out, a gateway error page -- made this throw, and the
+      // user was shown "JSON.parse: unexpected character at line 1 column 1"
+      // instead of what actually went wrong.
+      let data;
+      const raw = await res.text();
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        setStatus(
+          `Error: the server replied with ${res.status} and something that isn't JSON` +
+          (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : ''),
+          true,
+        );
+        return;
+      }
 
       if (!res.ok) {
         const detail = data.detail;

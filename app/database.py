@@ -78,8 +78,17 @@ def active() -> dict:
             _active = {"slug": "default", "name": "Default",
                        "dir": os.path.dirname(LEGACY_DB) or ".", "db": LEGACY_DB}
         else:
+            # Order of preference: what MRS_CORPUS asks for, then the legacy
+            # "default" corpus, then whatever sorts first. Without the middle
+            # step a restart silently switched voices, because the listing is
+            # alphabetical and an installed pack can sort ahead of the corpus
+            # that was there all along.
             preferred = os.environ.get("MRS_CORPUS")
-            _active = next((c for c in available if c["slug"] == preferred), available[0])
+            _active = (
+                next((c for c in available if c["slug"] == preferred), None)
+                or next((c for c in available if c["slug"] == "default"), None)
+                or available[0]
+            )
     return _active
 
 
