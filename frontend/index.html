@@ -139,8 +139,27 @@
     }
     #text-input::placeholder { color: #444; }
 
+    /* The button used to sit alone against the right edge with a wide empty
+       gap beside it. Pairing it with a live read of the input fills that space
+       with something worth knowing and gives the row a left edge. */
+    #form-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    #input-meter {
+      font-size: 0.72rem;
+      color: #4a4a4a;
+      letter-spacing: 0.3px;
+      transition: color 0.2s;
+    }
+    #input-meter.warn { color: #ffaa00; }
+    #input-meter b { color: #8a8a8a; font-weight: 400; }
+    #input-meter.warn b { color: #ffaa00; }
+
     #submit-btn {
-      align-self: flex-end;
       background: var(--yellow);
       border: none;
       border-radius: 6px;
@@ -160,6 +179,60 @@
       color: #888;
       cursor: not-allowed;
       transform: none;
+    }
+
+    /* ── Narrow screens ──
+       There were no media queries at all, so on a phone the stats bar wrapped
+       into a ragged pile, the button kept a desktop-sized gap beside it, and
+       the body padding ate a third of the width. */
+    @media (max-width: 640px) {
+      body { padding: 1.25rem 0.75rem 3rem; }
+      header { margin-bottom: 1.5rem; }
+      .card { padding: 1rem; border-radius: 8px; }
+
+      /* Stack the picker above the readouts and drop the divider, which only
+         makes sense when the two sit side by side. */
+      #stats-bar {
+        flex-direction: column;
+        gap: 0.6rem;
+        align-items: stretch;
+        margin-bottom: 1.25rem;
+      }
+      #corpus-wrap {
+        border-right: none;
+        padding-right: 0;
+        justify-content: space-between;
+      }
+      #corpus-select { flex: 1; min-width: 0; }
+      #stats-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      /* Full-width target: a 2rem-padded button is a small thing to hit with a
+         thumb, and there is nothing to sit beside it at this width. */
+      #form-footer { flex-direction: column-reverse; align-items: stretch; }
+      #submit-btn { width: 100%; padding: 0.85rem 1rem; }
+      #input-meter { text-align: center; }
+
+      #text-input { font-size: 1rem; min-height: 120px; }
+      #word-check { max-height: 6rem; }
+    }
+
+    /* Landscape phones and small tablets: keep the row, tighten it. */
+    @media (min-width: 641px) and (max-width: 900px) {
+      body { padding: 1.5rem 1rem 3rem; }
+      #stats-bar { gap: 0.9rem; font-size: 0.7rem; }
+    }
+
+    /* Someone who prefers less motion gets no sliding bar and no spinner. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
     }
 
     /* ── Autocomplete ── */
@@ -404,9 +477,11 @@
   <div id="corpus-wrap" style="display:none">voice:
     <select id="corpus-select"></select>
   </div>
-  <div>clips in database: <span id="stat-clips">—</span></div>
-  <div>unique words: <span id="stat-words">—</span></div>
-  <div>video sources: <span id="stat-sources">—</span></div>
+  <div id="stats-row">
+    <div class="stat">clips in database: <span id="stat-clips">—</span></div>
+    <div class="stat">unique words: <span id="stat-words">—</span></div>
+    <div class="stat">video sources: <span id="stat-sources">—</span></div>
+  </div>
 </div>
 
 <div class="card">
@@ -423,7 +498,10 @@
       <div id="suggest-box"></div>
     </div>
     <div id="word-check"></div>
-    <button type="submit" id="submit-btn">GENERATE</button>
+    <div id="form-footer">
+      <div id="input-meter"></div>
+      <button type="submit" id="submit-btn">GENERATE</button>
+    </div>
   </form>
 
   <div id="status"></div>
@@ -592,6 +670,7 @@
     if (!text) return;
 
     // Reset UI
+    generating = true;
     submitBtn.disabled = true;
     videoBox.classList.remove('visible');
     wordRes.innerHTML = '';
@@ -652,7 +731,8 @@
     } catch (err) {
       setStatus(`Network error: ${err.message}`, true);
     } finally {
-      submitBtn.disabled = false;
+      generating = false;
+      updateMeter();   // re-enables the button, unless the box is now empty
     }
   });
 
@@ -779,6 +859,7 @@
   const wordCheck  = document.getElementById('word-check');
 
   let vocab = null;                 // word → clip count (active corpus)
+  let generating = false;           // a job of ours is in flight
 
   // A named declaration, not an inline fetch, because switching corpus has to
   // be able to pull the vocabulary again -- the old one describes a different
@@ -791,6 +872,7 @@
       const d = await r.json();
       vocab = d.words;
       checkWords();
+      updateMeter();   // the splice count needs the vocabulary to mean anything
     } catch { /* ignore */ }
   }
   loadWords();
@@ -941,7 +1023,44 @@
     wordCheck.appendChild(listEl);
   }
 
-  textInput.addEventListener('input', () => { queueSuggest(); checkWords(); });
+  // ── Live read of the input ──────────────────────────────────────────────────
+  // The button sat beside empty space and nothing responded until you pressed
+  // it. This reacts as you type: how much there is to say, how much of it has
+  // to be built out of phonemes, and roughly how long that will take -- a
+  // spliced word costs a forced-alignment pass, which is where the seconds go.
+  const meterEl = document.getElementById('input-meter');
+
+  function updateMeter() {
+    const text = textInput.value.trim();
+    submitBtn.disabled = !text || generating;
+    if (!text) { meterEl.textContent = ''; meterEl.classList.remove('warn'); return; }
+
+    const words = text.split(/\s+/).filter(Boolean);
+    let unknown = 0;
+    if (vocab) {
+      for (const tok of words) {
+        const w = cleanWord(tok);
+        if (w && !/^\d+$/.test(w) && !(w in vocab)) unknown++;
+      }
+    }
+    // Roughly: direct clips are quick, spliced ones are not. Calibrated on the
+    // real thing rather than guessed -- 46 words with 17 splices took ~36s.
+    const secs = Math.round(words.length * 0.15 + unknown * 1.6);
+    const eta = secs < 5 ? 'a moment' : secs < 90 ? `~${secs}s` : `~${Math.round(secs / 60)} min`;
+    const slow = secs > 45;
+
+    meterEl.innerHTML =
+      `<b>${words.length}</b> word${words.length === 1 ? '' : 's'}` +
+      (vocab ? ` · <b>${unknown}</b> to splice` : '') +
+      ` · ${eta}`;
+    meterEl.classList.toggle('warn', slow);
+  }
+
+  textInput.addEventListener('input', () => { queueSuggest(); checkWords(); updateMeter(); });
+
+  // Run once now the elements exist, so an empty box starts with the button
+  // disabled rather than inviting a click that only produces an error.
+  updateMeter();
   textInput.addEventListener('blur', () => setTimeout(closeSuggest, 150));
 
   textInput.addEventListener('keydown', (e) => {
