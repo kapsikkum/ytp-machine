@@ -68,7 +68,10 @@
     #stats-bar span { color: var(--yellow); }
     /* The readouts are ambient; the voice picker is the one control up here,
        so it gets a divider and the stats get pushed back a shade. */
-    #stats-bar .stat { color: #4a4a4a; }
+    /* Each reading wraps as a unit. Without this the row breaks wherever it
+       runs out of width, so on a phone "video sources: 48" split across two
+       lines with the label orphaned from its number. */
+    #stats-bar .stat { color: #4a4a4a; white-space: nowrap; }
     #corpus-wrap {
       display: flex;
       align-items: center;
@@ -206,8 +209,14 @@
       #corpus-select { flex: 1; min-width: 0; }
       #stats-row {
         display: flex;
-        justify-content: space-between;
-        gap: 0.75rem;
+        /* Wrapping belongs here, not on the bar outside it: the bar wraps its
+           own children, but all three readings live in this one row, so
+           without it they are a single unwrappable item and the row simply
+           runs off both edges of a phone. */
+        flex-wrap: wrap;
+        justify-content: center;
+        min-width: 0;
+        gap: 0.35rem 0.75rem;
       }
 
       /* Full-width target: a 2rem-padded button is a small thing to hit with a
@@ -370,6 +379,11 @@
       flex-wrap: wrap;
       gap: 0.4rem;
     }
+    /* Before the first generation this is empty but still laid out, and a
+       margin on an empty flex box is real space -- the neighbouring panels are
+       display:none so theirs collapse, which is why this was the only one
+       leaving a gap under the button. */
+    #word-results:empty { margin-top: 0; }
     .word-tag {
       border-radius: 4px;
       font-size: 0.8rem;

@@ -337,9 +337,28 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
     os.makedirs(target, exist_ok=True)
 
-    # The database first, and by rename rather than copy: on the same
-    # filesystem it is atomic and instant, and it means a 100 MB downloads/
-    # is never duplicated on a server that may not have room for two copies.
+    # Directories first, database last. This whole operation is not atomic, and
+    # whether it can be retried depends entirely on the order: the one thing
+    # that marks an install as "still legacy" is the loose database, so moving
+    # it first and then failing on downloads/ leaves a corpus split across two
+    # places that a re-run reports as nothing to migrate. Moving it last means
+    # any failure leaves a legacy install that is still legacy, and running it
+    # again simply carries on. (Directory renames do fail in practice -- a
+    # stale handle on the directory node is enough, even with no file inside it
+    # open -- so this is a real case, not a theoretical one.)
+    for member in ("downloads", "transcripts"):
+        src = os.path.join(root, member)
+        if not os.path.isdir(src):
+            continue
+        dst = os.path.join(target, member)
+        _move_dir(src, dst)
+        n = sum(len(f) for _, _, f in os.walk(dst))
+        print(f"  {member}/ -> {n} files")
+
+    # The database last, so that until this succeeds the install still reads as
+    # a legacy one and re-running resumes. Renamed rather than copied: on one
+    # filesystem that is atomic and instant, and it never needs room for two
+    # copies of a corpus on a server that may not have it.
     _checkpoint(legacy)
     for suffix in ("-wal", "-shm"):
         stray = legacy + suffix
@@ -348,30 +367,40 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     os.replace(legacy, os.path.join(target, DB_NAME))
     print(f"  {LEGACY_DB_NAME} -> {DB_NAME}")
 
-    for member in ("downloads", "transcripts"):
-        src = os.path.join(root, member)
-        if not os.path.isdir(src):
-            continue
-        dst = os.path.join(target, member)
-        if os.path.exists(dst):
-            # Merge rather than clobber: a half-finished earlier attempt should
-            # be completed, not have its contents replaced.
-            os.makedirs(dst, exist_ok=True)
-            for entry in os.listdir(src):
-                s, d = os.path.join(src, entry), os.path.join(dst, entry)
-                if not os.path.exists(d):
-                    os.replace(s, d)
-            if not os.listdir(src):
-                os.rmdir(src)
-        else:
-            os.replace(src, dst)
-        n = sum(len(f) for _, _, f in os.walk(dst))
-        print(f"  {member}/ -> {n} files")
-
     print("\nDone. The corpus is now "
           f"{os.path.join('corpora', os.path.basename(target))}.")
     print(f"Set MRS_CORPUS={os.path.basename(target)} if it was pinned to 'default'.")
     return 0
+
+
+def _move_dir(src: str, dst: str) -> None:
+    """Move a directory, falling back to moving its contents one by one.
+
+    Renaming the directory is one instant operation and is tried first. It can
+    fail on Windows with "the process cannot access the file" even when nothing
+    inside is open -- a stale handle on the directory node itself is enough,
+    and a just-killed process leaves exactly that. The files themselves move
+    perfectly well in that state, so the fallback is not a lesser path, just a
+    slower one. Existing entries are left alone rather than overwritten, so an
+    interrupted run finishes instead of clobbering what it already moved.
+    """
+    if not os.path.exists(dst):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError:
+            pass                      # fall through to per-entry
+
+    os.makedirs(dst, exist_ok=True)
+    for entry in os.listdir(src):
+        s, d = os.path.join(src, entry), os.path.join(dst, entry)
+        if not os.path.exists(d):
+            os.replace(s, d)
+    try:
+        if not os.listdir(src):
+            os.rmdir(src)
+    except OSError:
+        pass                          # empty but still held; harmless
 
 
 def _slug(name: str) -> str:
