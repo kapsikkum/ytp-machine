@@ -209,8 +209,25 @@
       color: #555;
       min-height: 1.1em;
       letter-spacing: 0.3px;
+      /* Hard ceiling. Expanding the full list on a long passage must not be
+         able to push the button and the progress bar off the bottom of the
+         page -- it scrolls inside itself instead. */
+      max-height: 8.5rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     #word-check .unknown { color: #ffaa00; }
+    .more-words {
+      font: inherit;
+      font-size: inherit;
+      background: none;
+      border: none;
+      padding: 0;
+      color: #777;
+      text-decoration: underline dotted;
+      cursor: pointer;
+    }
+    .more-words:hover { color: var(--yellow); }
 
     /* ── Status ── */
     #status {
@@ -884,15 +901,44 @@
       if (!w || /^\d+$/.test(w)) continue;                 // digits expand
       if (!(w in vocab) && !unknown.includes(w)) unknown.push(w);
     }
-    wordCheck.innerHTML = unknown.length
-      ? `no direct clip (will try phoneme splice): ` +
-        unknown.map(w => `<span class="unknown"></span>`).join(', ')
-      : '';
-    if (unknown.length) {
-      wordCheck.querySelectorAll('.unknown').forEach((el, i) => {
-        el.textContent = unknown[i];
+    // Cap what is listed. A paragraph can put several hundred words in here,
+    // and printing all of them turned this line into a wall of text that grew
+    // the card past the height of the screen. Past a couple of dozen the count
+    // is the useful part anyway -- it says how much splicing is coming, and so
+    // roughly how long the job will take -- while the words themselves are
+    // there to be skimmed.
+    const SHOWN = 24;
+    wordCheck.innerHTML = '';
+    if (!unknown.length) return;
+
+    const head = document.createElement('span');
+    head.textContent =
+      `${unknown.length} word${unknown.length === 1 ? '' : 's'} with no direct clip ` +
+      `(will try phoneme splice): `;
+    wordCheck.appendChild(head);
+
+    const listEl = document.createElement('span');
+    const render = (all) => {
+      listEl.innerHTML = '';
+      const shown = all ? unknown : unknown.slice(0, SHOWN);
+      shown.forEach((w, i) => {
+        const el = document.createElement('span');
+        el.className = 'unknown';
+        el.textContent = w;
+        listEl.appendChild(el);
+        if (i < shown.length - 1) listEl.appendChild(document.createTextNode(', '));
       });
-    }
+      if (!all && unknown.length > SHOWN) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'more-words';
+        more.textContent = ` … and ${unknown.length - SHOWN} more`;
+        more.addEventListener('click', () => render(true));
+        listEl.appendChild(more);
+      }
+    };
+    render(false);
+    wordCheck.appendChild(listEl);
   }
 
   textInput.addEventListener('input', () => { queueSuggest(); checkWords(); });
