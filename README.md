@@ -193,9 +193,28 @@ therefore unpacks and runs on Linux unchanged.
 
 ## API
 
+Generation is queued rather than done inside the request. A long sentence takes
+minutes, and a request held open that long is killed by any proxy in front of
+it — which returned 504 while the work carried on where nobody could collect
+it. Submitting returns a job id; poll it for progress.
+
+```bash
+id=$(curl -s -X POST localhost:8765/api/generate        -H 'Content-Type: application/json'        -d '{"text":"nice chocolate cake"}' | jq -r .id)
+curl -s localhost:8765/api/jobs/$id | jq
+```
+
+`?wait=1` keeps the old blocking behaviour, which is easier from a script where
+there is no proxy in the way.
+
+One job runs at a time. Generation is ffmpeg-bound and the box is shared, and
+two at once is what exhausted the container's thread ceiling before the queue
+existed — serialising is the point, not a limit to tune away.
+
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/generate` | `{"text": "..."}` → video URL, plus which words were found, spliced or missing |
+| `POST /api/generate` | `{"text": "..."}` → `202` with a job id. `?wait=1` to block and get the result directly |
+| `GET /api/jobs/{id}` | status, stage, progress, and the result once done |
+| `GET /api/queue` | how many jobs are queued and running |
 | `GET /api/words` | Whole vocabulary with clip counts; the frontend fetches it once for instant checking as you type |
 | `GET /api/suggest` | Autocomplete from real spoken runs |
 | `POST /api/rate` | Down-vote a splice so it is avoided next time |

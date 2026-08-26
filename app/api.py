@@ -2,8 +2,10 @@ import logging
 import time
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app import jobs
 from app.database import active, get_db, init_db, list_corpora, set_active
 from app.generate import generate_video
 
@@ -26,59 +28,85 @@ class RateRequest(BaseModel):
 
 
 @router.post("/generate")
-def generate(req: GenerateRequest):
+def generate(req: GenerateRequest, wait: bool = False):
+    """Queue a video and return its id.
+
+    Asynchronous by default. Generation can take minutes on a long sentence,
+    and holding the request open for that meant the proxy gave up first and
+    answered 504 -- the work finished, but nobody could collect it. Poll
+    /api/jobs/{id} instead.
+
+    `?wait=1` keeps the old blocking behaviour for scripts and curl, where
+    there is no proxy in the way and a single answer is easier to consume.
+    """
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text must not be empty")
 
-    log.info("GENERATE  %r", text)
-    t0 = time.perf_counter()
-
-    try:
-        result = generate_video(text)
-    except RuntimeError as exc:
-        # ffmpeg refused the job. Almost always because the sentence resolved to
-        # so many clips that it ran out of something -- threads, file handles --
-        # opening one input per clip. Answer with JSON either way: an
-        # unhandled error here returns a plain-text 500, and the page parses
-        # every response as JSON, so the user was shown "JSON.parse: unexpected
-        # character" rather than anything about what went wrong.
-        detail = str(exc)
-        crowded = "temporarily unavailable" in detail or "Too many open files" in detail
-        log.error("GENERATE failed  %r  %s", text, detail[-500:])
-        raise HTTPException(
-            status_code=503 if crowded else 500,
-            detail={
-                "message": (
-                    "Too much at once — that resolved to more clips than the "
-                    "video encoder can open in one go. Try a shorter sentence."
-                    if crowded else
-                    "The video encoder failed on this input."
-                ),
-                "words": len(text.split()),
-            },
-        ) from exc
-
-    elapsed = time.perf_counter() - t0
-    log.info(
-        "DONE  %.2fs  found=%d  spliced=%d  missing=%d  url=%s",
-        elapsed,
-        len(result["found"]),
-        len(result["spliced"]),
-        len(result["missing"]),
-        result.get("video_url"),
-    )
-
-    if not result["found"] and not result["spliced"]:
-        raise HTTPException(
-            status_code=404,
-            detail={
+    if wait:
+        log.info("GENERATE (sync)  %r", text)
+        t0 = time.perf_counter()
+        try:
+            result = generate_video(text)
+        except RuntimeError as exc:
+            detail = str(exc)
+            crowded = "temporarily unavailable" in detail or "Too many open files" in detail
+            log.error("GENERATE failed  %r  %s", text, detail[-500:])
+            raise HTTPException(
+                status_code=503 if crowded else 500,
+                detail={
+                    "message": (
+                        "Too much at once — that resolved to more clips than the "
+                        "video encoder can open in one go. Try a shorter sentence."
+                        if crowded else
+                        "The video encoder failed on this input."
+                    ),
+                },
+            ) from exc
+        elapsed = time.perf_counter() - t0
+        log.info("DONE  %.2fs  found=%d  spliced=%d  missing=%d  url=%s",
+                 elapsed, len(result["found"]), len(result["spliced"]),
+                 len(result["missing"]), result.get("video_url"))
+        if not result["found"] and not result["spliced"]:
+            raise HTTPException(status_code=404, detail={
                 "message": "No clips found or spliced for any word in the input.",
                 "missing": result["missing"],
-            },
-        )
+            })
+        return result
 
-    return result
+    job = jobs.submit(text)
+    log.info("QUEUE  %s  %r", job.id, text[:80])
+    body = job.as_dict()
+    body["position"] = jobs.position(job.id)
+    return JSONResponse(status_code=202, content=body)
+
+
+@router.get("/jobs/{job_id}")
+def job_status(job_id: str):
+    """How a queued generation is going, and its result once it is done."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail={
+            "message": "No such job. It may have finished long enough ago to be forgotten.",
+        })
+    body = job.as_dict()
+    if job.status == "queued":
+        body["position"] = jobs.position(job_id)
+
+    # A job that produced nothing usable is reported the same way the old
+    # synchronous endpoint did, so the page can keep one code path for it.
+    r = job.result
+    if job.status == "done" and r is not None and not r["found"] and not r["spliced"]:
+        body["status"] = "error"
+        body["error"] = "No clips found or spliced for any word in the input."
+        body["error_kind"] = "nothing_found"
+        body["missing"] = r["missing"]
+    return body
+
+
+@router.get("/queue")
+def queue_stats():
+    return jobs.stats()
 
 
 @router.post("/rate")

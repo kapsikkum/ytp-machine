@@ -499,40 +499,28 @@
     setStatus('<span class="spinner"></span>Generating… (this may take a minute)');
 
     try {
-      const res = await fetch('/api/generate', {
+      // Submitting queues the job and returns immediately. Generation used to
+      // run inside this request; a long sentence outlasted the proxy, which
+      // answered 504 while the work carried on where nobody could collect it.
+      const res = await fetchJson('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       });
-
-      // Not res.json() directly: anything that answers with a non-JSON body --
-      // a proxy timing out, a gateway error page -- made this throw, and the
-      // user was shown "JSON.parse: unexpected character at line 1 column 1"
-      // instead of what actually went wrong.
-      let data;
-      const raw = await res.text();
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        setStatus(
-          `Error: the server replied with ${res.status} and something that isn't JSON` +
-          (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : ''),
-          true,
-        );
-        return;
-      }
-
+      if (res.error) { setStatus(`Error: ${res.error}`, true); return; }
       if (!res.ok) {
-        const detail = data.detail;
-        const msg = typeof detail === 'object'
-          ? detail.message
-          : (detail || `Server error ${res.status}`);
+        const detail = res.data.detail;
+        const msg = typeof detail === 'object' ? detail.message
+                                               : (detail || `Server error ${res.status}`);
         setStatus(`Error: ${msg}`, true);
         if (typeof detail === 'object' && detail.missing) {
           renderWords(detail.missing.map(w => ({ word: w, status: 'missing' })));
         }
         return;
       }
+
+      const data = await pollJob(res.data.id, res.data.position ?? 0);
+      if (data === null) return;   // pollJob has already reported why
 
       // Success — count by actual per-token status (numbers expand, so the
       // input-word counts would be wrong).
@@ -563,6 +551,75 @@
       submitBtn.disabled = false;
     }
   });
+
+  // ── Talking to the queue ────────────────────────────────────────────────────
+  // Every response goes through here so a non-JSON body -- a proxy timeout, a
+  // gateway error page -- is reported as what it is rather than surfacing as
+  // "JSON.parse: unexpected character at line 1 column 1".
+  async function fetchJson(url, opts) {
+    let r;
+    try {
+      r = await fetch(url, opts);
+    } catch (e) {
+      return { error: `could not reach the server (${e.message})` };
+    }
+    const raw = await r.text();
+    try {
+      return { ok: r.ok, status: r.status, data: JSON.parse(raw) };
+    } catch {
+      return {
+        error: `the server replied with ${r.status} and something that isn't JSON` +
+               (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : ''),
+      };
+    }
+  }
+
+  const STAGE_TEXT = {
+    waiting:   'waiting to start',
+    loading:   'loading the corpus',
+    resolving: 'finding clips',
+    encoding:  'encoding video',
+    joining:   'joining the parts',
+    finished:  'finishing up',
+  };
+
+  // Poll until the job resolves. Backs off from a quarter second to two, so a
+  // short job feels instant and a long one is not asking every 250ms for
+  // minutes on end.
+  async function pollJob(id, position) {
+    let delay = 250;
+    if (position > 0) setStatus(`<span class="spinner"></span>Queued — ${position} ahead`);
+    for (;;) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 1.4, 2000);
+
+      const res = await fetchJson(`/api/jobs/${id}`);
+      if (res.error) { setStatus(`Error: ${res.error}`, true); return null; }
+      if (!res.ok) {
+        const d = res.data.detail;
+        setStatus(`Error: ${(typeof d === 'object' ? d.message : d) || 'job lost'}`, true);
+        return null;
+      }
+
+      const j = res.data;
+      if (j.status === 'error') {
+        setStatus(`Error: ${j.error}`, true);
+        if (j.missing) renderWords(j.missing.map(w => ({ word: w, status: 'missing' })));
+        return null;
+      }
+      if (j.status === 'done') return j.result;
+
+      if (j.status === 'queued') {
+        const ahead = j.position ?? 0;
+        setStatus(`<span class="spinner"></span>Queued${ahead ? ` — ${ahead} ahead` : ''}`);
+      } else {
+        const label = STAGE_TEXT[j.stage] || j.stage;
+        const pct = j.total > 1 ? ` ${Math.round((j.done / j.total) * 100)}%` : '';
+        const secs = j.running_for ? ` · ${Math.round(j.running_for)}s` : '';
+        setStatus(`<span class="spinner"></span>${label}${pct}${secs}`);
+      }
+    }
+  }
 
   // ── Allow Ctrl+Enter to submit ───────────────────────────────────────────────
   textInput.addEventListener('keydown', (e) => {

@@ -499,9 +499,13 @@ def suggest_next(context: str, prefix: str, limit: int = 10) -> dict[str, Any]:
 _CMD_BUDGET = 24000
 
 
-def _build_video(segments: list[dict[str, Any]], out_path: str) -> None:
+def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -> None:
     """Encode *segments* to *out_path*, splitting into multiple FFmpeg calls
     when the input args would exceed the Windows command-line limit."""
+    def _say(stage: str, done: int, total: int) -> None:
+        if progress:
+            progress(stage, done, total)
+
     # Split into chunks by estimated command-line cost.
     chunks: list[list[dict]] = [[]]
     used = 0
@@ -514,16 +518,20 @@ def _build_video(segments: list[dict[str, Any]], out_path: str) -> None:
         used += cost
 
     if len(chunks) == 1:
+        _say("encoding", 0, 1)
         _encode_chunk(segments, out_path, final_tail=True)
+        _say("encoding", 1, 1)
         return
 
     # Encode each chunk (identical codec settings), then stream-copy concat.
     part_paths: list[str] = []
     try:
         for ci, chunk in enumerate(chunks):
+            _say("encoding", ci, len(chunks))
             part = f"{out_path}.part{ci}.mp4"
             _encode_chunk(chunk, part, final_tail=(ci == len(chunks) - 1))
             part_paths.append(part)
+        _say("joining", len(chunks), len(chunks))
 
         list_path = out_path + ".concat.txt"
         with open(list_path, "w", encoding="utf-8") as f:
@@ -675,7 +683,19 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
 
 # ── Main generation ───────────────────────────────────────────────────────────
 
-def generate_video(text: str) -> dict[str, Any]:
+def generate_video(text: str, progress=None) -> dict[str, Any]:
+    """Turn *text* into a video.
+
+    `progress`, if given, is called as progress(stage, done, total) at points
+    where the work is measurable: once per word while resolving, then per
+    encode chunk. It exists so a queued job can say what it is doing rather
+    than leaving a request open for minutes -- which is what used to happen,
+    until a long sentence outlasted the proxy and returned 504.
+    """
+    def _say(stage: str, done: int, total: int) -> None:
+        if progress:
+            progress(stage, done, total)
+
     marked = tokenize_marked(text)
     if not marked:
         return {"found": [], "spliced": [], "missing": [], "runs": [],
@@ -684,8 +704,10 @@ def generate_video(text: str) -> dict[str, Any]:
     ends    = [e  for _w, e, _n in marked]   # ends[i] = word i ends a sentence
     is_noise = [n for _w, _e, n in marked]   # is_noise[i] = *wrapped* noise token
 
+    _say("loading", 0, 1)
     _ensure_cache()
     cbw = _clips_by_word_cache  # type: ignore[assignment]
+    _say("loading", 1, 1)
 
     found:    list[str]  = []
     spliced:  list[str]  = []
@@ -698,6 +720,7 @@ def generate_video(text: str) -> dict[str, Any]:
     i = 0
     n = len(words)
     while i < n:
+        _say("resolving", i, n)
         seg_before = len(segments)
         used_run = False
 
@@ -791,7 +814,8 @@ def generate_video(text: str) -> dict[str, Any]:
     os.makedirs("output", exist_ok=True)
     final_path = os.path.join("output", f"{run_id}.mp4")
 
-    _build_video(segments, final_path)
+    _say("resolving", n, n)
+    _build_video(segments, final_path, progress=progress)
 
     return {
         "found":     found,
