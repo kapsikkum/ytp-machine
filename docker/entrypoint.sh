@@ -14,14 +14,35 @@ PORT="${PORT:-8765}"
 mkdir -p "$DATA/downloads" "$DATA/output"
 
 seed() {
-  # A mounted bundle wins over a URL: it needs no network and is what a host
-  # with a copied-in corpus will have.
+  # A loose corpus mounted at /corpus wins: that is what a clone of this repo
+  # has, since the database and the videos are committed and a single packed
+  # bundle is not (103 MB, and GitHub refuses anything over 100).
+  if [ -f /corpus/michael_rosen.db ]; then
+    echo "seeding corpus from the files mounted at /corpus"
+    cp /corpus/michael_rosen.db "$DATA/michael_rosen.db"
+    # Written as `if` rather than `[ -d x ] && cp ...` on purpose: under set -e
+    # a bare test-and-command list that fails its test returns non-zero as a
+    # statement, and the script exits. A missing transcripts directory would
+    # have killed the container instead of being skipped.
+    if [ -d /corpus/downloads ]; then
+      cp -r /corpus/downloads/. "$DATA/downloads/"
+    fi
+    if [ -d /corpus/transcripts ]; then
+      mkdir -p "$DATA/transcripts"
+      cp -r /corpus/transcripts/. "$DATA/transcripts/"
+    fi
+    echo "  $(ls "$DATA/downloads" | wc -l) videos"
+    return 0
+  fi
+
+  # A packed bundle, which is how a corpus travels to a server.
   for bundle in /corpus/*.tar.zst /corpus/*.tar.gz; do
     [ -e "$bundle" ] || continue
     echo "seeding corpus from $bundle"
     python /app/scripts/corpus.py unpack "$bundle" --into "$DATA"
     return 0
   done
+
   if [ -n "${CORPUS_URL:-}" ]; then
     echo "seeding corpus from \$CORPUS_URL"
     python /app/scripts/corpus.py unpack "$CORPUS_URL" --into "$DATA"

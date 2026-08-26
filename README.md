@@ -63,26 +63,32 @@ transcripts.
 
 ## Getting the existing Michael Rosen corpus
 
+It is already here. `michael_rosen.db` and `downloads/` are committed, so a
+clone is a working install and `docker compose up` needs nothing else — compose
+mounts them read-only at `/corpus` and the entrypoint copies them into the
+volume the first time it finds no database.
+
+It is committed as loose files rather than one packed bundle for a dull reason:
+the bundle is 103 MB and GitHub refuses any single file over 100 MB. As 49 files
+none of which exceeds 9 MB, the same bytes go in without complaint, and without
+Git LFS and its metered bandwidth.
+
+A bundle is still the right way to move a corpus somewhere else — onto a server,
+or into a backup:
+
 ```bash
-python scripts/corpus.py unpack \
-  https://github.com/kapsikkum/ytp-machine/releases/latest/download/corpus-michael-rosen.tar.gz
+python scripts/corpus.py pack                       # -> corpus-YYYY-MM-DD.tar.zst
+python scripts/corpus.py unpack corpus-*.tar.zst
+CORPUS_URL=https://example.invalid/corpus.tar.gz docker compose up
 ```
 
-Or let the container fetch it on first start:
+The entrypoint accepts any of the three: loose files at `/corpus`, a bundle at
+`/corpus`, or `CORPUS_URL`. With none of them and no database it prints what is
+missing and stops, rather than serving an app that answers every request with
+"no clips found".
 
-```bash
-CORPUS_URL=https://github.com/kapsikkum/ytp-machine/releases/latest/download/corpus-michael-rosen.tar.gz \
-  docker compose up
-```
-
-Or, if you already have a bundle on disk, drop it in `corpus/` — compose mounts
-that read-only at `/corpus` and the entrypoint unpacks it into the volume the
-first time it finds no database. Once a database exists the bundle is ignored,
-so it is safe to leave mounted.
-
-With no corpus and nothing to seed from, the container prints what is missing
-and exits rather than serving an app that answers every request with "no clips
-found".
+Generated videos in `output/` stay out of git: about a gigabyte, all
+reproducible in seconds.
 
 ## Building a new corpus
 
@@ -150,9 +156,12 @@ python scripts/corpus.py info corpus-*.tar.zst
 ```
 
 `pack` checkpoints the SQLite WAL first — tarring a live database with an
-unmerged WAL can capture a torn state missing recent writes. Generated videos in
-`output/` are deliberately excluded: about a gigabyte, all reproducible in
-seconds.
+unmerged WAL can capture a torn state missing recent writes.
+
+Committing the new videos and the database is how the shipped corpus gets
+updated. Bear in mind git keeps every version of a binary forever and cannot be
+made to forget one without rewriting history, so add material when it is worth
+keeping rather than after every experiment.
 
 If `zstandard` is installed the bundle is `.tar.zst`, otherwise it falls back to
 `.tar.gz`. `unpack` reads either.

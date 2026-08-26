@@ -5,13 +5,14 @@ __pycache__/
 venv/
 .env
 
-# Database
-michael_rosen.db
+# The corpus is committed: the database and the source videos it indexes, so a
+# clone is a working install. Not as a single tarball -- that comes to 103 MB
+# and GitHub refuses any file over 100 MB. As 49 loose files none of which
+# exceeds 9 MB, it goes in fine.
 michael_rosen.db-wal
 michael_rosen.db-shm
 
-# Downloaded / generated media
-downloads/
+# Generated videos stay out: ~1 GB, and every one is reproducible in seconds.
 output/
 
 # Whisper model cache
@@ -20,7 +21,8 @@ output/
 # Runtime log
 app.log
 
-# Corpus bundles — built artefacts, not source; see scripts/corpus.py
+# Packed bundles are artefacts -- useful for moving a corpus to a server or
+# keeping a backup, but the repo carries the loose corpus instead.
 corpus/
 corpus-*.tar.zst
 corpus-*.tar.gz
