@@ -111,21 +111,44 @@ def _sha256(path: str) -> str:
 
 
 def _open_write(path: str):
-    """Prefer zstd, fall back to gzip. Both are readable by `unpack`."""
+    """Prefer zstd, fall back to gzip. Returns (tar, path, finish).
+
+    Call finish(), never tar.close(). With zstd there are three things stacked
+    up -- the tarfile writes into a compressor which writes into a file -- and
+    closing only the top of that stack leaves the archive unfinished.
+    """
     if path.endswith(".zst"):
         try:
             import zstandard  # noqa: F401
         except ImportError:
             alt = path[: -len(".zst")] + ".gz"
             print(f"  zstandard not installed, writing gzip instead: {alt}")
-            return tarfile.open(alt, "w:gz"), alt
+            tar = tarfile.open(alt, "w:gz")
+            return tar, alt, tar.close
         import zstandard
 
         cctx = zstandard.ZstdCompressor(level=10)
         raw = open(path, "wb")
         stream = cctx.stream_writer(raw)
-        return tarfile.open(fileobj=stream, mode="w|"), path
-    return tarfile.open(path, "w:gz"), path
+        tar = tarfile.open(fileobj=stream, mode="w|")
+
+        def finish() -> None:
+            # Every step is load-bearing and the order is the point: the tar
+            # writes its trailer into the compressor, the compressor flushes
+            # its final frame into the file, and only then is the archive
+            # complete. Closing the tarfile alone -- which is what this did --
+            # produced a .tar.zst that looked entirely normal, had a stable
+            # checksum, copied faithfully to another machine, and then failed
+            # to extract there with "unexpected end of data".
+            tar.close()
+            stream.close()
+            raw.close()
+
+        return tar, path, finish
+
+    # gzip needs no help: tarfile owns the file and closing it closes both.
+    tar = tarfile.open(path, "w:gz")
+    return tar, path, tar.close
 
 
 def _open_read(path: str):
@@ -195,7 +218,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
         info.uname = info.gname = ""
         return info
 
-    tar, out = _open_write(out)
+    tar, out, finish = _open_write(out)
     count = 0
     try:
         for m in present:
@@ -210,7 +233,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
                 for_added = sum(len(f) for _, _, f in os.walk(src))
             count += for_added or 1
     finally:
-        tar.close()
+        finish()
 
     size = os.path.getsize(out)
     print(f"packed {count} files -> {out}")
