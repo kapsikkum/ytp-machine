@@ -94,12 +94,43 @@ def main() -> int:
     # A full stop only ends a sentence at the end of a token. Any period used
     # to count, so "2.0" planted a pause in the middle of a phrase.
     marked = tokenize_marked("the 2.0 litre engine")
-    if any(ends for word, ends, _ in marked[:-1]):
+    if any(ends for _w, ends, _n, _r in marked[:-1]):
         failures.append(f"  a decimal ended a sentence: {marked}")
     if not marked[-1][1]:
         failures.append("  the last token should always end a sentence")
     if not tokenize_marked("it died. then what")[1][1]:
         failures.append("  a real full stop stopped ending a sentence")
+
+    # ~word~ plays that word backwards. The marker has to come off before
+    # anything else looks at the token, or the word never matches the corpus
+    # and a marked full stop stops ending its sentence.
+    def marks(text):
+        return [(w, e, n, r) for w, e, n, r in tokenize_marked(text)]
+
+    got = marks("say ~hello~ now")
+    if got[1][:1] != ("hello",) or not got[1][3]:
+        failures.append(f"  ~hello~ should be the word 'hello', reversed: {got}")
+    if got[0][3] or got[2][3]:
+        failures.append(f"  the mark leaked onto its neighbours: {got}")
+
+    got = marks("it is ~gone~.")
+    if not got[-1][1]:
+        failures.append(f"  ~gone~. should still end a sentence: {got}")
+    if not got[-1][3]:
+        failures.append(f"  ~gone~. should still be reversed: {got}")
+
+    # A marked token that expands reverses every word it became.
+    got = marks("~i30~")
+    if [w for w, _e, _n, _r in got] != ["i", "thirty"]:
+        failures.append(f"  ~i30~ should still expand: {got}")
+    if not all(r for _w, _e, _n, r in got):
+        failures.append(f"  every word of ~i30~ should be reversed: {got}")
+
+    # An unmarked token is never reversed, and a stray tilde is not a marker.
+    if any(r for _w, _e, _n, r in marks("plain words here")):
+        failures.append("  an unmarked token came back reversed")
+    if any(r for _w, _e, _n, r in marks("~half marked")):
+        failures.append("  a single tilde should not mark anything")
 
     # What the corpus says beats what the rules would make of it. The
     # transcriber writes some tokens in a form the rules would expand right
@@ -122,7 +153,8 @@ def main() -> int:
         print(f"FAILED ({len(failures)}):")
         print("\n".join(failures))
         return 1
-    print(f"ok: {len(CASES)} token cases + 3 sentence-boundary cases")
+    print(f"ok: {len(CASES)} token cases, 3 sentence-boundary cases, "
+          f"6 reverse-marker cases")
     return 0
 
 

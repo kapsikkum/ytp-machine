@@ -185,6 +185,24 @@ python scripts/corpus.py info corpus-*.tar.zst
 unmerged WAL captures a torn state. Bundles are `.tar.zst`, or `.tar.gz` if
 `zstandard` isn't installed. `unpack` reads either.
 
+## Markup in the input
+
+Two things are not plain words:
+
+| typed | does |
+| --- | --- |
+| `~word~` | plays that word backwards |
+| `*noise*` | a non-verbal clip (`*spew*`, `*click*`) rather than the spoken word |
+
+Reversal happens at cut time, not in the corpus. Reversed speech is not speech:
+Whisper transcribes it into confident nonsense, so a corpus built from a
+backwards recording is a set of noises labelled with words nobody said, and it
+poisons every later splice. Reversing on the way out costs nothing when unused
+and works for any word in any corpus.
+
+A run is one clip, so it is reversed or not as a whole — marking one word ends
+the run there rather than quietly reversing its neighbours.
+
 ## How hard it tries
 
 A corpus can only say what it has heard. When a word isn't there, the splicer

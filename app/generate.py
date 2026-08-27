@@ -506,32 +506,45 @@ def tokenize(text: str) -> list[str]:
     return result
 
 
-def tokenize_marked(text: str) -> list[tuple[str, bool, bool]]:
-    """Tokenise into (word, ends_sentence, is_noise) triples.
+def tokenize_marked(text: str) -> list[tuple[str, bool, bool, bool]]:
+    """Tokenise into (word, ends_sentence, is_noise, is_reversed) tuples.
 
     * ``*spew*`` / ``*click*`` → a non-verbal noise token (is_noise=True), so a
       plain "spew"/"click" is still spoken as a word.
+    * ``~word~`` → played backwards (is_reversed=True). The clip is reversed at
+      cut time rather than anything being stored backwards: reversed speech is
+      not speech, so a corpus built from it would be labelled nonsense, while
+      reversing on the way out works for any word in any corpus.
     * ``ends_sentence`` marks a . ! ? for pause insertion; the very last token
       is always treated as a sentence end (buffer tail for editing).
     """
-    out: list[tuple[str, bool, bool]] = []
+    out: list[tuple[str, bool, bool, bool]] = []
     for token in re.split(r"\s+", text.strip()):
         if not token:
             continue
+        # Strip the reverse marker first so everything below -- sentence ends,
+        # noise markers, number expansion -- sees an ordinary token.
+        rev = False
+        m = re.fullmatch(r"~(.+?)~([.!?\"')\]]*)", token)
+        if m:
+            rev = True
+            token = m.group(1) + m.group(2)
         # Trailing only. Any period anywhere used to end a sentence, so "2.0"
         # planted a full stop -- and its pause -- in the middle of a phrase.
         ends = bool(re.search(r"[.!?][\"')\]]*$", token))
         m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
         if m:
-            out.append((m.group(1).lower(), ends, True))
+            out.append((m.group(1).lower(), ends, True, rev))
             continue
         words = _expand_token(token)
         for k, w in enumerate(words):
-            out.append((w, ends and k == len(words) - 1, False))
+            # A marked token that expands ("~i30~") reverses every word it
+            # became, not just the first.
+            out.append((w, ends and k == len(words) - 1, False, rev))
 
     if out:                                   # always full-stop the end
-        w, _e, nz = out[-1]
-        out[-1] = (w, True, nz)
+        w, _e, nz, rv = out[-1]
+        out[-1] = (w, True, nz, rv)
     return out
 
 
@@ -927,13 +940,27 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         if fo is None: fo = _FADE_OUT
         pause = seg.get("pause_after", 0.0)   # brief inter-word hold (freeze + silence)
 
+        # A ~word~ token, played backwards. Reversing at cut time rather than
+        # storing anything reversed: it works for any word in any corpus, and
+        # costs nothing when unused. `reverse` buffers the whole segment, which
+        # is fine here -- these are single words, a fraction of a second each.
+        # It goes before the pause padding so the frozen tail stays at the end
+        # rather than being flipped to the front.
+        rev = bool(seg.get("reverse"))
+
         vfilters = ["scale=480:270:force_original_aspect_ratio=disable", "fps=25", "setsar=1"]
+        if rev:
+            vfilters.append("reverse")
         if pause > 0:
             vfilters.append(f"tpad=stop_mode=clone:stop_duration={pause:.4f}")
         vfilters.append("setpts=PTS-STARTPTS")
         parts.append(f"[{i}:v]" + ",".join(vfilters) + f"[v{i}]")
 
         afilters = ["aformat=sample_rates=44100:channel_layouts=stereo"]
+        if rev:
+            # Before the fades, so they still land on the audible edges of what
+            # actually plays rather than on what used to be the edges.
+            afilters.append("areverse")
         if fi > 0:
             afilters.append(f"afade=t=in:st=0:d={fi:.4f}")
         if fo > 0:
@@ -1003,9 +1030,10 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
     if not marked:
         return {"found": [], "spliced": [], "missing": [], "runs": [],
                 "tokens": [], "video_url": None}
-    words   = [w  for w, _e, _n in marked]
-    ends    = [e  for _w, e, _n in marked]   # ends[i] = word i ends a sentence
-    is_noise = [n for _w, _e, n in marked]   # is_noise[i] = *wrapped* noise token
+    words   = [w  for w, _e, _n, _r in marked]
+    ends    = [e  for _w, e, _n, _r in marked]   # ends[i] = word i ends a sentence
+    is_noise = [n for _w, _e, n, _r in marked]   # is_noise[i] = *wrapped* noise token
+    is_rev   = [r for _w, _e, _n, r in marked]   # is_rev[i]   = ~wrapped~ reversed token
 
     _say("loading", 0, 1)
     _ensure_cache()
@@ -1043,6 +1071,9 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                 missing.append(word)
                 tokens.append({"word": word, "status": "missing"})
                 log.warning("  MISSING  *%s* (no noise clip)", word)
+            if is_rev[i]:
+                for seg in segments[seg_before:]:
+                    seg["reverse"] = True
             if len(segments) > seg_before:
                 if ends[i]:
                     idle = _pick_idle(_STOP_PAUSE)
@@ -1060,7 +1091,10 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
             src, s, _e, length = run
             cap = length
             for k in range(length - 1):       # all but the run's last word
-                if ends[i + k]:
+                # A run is one clip, so it is reversed or not as a whole. Where
+                # the mark changes, the run has to end -- otherwise marking one
+                # word would quietly reverse the words either side of it.
+                if ends[i + k] or is_rev[i + k] != is_rev[i + k + 1]:
                     cap = k + 1
                     break
             if cap >= 2:
@@ -1119,6 +1153,10 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                     tokens.append({"word": word, "status": "missing"})
                     log.warning("  MISSING  %s", word)
             last_idx = i
+
+        if any(is_rev[i:i + cap]):
+            for seg in segments[seg_before:]:
+                seg["reverse"] = True
 
         # Pacing: a 0.5s idle clip on full stops, else a brief freeze between
         # words — but only if this word actually produced audio.

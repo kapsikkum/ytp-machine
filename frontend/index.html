@@ -452,6 +452,19 @@
       margin-right: 4px;
       vertical-align: middle;
     }
+    #syntax-hint {
+      text-align: center;
+      font-size: 0.7rem;
+      color: #666;
+      margin-top: 0.6rem;
+    }
+    #syntax-hint code {
+      color: #999;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.05rem 0.3rem;
+    }
     #legend .dot.found   { background: var(--green); }
     #legend .dot.run     { background: #7dd3fc; }
     #legend .dot.spliced { background: #ffaa00; }
@@ -555,6 +568,8 @@
     <div id="progress-note"></div>
   </div>
   <div id="word-results"></div>
+  <div id="syntax-hint"><code>~word~</code> plays it backwards · <code>*noise*</code> for a non-verbal clip</div>
+
   <div id="legend" style="display:none">
     <span><span class="dot run"></span> real phrase</span>
     <span><span class="dot found"></span> direct match</span>
