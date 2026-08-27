@@ -53,10 +53,32 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # are hours of multi-speaker audio. /videos is the tab we actually want.
 _TABS = ("videos", "streams", "shorts", "playlists", "featured", "community")
 
+# A single video is a perfectly good corpus -- one long monologue can carry more
+# distinct words than a dozen short uploads -- so it is worth taking the same
+# route as a channel rather than sending people back to ingest.py.
+_VIDEO_ID = r"[A-Za-z0-9_-]{11}"
+_VIDEO_RE = re.compile(rf"(?:watch\?v=|youtu\.be/|/shorts/|/live/)({_VIDEO_ID})")
+
+
+def _video_id(raw: str) -> str | None:
+    """The video id, if this names one video rather than a channel."""
+    raw = raw.strip()
+    m = _VIDEO_RE.search(raw)
+    if m:
+        return m.group(1)
+    # A bare id, pasted on its own. Without this it becomes https://<id>/videos.
+    if "/" not in raw and re.fullmatch(_VIDEO_ID, raw):
+        return raw
+    return None
+
 
 def _channel_url(raw: str) -> str:
     """Accept @handle, a bare channel URL, or a full one, and aim it at /videos."""
     url = raw.strip()
+    if _video_id(url):
+        # Already points at one video; adding a tab to it would ask YouTube for
+        # a channel that does not exist.
+        return url if url.startswith("http") else f"https://www.youtube.com/watch?v={url}"
     if url.startswith("@"):
         url = f"https://www.youtube.com/{url}"
     elif not url.startswith("http"):
@@ -185,9 +207,12 @@ def main() -> int:
     args = ap.parse_args()
 
     channel = _channel_url(args.channel)
+    one_video = _video_id(channel)
     slug = args.name or _slug_from(channel)
     if not slug:
-        sys.exit(f"Cannot derive a corpus name from {channel} -- pass --name.")
+        sys.exit(f"Cannot derive a corpus name from {channel} -- pass --name."
+                 + (" A video URL carries no channel handle to name it after."
+                    if one_video else ""))
     slug = re.sub(r"[^a-z0-9_-]+", "-", slug.lower()).strip("-")
 
     data_dir = os.path.abspath(
@@ -197,11 +222,12 @@ def main() -> int:
     out = os.path.abspath(args.out or os.path.join(data_dir, f"{slug}.tar.zst"))
 
     print(f"corpus:  {slug}")
-    print(f"channel: {channel}")
+    print(f"{'video:  ' if one_video else 'channel:'} {channel}")
     print(f"into:    {corpus_dir}")
     print(f"bundle:  {out}")
-    print(f"model:   {args.model}   limit: {args.limit or 'all'}   "
-          f"normalise: {'yes' if args.normalise else 'no'}")
+    print(f"model:   {args.model}"
+          + ("" if one_video else f"   limit: {args.limit or 'all'}")
+          + f"   normalise: {'yes' if args.normalise else 'no'}")
     _preflight(args.device)
 
     env = dict(os.environ)
@@ -217,12 +243,18 @@ def main() -> int:
     started = time.time()
 
     if not args.skip_ingest:
-        argv = ["scripts/ingest_channel.py", channel,
-                "--model", args.model, "--skip-errors"]
-        if args.limit:
-            argv += ["--limit", str(args.limit)]
-        if args.year:
-            argv += ["--year", str(args.year)]
+        if one_video:
+            # ingest.py takes the URL directly. Going through ingest_channel
+            # for one video would ask YouTube for a channel listing that does
+            # not exist, and --limit and --year have nothing to select from.
+            argv = ["scripts/ingest.py", channel, "--model", args.model]
+        else:
+            argv = ["scripts/ingest_channel.py", channel,
+                    "--model", args.model, "--skip-errors"]
+            if args.limit:
+                argv += ["--limit", str(args.limit)]
+            if args.year:
+                argv += ["--year", str(args.year)]
         if args.max_height:
             argv += ["--max-height", str(args.max_height)]
         if args.normalise:

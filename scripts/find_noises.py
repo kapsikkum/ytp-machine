@@ -79,7 +79,18 @@ def _bursts_in_gap(source_file, g_start, g_end):
     return bursts
 
 
-def find_in_source(sid, apply, label=None):
+def _duration(source_file) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", resolve_path(source_file)],
+        capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def find_in_source(sid, apply, label=None, min_dur=0.0):
     with get_db() as conn:
         src = conn.execute("SELECT source_file FROM sources WHERE id=?", (sid,)).fetchone()
         words = [dict(r) for r in conn.execute(
@@ -89,12 +100,28 @@ def find_in_source(sid, apply, label=None):
         return 0
     sf = src["source_file"]
 
+    # Every stretch of audio no word claims. The pairwise gaps are the obvious
+    # ones, but a video that opens or closes on a noise has it outside every
+    # pair -- and opening on one is common, because a speaker clears their
+    # throat before the first word rather than after it.
+    gaps = [(a["end_time"] + 0.02, b["start_time"] - 0.02)
+            for a, b in zip(words, words[1:])]
+    gaps.insert(0, (0.0, words[0]["start_time"] - 0.02))
+    end = _duration(sf)
+    if end > words[-1]["end_time"]:
+        gaps.append((words[-1]["end_time"] + 0.02, end))
+
     rows = []
-    for a, b in zip(words, words[1:]):
-        gap = b["start_time"] - a["end_time"]
-        if gap < _MIN_GAP:
+    for g_start, g_end in gaps:
+        if g_end - g_start < _MIN_GAP:
             continue
-        for (st, en, peak) in _bursts_in_gap(sf, a["end_time"] + 0.02, b["start_time"] - 0.02):
+        for (st, en, peak) in _bursts_in_gap(sf, g_start, g_end):
+            # A breath, a lip smack and the plosive at the front of a word are
+            # all bursts, and all short. When you are after one particular
+            # sustained noise -- a hum, a groan -- length is what separates it
+            # from the dozen incidental ones in the same recording.
+            if (en - st) < min_dur:
+                continue
             kind = label if label else ("click" if (en - st) < _CLICK_MAX else "spew")
             rows.append((sid, kind, round(st, 4), round(en, 4), sf))
 
@@ -115,23 +142,45 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--source-id", type=int, default=None,
+                    help="Scan this source instead of the curated list. Every "
+                         "corpus has its own noises and the curated pair names "
+                         "two Michael Rosen videos, so this is what any other "
+                         "speaker needs.")
+    ap.add_argument("--min-dur", type=float, default=0.0, metavar="SEC",
+                    help="Ignore bursts shorter than this. Breaths and lip "
+                         "smacks are brief; a sustained noise worth naming is "
+                         "not.")
+    ap.add_argument("--label", default=None, metavar="WORD",
+                    help="What to call what it finds, e.g. mmm. Without this "
+                         "they are named by duration: click, or spew.")
     args = ap.parse_args()
     init_db()
 
     with get_db() as conn:
         if args.apply:
-            conn.execute("DELETE FROM noise_clips")
-        targets = []
-        for vid, label in CURATED:
-            r = conn.execute("SELECT id, title FROM sources WHERE source_file LIKE ?",
-                             (f"%{vid}%",)).fetchone()
-            if r:
-                targets.append((r["id"], label))
+            # Scoped to the source when one is named. Wiping the table for a
+            # single-source run would throw away every other source's noises
+            # to add one video's.
+            if args.source_id is not None:
+                conn.execute("DELETE FROM noise_clips WHERE source_id=?",
+                             (args.source_id,))
+            else:
+                conn.execute("DELETE FROM noise_clips")
+        if args.source_id is not None:
+            targets = [(args.source_id, args.label)]
+        else:
+            targets = []
+            for vid, label in CURATED:
+                r = conn.execute("SELECT id, title FROM sources WHERE source_file LIKE ?",
+                                 (f"%{vid}%",)).fetchone()
+                if r:
+                    targets.append((r["id"], args.label or label))
 
-    print(f"Curated noise build{'  (DRY RUN)' if not args.apply else ''}")
+    print(f"Noise build{'  (DRY RUN)' if not args.apply else ''}")
     total = 0
     for sid, label in targets:
-        total += find_in_source(sid, args.apply, label)
+        total += find_in_source(sid, args.apply, label, args.min_dur)
     print(f"\nTotal: {total} noise clips {'stored' if args.apply else '(dry run)'}.")
     if args.apply:
         try:
