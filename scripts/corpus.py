@@ -189,6 +189,41 @@ def _checkpoint(db: str) -> None:
         print(f"  warning: could not checkpoint the database: {exc}")
 
 
+def _check_paths(db: str) -> None:
+    """Warn if any clip points somewhere a different machine cannot follow.
+
+    A stored path has to be relative to the corpus directory, because that is
+    the only thing that is the same on the machine that built the corpus and
+    the one that serves it. An absolute path survives packing, unpacking and a
+    checksum without complaint and then fails at the only moment that matters:
+    ffmpeg opening the file. Worse, a Windows "C:/..." is not absolute to
+    Linux, so it gets quietly appended to the corpus directory and the error
+    names a path that never existed anywhere.
+
+    This is a warning rather than a refusal -- the bundle is still the best
+    copy of a corpus that took hours to build, and the paths can be repaired
+    in place afterwards.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return
+    try:
+        bad = conn.execute(
+            "SELECT count(*), count(DISTINCT source_file) FROM word_clips "
+            "WHERE source_file NOT LIKE 'downloads/%'"
+        ).fetchone()
+    except sqlite3.Error:
+        return                      # an older or partial schema: nothing to say
+    finally:
+        conn.close()
+
+    if bad and bad[0]:
+        print(f"  WARNING: {bad[0]} clips across {bad[1]} file(s) have paths "
+              f"that are not relative to the corpus.\n"
+              f"           They will not resolve anywhere but this machine.")
+
+
 def cmd_pack(args: argparse.Namespace) -> int:
     root = _corpus_root(args.corpus)
     out = args.out or os.path.join(
@@ -207,6 +242,7 @@ def cmd_pack(args: argparse.Namespace) -> int:
     db = _db_in(root)
     if db:
         _checkpoint(db)
+        _check_paths(db)
 
     def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         base = os.path.basename(info.name)

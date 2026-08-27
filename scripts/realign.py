@@ -23,7 +23,7 @@ from scripts.ingest import transcribe
 
 def realign_source(source: dict, model_name: str, device: str | None = None) -> int:
     """Replace word_clips for one source. Returns number of new clips stored."""
-    from app.database import resolve_path
+    from app.database import relativize_path, resolve_path
     # Stored paths are relative to the corpus directory, not to wherever this
     # was run from -- without resolving, every source looks missing as soon as
     # the corpus is not the current directory.
@@ -34,6 +34,13 @@ def realign_source(source: dict, model_name: str, device: str | None = None) -> 
     words = transcribe(source_file, model_name, device)
     print(f"  {len(words)} words transcribed")
 
+    # Store what came out of the database, not the absolute path we resolved to
+    # run ffmpeg. Writing the absolute one back looks harmless on the machine
+    # that did the re-align and breaks the corpus everywhere else: a Windows
+    # "C:/..." is not absolute to Linux, so resolve_path appends it to the
+    # corpus directory and every clip from a re-aligned source fails to open.
+    stored = relativize_path(source_file)
+
     with get_db() as conn:
         # Remove old clips for this source
         conn.execute("DELETE FROM word_clips WHERE source_id = ?", (source["id"],))
@@ -41,7 +48,7 @@ def realign_source(source: dict, model_name: str, device: str | None = None) -> 
         conn.executemany(
             "INSERT INTO word_clips (source_id, word, start_time, end_time, source_file) "
             "VALUES (?, ?, ?, ?, ?)",
-            [(source["id"], w["word"], w["start"], w["end"], source_file) for w in words],
+            [(source["id"], w["word"], w["start"], w["end"], stored) for w in words],
         )
 
     return len(words)
