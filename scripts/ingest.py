@@ -150,6 +150,36 @@ def normalise_video(path: str) -> str:
 
 # ── Transcription ─────────────────────────────────────────────────────────────
 
+# The loaded model, kept between calls. Both batch callers -- ingest_channel
+# and realign -- transcribe one source per call, and loading a fresh model each
+# time put a second copy of it on the GPU before the first was collected.
+# `medium` is about 6 GB against 8 GB of VRAM, so what actually happened was
+# that it survived seven sources on leftover fragments and then failed three in
+# a row at load time with a bare "CUDA error: out of memory". Holding one model
+# also saves the twenty-odd seconds it takes to load, per video.
+_model_cache: dict[tuple[str, str], object] = {}
+
+
+def _load_transcriber(model_name: str, dev: str):
+    import stable_whisper
+    from app.device import describe
+
+    key = (model_name, dev)
+    if key not in _model_cache:
+        # Only one model at a time. Asking for a different size mid-run is
+        # rare, but keeping both would reintroduce exactly the problem above.
+        if _model_cache:
+            _model_cache.clear()
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        print(f"  Loading stable-whisper model '{model_name}' on {describe(dev)} …")
+        _model_cache[key] = stable_whisper.load_model(model_name, device=dev)
+    return _model_cache[key]
+
+
 def transcribe(video_path: str, model_name: str = "base",
                device: str | None = None) -> list[dict]:
     """
@@ -158,12 +188,10 @@ def transcribe(video_path: str, model_name: str = "base",
     stable-ts refines Whisper's output using audio-energy curves and modified
     attention patterns, giving ~50ms accuracy vs ~200ms for plain Whisper.
     """
-    import stable_whisper
-    from app.device import get as get_device, describe
+    from app.device import get as get_device
 
     dev = get_device(device)
-    print(f"  Loading stable-whisper model '{model_name}' on {describe(dev)} …")
-    model = stable_whisper.load_model(model_name, device=dev)
+    model = _load_transcriber(model_name, dev)
 
     print(f"  Transcribing {os.path.basename(video_path)} …")
     result = model.transcribe(video_path, word_timestamps=True)

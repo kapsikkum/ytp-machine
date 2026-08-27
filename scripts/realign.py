@@ -115,7 +115,13 @@ def main() -> None:
     print(f"\n{'-'*60}")
     print(f"Done: {ok}/{len(sources)} sources re-aligned.")
     if ok < len(sources):
-        print("Run with --skip-errors to continue past failures.")
+        # Only sources that failed need doing again, and the ones that
+        # succeeded are already written -- re-running the whole range would
+        # re-transcribe hours of audio for nothing.
+        print(f"{len(sources) - ok} failed. Re-run with --source-id to retry "
+              f"just those; the rest are already stored.")
+        if not args.skip_errors:
+            print("(--skip-errors carries on past a failure instead of stopping.)")
 
 
 if __name__ == "__main__":
