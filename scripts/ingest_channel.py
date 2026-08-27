@@ -216,25 +216,36 @@ def main() -> None:
 
     if args.skip:
         videos = videos[args.skip:]
-    if args.limit is not None:
-        videos = videos[:args.limit]
     if not videos:
         sys.exit(f"--skip {args.skip} leaves nothing of {total_found} videos.")
-    if len(videos) != total_found:
-        print(f"\nSelected {len(videos)} of {total_found} videos "
-              f"(skip={args.skip}, limit={args.limit}).")
 
-    print(f"\nFound {len(videos)} video(s):\n")
-    for v in videos:
+    # --limit counts videos that were actually ingested, not videos that were
+    # attempted. A channel listing carries material that can never be
+    # downloaded -- members-only above all, but also region-locked, age-gated
+    # and since-deleted entries -- and slicing the list before trying them made
+    # every one of those silently cost a slot: "--limit 3" on a channel whose
+    # newest upload is a member cut ingested two videos and called it done.
+    # Failures now fall through to the next candidate.
+    want = args.limit if args.limit is not None else len(videos)
+    want = min(want, len(videos))
+    print(f"\n{len(videos)} candidate(s) of {total_found}; "
+          f"ingesting until {want} succeed.\n")
+    for v in videos[:want]:
         safe_title = v['title'][:60].encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
         print(f"  {v['upload_date']}  {safe_title}")
         print(f"  {v['url']}\n")
+    if len(videos) > want:
+        print(f"  (+{len(videos) - want} more in reserve, for any of the above "
+              f"that cannot be downloaded)\n")
 
     print(f"Starting ingestion  (Whisper model: {args.model})\n{'─'*60}")
 
     ok = 0
-    for i, v in enumerate(videos, 1):
-        print(f"\n[{i}/{len(videos)}] {v['title']}")
+    failed: list[tuple[str, str]] = []
+    for v in videos:
+        if ok >= want:
+            break
+        print(f"\n[{ok + 1}/{want}] {v['title']}")
         print(f"  {v['url']}")
         try:
             ingest(
@@ -249,11 +260,22 @@ def main() -> None:
             ok += 1
         except Exception as exc:
             print(f"  ERROR: {exc}")
+            failed.append((v["title"], str(exc).strip().splitlines()[-1][:120]))
             if not args.skip_errors:
                 sys.exit(1)
 
     print(f"\n{'─'*60}")
-    print(f"Done: {ok}/{len(videos)} videos ingested successfully.")
+    print(f"Done: {ok}/{want} videos ingested successfully.")
+    if ok < want:
+        print(f"  ran out of candidates: all {len(videos)} were tried.")
+    if failed:
+        # Named, not counted. A run that skipped material should say what it
+        # skipped, or "2/3" reads as a rounding error rather than as a video
+        # nobody without a membership can download.
+        print(f"\n  {len(failed)} skipped:")
+        for title, why in failed:
+            print(f"    {title[:52]}")
+            print(f"      {why}")
 
 
 if __name__ == "__main__":
