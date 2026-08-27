@@ -1057,20 +1057,22 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
         seg_before = len(segments)
         used_run = False
 
-        # 0) Explicit *noise* token (e.g. *spew*) → a non-verbal clip only.
-        if is_noise[i]:
+        # 0) Explicit *noise* token (e.g. *spew*) → a non-verbal clip when the
+        # corpus has one. When it does not, the word is spoken instead of being
+        # reported missing: asterisks are not a rare piece of markup people
+        # reach for deliberately, they are markdown emphasis, censoring and
+        # stage directions, and they arrive in any pasted text. Treating
+        # "*kill*" as a failed sound-effect lookup silently dropped a word the
+        # corpus could say perfectly well -- and said nothing about why, since
+        # the tag looks identical to a word the corpus really lacks.
+        nz = _find_noise(words[i]) if is_noise[i] else None
+        if nz is not None:
             word = words[i]
-            nz = _find_noise(word)
-            if nz is not None:
-                found.append(word)
-                tokens.append({"word": word, "status": "found"})
-                segments.append(nz)
-                log.info("  NOISE    %-14s  (%s)", word,
-                         nz["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1])
-            else:
-                missing.append(word)
-                tokens.append({"word": word, "status": "missing"})
-                log.warning("  MISSING  *%s* (no noise clip)", word)
+            found.append(word)
+            tokens.append({"word": word, "status": "found"})
+            segments.append(nz)
+            log.info("  NOISE    %-14s  (%s)", word,
+                     nz["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1])
             if is_rev[i]:
                 for seg in segments[seg_before:]:
                     seg["reverse"] = True
