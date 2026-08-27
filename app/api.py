@@ -6,7 +6,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import jobs
-from app.database import active, get_db, init_db, list_corpora, set_active
+from app.database import (SPLICE_MODES, active, get_db, init_db, list_corpora,
+                          set_active, set_setting, splice_mode)
 from app.generate import generate_video
 
 router = APIRouter()
@@ -15,6 +16,10 @@ log = logging.getLogger(__name__)
 
 class GenerateRequest(BaseModel):
     text: str
+
+
+class SpliceModeRequest(BaseModel):
+    mode: str
 
 
 class CorpusRequest(BaseModel):
@@ -169,6 +174,7 @@ def _corpus_totals() -> dict:
             "clips": conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0],
             "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
             "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
+            "splice_mode": splice_mode(),
         }
 
 
@@ -194,6 +200,27 @@ def corpora():
     # open -- otherwise merely listing them would change which one is live.
     set_active(current["slug"])
     return {"corpora": out, "active": current["slug"]}
+
+
+@router.get("/splice-mode")
+def get_splice_mode():
+    """How hard the splicer may push for the active corpus."""
+    return {"mode": splice_mode(), "modes": list(SPLICE_MODES)}
+
+
+@router.post("/splice-mode")
+def put_splice_mode(req: SpliceModeRequest):
+    """Set it. Stored in the corpus database, so it travels with the corpus
+    and survives a restart without anything being configured on the server."""
+    mode = req.mode.lower().strip()
+    if mode not in SPLICE_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"mode must be one of {', '.join(SPLICE_MODES)}, got {req.mode!r}")
+    set_setting("splice_mode", mode)
+    # Only the plan changes, not the clips, so the cache stays valid.
+    log.info("SPLICE  mode set to %s for %s", mode, active()["slug"])
+    return {"mode": mode, "corpus": active()["slug"]}
 
 
 @router.post("/corpus")

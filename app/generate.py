@@ -1020,6 +1020,8 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
     segments: list[dict] = []
 
     from app.phonemes import find_phoneme_splice
+    from app.database import splice_mode
+    mode = splice_mode()
     i = 0
     n = len(words)
     while i < n:
@@ -1098,13 +1100,20 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                 log.info("  FOUND    %-14s  %.3f->%.3f  (%s)",
                          word, clip["start_time"], clip["end_time"], fname)
             else:
-                segs = find_phoneme_splice(word, cbw, _penalty_for(word))
+                segs = find_phoneme_splice(word, cbw, _penalty_for(word), mode)
                 if segs:
                     spliced.append(word)
                     clip_ids = sorted({int(s["id"]) for s in segs if s.get("id") is not None})
-                    tokens.append({"word": word, "status": "spliced", "clips": clip_ids})
+                    # An approximated word used a stand-in phoneme, a dropped
+                    # one, or a guessed pronunciation. It is still a splice, but
+                    # saying so lets the UI show which words were only a best
+                    # effort instead of implying every one of them is faithful.
+                    approx = any(s.get("approx") for s in segs)
+                    tokens.append({"word": word, "status": "spliced",
+                                   "clips": clip_ids, **({"approx": True} if approx else {})})
                     segments.extend(segs)
-                    log.info("  SPLICE   %-14s  -> %s", word, "+".join(s["word"] for s in segs))
+                    log.info("  %-8s %-14s  -> %s", "APPROX" if approx else "SPLICE",
+                             word, "+".join(s["word"] for s in segs))
                 else:
                     missing.append(word)
                     tokens.append({"word": word, "status": "missing"})

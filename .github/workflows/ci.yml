@@ -33,6 +33,12 @@ jobs:
           pip install num2words nltk
           python tests/test_tokenize.py
 
+      - name: Splice modes
+        # Guessed pronunciations and phoneme substitutions only run outside
+        # strict mode, so a mistake here is invisible until someone turns the
+        # mode up -- and then every word comes out wrong at once.
+        run: python tests/test_splice_modes.py
+
   image:
     # Only publish from the default branch: a pull request should prove the
     # image builds without also pushing a tag anyone could pull by accident.

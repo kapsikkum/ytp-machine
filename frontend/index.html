@@ -72,7 +72,8 @@
        runs out of width, so on a phone "video sources: 48" split across two
        lines with the label orphaned from its number. */
     #stats-bar .stat { color: #4a4a4a; white-space: nowrap; }
-    #corpus-wrap {
+    #corpus-wrap,
+    #splice-wrap {
       display: flex;
       align-items: center;
       gap: 0.5rem;
@@ -84,7 +85,8 @@
     /* A native select was the one control on the page still wearing the
        operating system's clothes -- grey, rounded, and obviously bolted on to
        everything around it. */
-    #corpus-select {
+    #corpus-select,
+    #splice-select {
       appearance: none;
       -webkit-appearance: none;
       font: inherit;
@@ -105,10 +107,11 @@
       background-size: 5px 5px, 5px 5px;
       background-repeat: no-repeat;
     }
-    #corpus-select:hover { border-color: #3d3d3d; }
-    #corpus-select:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
-    #corpus-select:disabled { opacity: 0.5; cursor: wait; }
-    #corpus-select option { background: var(--panel); color: #e8e8e8; }
+    #corpus-select:hover, #splice-select:hover { border-color: #3d3d3d; }
+    #corpus-select:focus-visible,
+    #splice-select:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+    #corpus-select:disabled, #splice-select:disabled { opacity: 0.5; cursor: wait; }
+    #corpus-select option, #splice-select option { background: var(--panel); color: #e8e8e8; }
 
     /* ── Main card ── */
     .card {
@@ -396,6 +399,11 @@
     .word-tag.run     { background: #06263a; color: #7dd3fc;       border: 1px solid #0e4a6e; }
     .word-tag.spliced { background: #3d2800; color: #ffaa00;       border: 1px solid #5a3d00; }
     .word-tag.missing { background: #3d0000; color: var(--red);    border: 1px solid #5a0000; }
+    /* Approximated: a splice that had to substitute or drop a sound, or
+       guess the pronunciation outright. Same family as a splice because
+       that is what it is; dashed because it is not the word you asked
+       for so much as the nearest one the corpus can manage. */
+    .word-tag.spliced.approx { border-style: dashed; border-color: #8a6a00; }
 
     .word-tag .vote {
       margin-left: 0.3rem;
@@ -507,6 +515,13 @@
   <div id="corpus-wrap" style="display:none">voice:
     <select id="corpus-select"></select>
   </div>
+  <div id="splice-wrap" style="display:none">effort:
+    <select id="splice-select">
+      <option value="strict">strict — real clips only</option>
+      <option value="loose">loose — near-enough sounds</option>
+      <option value="desperate">desperate — say it regardless</option>
+    </select>
+  </div>
   <div id="stats-row">
     <div class="stat">clips in database: <span id="stat-clips">—</span></div>
     <div class="stat">unique words: <span id="stat-words">—</span></div>
@@ -605,6 +620,40 @@
     } catch { /* ignore */ }
   }
 
+  // The mode belongs to the corpus, not the page, so it is re-read on every
+  // switch -- otherwise the selector would keep showing the previous voice's
+  // setting while the server used the new one's.
+  const spliceWrap   = document.getElementById('splice-wrap');
+  const spliceSelect = document.getElementById('splice-select');
+
+  async function loadSpliceMode() {
+    try {
+      const r = await fetch('/api/splice-mode');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.mode) spliceSelect.value = d.mode;
+      spliceWrap.style.display = '';
+    } catch { /* ignore */ }
+  }
+
+  spliceSelect.addEventListener('change', async () => {
+    spliceSelect.disabled = true;
+    try {
+      const r = await fetch('/api/splice-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: spliceSelect.value }),
+      });
+      if (!r.ok) throw new Error('could not set the mode');
+    } catch {
+      await loadSpliceMode();       // put it back where it really is
+    } finally {
+      spliceSelect.disabled = false;
+    }
+  });
+
+  loadSpliceMode();
+
   corpusSelect.addEventListener('change', async () => {
     const slug = corpusSelect.value;
     corpusSelect.disabled = true;
@@ -619,6 +668,7 @@
       // has to be rebuilt or the word checker will lie about what is available.
       await loadStats();
       await loadWords();
+      await loadSpliceMode();
     } catch {
       await loadCorpora();   // put the selector back where it really is
     } finally {
@@ -643,14 +693,17 @@
     spliced: 'built from phoneme segments',
     missing: 'not in the corpus',
   };
+  const APPROX_TITLE =
+    'approximated — a sound was substituted or dropped, or the pronunciation guessed';
   function renderWords(tokens) {
     wordRes.innerHTML = '';
     if (!tokens || !tokens.length) return;
     tokens.forEach(t => {
       const cls = ['run', 'found', 'spliced', 'missing'].includes(t.status) ? t.status : 'missing';
       const tag = document.createElement('span');
-      tag.className = 'word-tag ' + cls;
-      tag.title = TITLES[cls];
+      const approx = cls === 'spliced' && t.approx;
+      tag.className = 'word-tag ' + cls + (approx ? ' approx' : '');
+      tag.title = approx ? APPROX_TITLE : TITLES[cls];
 
       const label = document.createElement('span');
       label.textContent = t.word;

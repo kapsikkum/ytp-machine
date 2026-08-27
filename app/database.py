@@ -216,6 +216,17 @@ def init_db() -> None:
                 score    INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (word, clip_id)
             );
+
+            -- Per-corpus settings. In the database rather than the environment
+            -- because they belong to the corpus, not to the server: how hard
+            -- to push a splice depends on how much material there is, and a
+            -- 30-word corpus and a 7,000-word one want opposite answers while
+            -- being served by the same process. Travels inside the bundle, so
+            -- a corpus arrives already knowing how it wants to be spliced.
+            CREATE TABLE IF NOT EXISTS settings (
+                key    TEXT PRIMARY KEY,
+                value  TEXT NOT NULL
+            );
         """)
 
         # Normalise any Windows separators left by an ingest run on Windows.
@@ -228,3 +239,45 @@ def init_db() -> None:
                 f"UPDATE {table} SET source_file = replace(source_file, char(92), '/') "
                 f"WHERE source_file LIKE '%' || char(92) || '%'"
             )
+
+
+# ── Per-corpus settings ───────────────────────────────────────────────────────
+
+# How hard the splicer is allowed to push when the corpus cannot say a word
+# outright. Ordered from most to least faithful:
+#
+#   strict      only real recordings and clean phoneme splices. A word that
+#               cannot be built from what is actually there is reported
+#               missing. This is what every corpus did before the setting
+#               existed, and it stays the default.
+#   loose       substitute a near-enough phoneme when the exact one has no
+#               coverage, and guess a pronunciation for words the dictionary
+#               has never heard of.
+#   desperate   as loose, and also drop phonemes nothing can cover rather than
+#               give up on the word. Always produces something. Whether it
+#               sounds like the word you asked for is another matter.
+SPLICE_MODES = ("strict", "loose", "desperate")
+DEFAULT_SPLICE_MODE = "strict"
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    """One setting from the active corpus, or *default*."""
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    except sqlite3.Error:
+        return default          # a corpus packed before the table existed
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
+def splice_mode() -> str:
+    """The active corpus's splice mode, validated."""
+    mode = (get_setting("splice_mode") or DEFAULT_SPLICE_MODE).lower()
+    return mode if mode in SPLICE_MODES else DEFAULT_SPLICE_MODE

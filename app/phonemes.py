@@ -18,6 +18,7 @@ Target "penis" (typed "pee nes") → "pee"(peach, cut) + "nes"(…)
 import re
 import random
 from collections import defaultdict
+from functools import lru_cache
 from typing import Any
 
 _VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY",
@@ -36,6 +37,52 @@ _FUNCTION_WORDS = {
 _EQUIV = {"ZH": "SH"}   # phonemes with no corpus coverage → nearest available
 _MIN_VOWEL_CUT = 0.16   # a vowel-ending cut unit must be at least this long
 _STOPS = {"B", "D", "G", "P", "T", "K", "CH", "JH"}   # need a release to be heard
+
+# Phonemes close enough to stand in for one another when the corpus has no
+# coverage of the one actually wanted. Only consulted outside strict mode.
+#
+# Grouped by how they are made rather than how they sound to a listener: the
+# pairs here differ in one feature -- voicing (P/B, S/Z), place (M/N/NG), or a
+# neighbouring vowel height -- so substituting one leaves a word that is still
+# recognisably the word, said oddly. Anything further apart is not a
+# substitution, it is a different word.
+_SIMILAR_GROUPS = [
+    # vowels
+    {"IY", "IH"}, {"IH", "EH"}, {"EY", "EH"}, {"EH", "AE"}, {"AE", "AA"},
+    {"AA", "AO"}, {"AO", "OW"}, {"OW", "UH"}, {"UH", "UW"}, {"AH", "ER"},
+    {"AH", "AA"}, {"AY", "AA"}, {"AW", "AA"}, {"OY", "AO"},
+    # consonants: voiced/voiceless pairs
+    {"P", "B"}, {"T", "D"}, {"K", "G"}, {"F", "V"}, {"S", "Z"},
+    {"SH", "ZH"}, {"CH", "JH"}, {"TH", "DH"},
+    # consonants: same manner, near place
+    {"M", "N"}, {"N", "NG"}, {"L", "R"}, {"S", "SH"}, {"Z", "ZH"},
+    {"CH", "SH"}, {"JH", "ZH"}, {"TH", "F"}, {"DH", "V"}, {"W", "V"},
+    {"HH", "F"}, {"Y", "IY"}, {"R", "ER"},
+]
+
+
+@lru_cache(maxsize=256)
+def _near(phone: str) -> tuple[str, ...]:
+    """Phonemes that may stand in for *phone*, nearest-first is not attempted --
+    they are all one feature away, so the DP's costs decide between them."""
+    out: set[str] = set()
+    for group in _SIMILAR_GROUPS:
+        if phone in group:
+            out |= group
+    out.discard(phone)
+    return tuple(sorted(out))
+
+
+# What a substitution and a dropped phoneme cost the DP.
+#
+# These are not "expensive", they are prohibitive, and deliberately so. A join
+# costs about 1.0, so a substitution priced at 1.6 buys its way into a word the
+# corpus could already say exactly, just to save two joins -- which is a worse
+# answer to a question nobody asked. Priced this far above any achievable
+# saving, an exact splice always wins where one exists, and these appear only
+# where the alternative is reporting the word missing.
+_SUB_COST = 10.0
+_SKIP_COST = 25.0
 
 
 def _is_vowel(phone: str) -> bool:
@@ -199,6 +246,72 @@ def word_to_phonemes(word: str) -> list[str] | None:
     return best
 
 
+# Letter clusters to ARPAbet, longest cluster first, for words no dictionary
+# knows. English spelling being what it is, this is an approximation and often
+# a poor one -- it exists so that "nordschleife" can be attempted at all rather
+# than pronounced correctly.
+_SPELL: list[tuple[str, list[str]]] = [
+    ("sch", ["SH"]), ("tch", ["CH"]), ("igh", ["AY"]), ("ough", ["AH", "F"]),
+    ("ch", ["CH"]), ("sh", ["SH"]), ("th", ["TH"]), ("ph", ["F"]),
+    ("ck", ["K"]), ("ng", ["NG"]), ("qu", ["K", "W"]), ("wh", ["W"]),
+    ("gh", ["G"]), ("kn", ["N"]), ("wr", ["R"]), ("ps", ["S"]),
+    ("ee", ["IY"]), ("ea", ["IY"]), ("oo", ["UW"]), ("ou", ["AW"]),
+    ("ow", ["AW"]), ("ai", ["EY"]), ("ay", ["EY"]), ("oi", ["OY"]),
+    ("oy", ["OY"]), ("au", ["AO"]), ("aw", ["AO"]), ("ei", ["EY"]),
+    ("ie", ["IY"]), ("ue", ["UW"]), ("ar", ["AA", "R"]), ("er", ["ER"]),
+    ("ir", ["ER"]), ("ur", ["ER"]), ("or", ["AO", "R"]),
+    ("a", ["AE"]), ("b", ["B"]), ("c", ["K"]), ("d", ["D"]), ("e", ["EH"]),
+    ("f", ["F"]), ("g", ["G"]), ("h", ["HH"]), ("i", ["IH"]), ("j", ["JH"]),
+    ("k", ["K"]), ("l", ["L"]), ("m", ["M"]), ("n", ["N"]), ("o", ["AA"]),
+    ("p", ["P"]), ("q", ["K"]), ("r", ["R"]), ("s", ["S"]), ("t", ["T"]),
+    ("u", ["AH"]), ("v", ["V"]), ("w", ["W"]), ("x", ["K", "S"]),
+    ("y", ["IY"]), ("z", ["Z"]),
+]
+
+
+def guess_phonemes(word: str) -> list[str] | None:
+    """A pronunciation for a word nothing in the dictionary covers.
+
+    Real pronunciations come first: the longest prefix CMU actually knows is
+    consumed as a chunk, so "nurburgring" gives up its real "ring" rather than
+    being spelled out letter by letter. Only what is left over falls back to
+    the spelling table.
+
+    This is a guess and is only reached outside strict mode. Strict mode
+    reports the word missing instead, which is the honest answer -- an
+    approximated pronunciation spliced out of approximate phonemes is a
+    plausible-sounding noise, not the word.
+    """
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if not w:
+        return None
+
+    out: list[str] = []
+    i = 0
+    while i < len(w):
+        # A real chunk, longest first. Three letters is the floor: shorter
+        # "words" are mostly CMU's single letters and abbreviations, which
+        # spell the word out loud instead of pronouncing it.
+        chunk = None
+        for j in range(len(w), i + 2, -1):
+            got = _direct(w[i:j])
+            if got:
+                chunk = (got, j)
+                break
+        if chunk:
+            out.extend(chunk[0])
+            i = chunk[1]
+            continue
+        for cluster, phones in _SPELL:
+            if w.startswith(cluster, i):
+                out.extend(phones)
+                i += len(cluster)
+                break
+        else:
+            i += 1                      # nothing matched: skip the character
+    return out or None
+
+
 # ── Sub-word splice DP ─────────────────────────────────────────────────────────
 
 def _best_clip(clips: list[dict], word: str, penalty: dict[int, int] | None):
@@ -217,6 +330,7 @@ def find_phoneme_splice(
     target_word: str,
     clips_by_word: dict[str, list[dict[str, Any]]],
     penalty: dict[int, int] | None = None,
+    mode: str = "strict",
 ) -> list[dict[str, Any]] | None:
     """
     Cover *target_word*'s phonemes with the fewest source units and return a list
@@ -232,8 +346,11 @@ def find_phoneme_splice(
     (whole-word units).
     """
     raw = word_to_phonemes(target_word)
+    if not raw and mode != "strict":
+        raw = guess_phonemes(target_word)
     if not raw:
         return None
+    approximate = mode != "strict" and not word_to_phonemes(target_word)
     target_phones = [_EQUIV.get(p, p) for p in raw]   # ZH→SH etc. (close enough)
 
     n = len(target_phones)
@@ -278,11 +395,24 @@ def find_phoneme_splice(
             continue
 
         first = target_phones[i]
-        for word, phones, clips, pos in index.get(first, []):
-            matched = 0
-            while (pos + matched < len(phones)
-                   and i + matched < n
-                   and phones[pos + matched] == target_phones[i + matched]):
+        candidates = list(index.get(first, []))
+        if mode != "strict":
+            # Nothing in the corpus makes this sound. Let a unit *start* on a
+            # near-enough one, or the DP can never leave this position and the
+            # whole word is reported missing over a single phoneme.
+            for alt in _near(first):
+                candidates.extend(index.get(alt, []))
+
+        for word, phones, clips, pos in candidates:
+            matched = subs = 0
+            while pos + matched < len(phones) and i + matched < n:
+                have, want = phones[pos + matched], target_phones[i + matched]
+                if have == want:
+                    pass
+                elif mode != "strict" and have in _near(want):
+                    subs += 1
+                else:
+                    break
                 matched += 1
             if matched == 0:
                 continue
@@ -296,7 +426,7 @@ def find_phoneme_splice(
             # source right AFTER a vowel (an imprecise vowel→consonant edge that
             # smears the join, e.g. "bitch" as big|catch).  Cutting at consonant
             # boundaries keeps a vowel bound to its consonant ("b"+"itch").
-            cost = dp[i] + 1.0 - 0.08 * matched
+            cost = dp[i] + 1.0 - 0.08 * matched + _SUB_COST * subs
             if front_cut:
                 cost += 0.12
             if end_cut:
@@ -320,7 +450,14 @@ def find_phoneme_splice(
             j = i + matched
             if cost < dp[j]:
                 dp[j] = cost
-                prev[j] = (i, word, phones, clip, matched, pos)
+                prev[j] = (i, word, phones, clip, matched, pos, subs)
+
+        # Desperate: step over a phoneme nothing can cover. The word comes out
+        # missing that sound, which is worse than a substitution and better
+        # than nothing at all -- which is the whole point of the mode.
+        if mode == "desperate" and dp[i] + _SKIP_COST < dp[i + 1]:
+            dp[i + 1] = dp[i] + _SKIP_COST
+            prev[i + 1] = ("skip", i)
 
     if dp[n] == INF:
         return None
@@ -332,11 +469,25 @@ def find_phoneme_splice(
         entry = prev[p]
         if entry is None:
             return None
-        prev_pos, word, phones, clip, matched, pos = entry
+        if entry[0] == "skip":
+            approximate = True
+            p = entry[1]                    # contributes no audio
+            continue
+        prev_pos, word, phones, clip, matched, pos, subs = entry
+        if subs:
+            approximate = True
         chosen.append((prev_pos, matched, word, clip, pos, len(phones)))
         p = prev_pos
     chosen.reverse()
-    return _realise(chosen, target_phones, index, clips_by_word, penalty)
+    if not chosen:
+        return None
+    segs = _realise(chosen, target_phones, index, clips_by_word, penalty)
+    if segs and approximate:
+        # Marked so the caller can say this one was approximated rather than
+        # let it pass as a clean splice.
+        for seg in segs:
+            seg["approx"] = True
+    return segs
 
 
 def _phones_for(w: str) -> list[str] | None:

@@ -185,6 +185,39 @@ python scripts/corpus.py info corpus-*.tar.zst
 unmerged WAL captures a torn state. Bundles are `.tar.zst`, or `.tar.gz` if
 `zstandard` isn't installed. `unpack` reads either.
 
+## How hard it tries
+
+A corpus can only say what it has heard. When a word isn't there, the splicer
+builds it from phonemes taken out of other words — and when even those aren't
+there, what happens next is a per-corpus setting, stored in the corpus database
+so it travels inside the bundle:
+
+| mode | behaviour |
+| --- | --- |
+| `strict` | real clips and clean splices only; anything else is reported missing (default) |
+| `loose` | substitutes a near-enough phoneme, and guesses a pronunciation for words the dictionary doesn't have |
+| `desperate` | as loose, and drops sounds nothing can cover — always produces something |
+
+Set it from the **effort** dropdown next to the voice selector, or:
+
+```bash
+curl -X POST localhost:8765/api/splice-mode -H 'Content-Type: application/json' -d '{"mode":"loose"}'
+```
+
+The modes are additive: substitutions and dropped phonemes are priced far above
+any achievable saving, so wherever `strict` finds a splice, all three modes give
+the identical result. Turning it up only changes words that would otherwise come
+back missing.
+
+A word that needed a substitution, a dropped sound, or a guessed pronunciation
+is marked `approx` in the API and shown with a dashed border, so an approximation
+is never passed off as a faithful splice.
+
+Which you want depends on the corpus. With 7,000 distinct words, `strict` rarely
+gives up on anything and the other modes barely fire. With 30 words, `strict`
+can say almost nothing, and `desperate` is the difference between a corpus that
+works and one that only quotes itself.
+
 ## Installing a corpus on a running server
 
 Drop a bundle in `packs/` and restart — the entrypoint installs anything it
@@ -230,6 +263,7 @@ once exhausted the container's thread ceiling before the queue existed.
 | `GET /api/words` | vocabulary with clip counts; the frontend fetches it once |
 | `GET /api/suggest` | autocomplete from real spoken runs |
 | `POST /api/rate` | vote a clip up or down for that word |
+| `GET`/`POST /api/splice-mode` | read or set how hard the splicer tries |
 | `POST /api/reload` | drop the clip cache after an ingest or correction |
 | `GET /api/stats` | corpus totals |
 
@@ -273,9 +307,10 @@ It moves rather than copies, and is a no-op once done. If you pinned
 ## Source material
 
 The shipped corpus comes from publicly posted recordings of Michael Rosen
-reading his own children's poetry. Nothing in it is adult or offensive, and no
-attempt is made to synthesise words it has never heard — a word with no clips
-and no viable splice is reported missing, not approximated.
+reading his own children's poetry. Nothing in it is adult or offensive. By
+default nothing is synthesised either: a word with no clips and no viable splice
+is reported missing rather than approximated, and the modes above have to be
+turned up deliberately, per corpus.
 
 It's a toy for making silly videos out of poetry readings. Keep it there, and
 don't use it to put words in anyone's mouth in a way that misrepresents them.
