@@ -84,6 +84,22 @@ def _near(phone: str) -> tuple[str, ...]:
 _SUB_COST = 10.0
 _SKIP_COST = 25.0
 
+# An affricate is a stop welded to a fricative: CH is [t] then [sh], JH is [d]
+# then [zh]. So a corpus with no SH at all still physically contains one, in the
+# back half of every "ch" -- the splicer just could not see it, because CH is a
+# single ARPAbet symbol and units are whole phonemes.
+#
+# Taking that half is a real SH, not a stand-in, so it is priced well below a
+# substitution. It is still above an ordinary join because it is a cut inside a
+# single phoneme, which is finer than the alignment was ever tuned for.
+_AFFRICATES = {"CH": "SH", "JH": "SH"}      # ZH targets are mapped to SH by _EQUIV
+_HALF_COST = 2.0
+
+# Where the frication starts inside the affricate, as a fraction of its span.
+# The stop closure and burst come first and are the part that must not survive:
+# leave any of the burst in and "wish" keeps sounding like "witch".
+_AFFRICATE_SPLIT = 0.45
+
 
 def _is_vowel(phone: str) -> bool:
     return phone in _VOWELS
@@ -361,6 +377,7 @@ def find_phoneme_splice(
     # Source phonemes are canonicalised the same way so e.g. SH sources can cover
     # a ZH target (no clip in the corpus actually contains ZH).
     index: defaultdict[str, list] = defaultdict(list)
+    half_index: defaultdict[str, list] = defaultdict(list)
     for word, clips in clips_by_word.items():
         w = word.lower()
         if w in _OVERRIDES:               # non-CMU corpus words (shhhh, oclock…)
@@ -376,6 +393,9 @@ def find_phoneme_splice(
             cphones = [_EQUIV.get(p, p) for p in prons[0]]
         for pos in range(len(cphones)):
             index[cphones[pos]].append((word, cphones, clips, pos))
+            half = _AFFRICATES.get(cphones[pos])
+            if half:
+                half_index[half].append((word, cphones, clips, pos))
 
     # Hand-tuned recipe?  Build the unit list directly from it when every
     # group can be sourced; otherwise fall through to the DP.
@@ -450,7 +470,20 @@ def find_phoneme_splice(
             j = i + matched
             if cost < dp[j]:
                 dp[j] = cost
-                prev[j] = (i, word, phones, clip, matched, pos, subs)
+                prev[j] = (i, word, phones, clip, matched, pos, subs, None)
+
+        # The back half of an affricate, for a target phoneme the corpus has
+        # no clean source of. One phoneme only: the front half is a stop that
+        # belongs to a different sound, so this can never extend.
+        if mode != "strict":
+            for word, phones, clips, pos in half_index.get(first, []):
+                clip = _best_clip(clips, word, penalty) or random.choice(clips)
+                cost = dp[i] + 1.0 + _HALF_COST
+                if penalty:
+                    cost += 0.7 * penalty.get(clip.get("id"), 0)
+                if cost < dp[i + 1]:
+                    dp[i + 1] = cost
+                    prev[i + 1] = (i, word, phones, clip, 1, pos, 0, "half")
 
         # Desperate: step over a phoneme nothing can cover. The word comes out
         # missing that sound, which is worse than a substitution and better
@@ -473,10 +506,13 @@ def find_phoneme_splice(
             approximate = True
             p = entry[1]                    # contributes no audio
             continue
-        prev_pos, word, phones, clip, matched, pos, subs = entry
+        prev_pos, word, phones, clip, matched, pos, subs, kind = entry
         if subs:
             approximate = True
-        chosen.append((prev_pos, matched, word, clip, pos, len(phones)))
+        unit = [prev_pos, matched, word, clip, pos, len(phones)]
+        if kind:
+            unit.append(kind)
+        chosen.append(tuple(unit))
         p = prev_pos
     chosen.reverse()
     if not chosen:
@@ -646,6 +682,36 @@ def _realise(
         last_v = _is_vowel(sub[-1])
 
         flag = flags[0] if flags else None
+
+        if flag == "half":
+            # The fricative tail of an affricate. Both edges come from forced
+            # alignment -- the affricate's own span -- and then the front is
+            # dropped, because that front is the stop burst that makes a
+            # borrowed "ch" still sound like "ch".
+            seg = None
+            for cand in clips_by_word.get(cword, [cclip])[:6]:
+                try:
+                    a = cut_start_before_phonemes(cand, cpos)
+                    b = cut_end_after_phonemes(cand, cpos + 1, False)
+                except Exception:
+                    a = b = None
+                if a is None or b is None or (b - a) <= 0.03:
+                    continue
+                st = a + (b - a) * _AFFRICATE_SPLIT
+                if (b - st) <= 0.02:              # nothing audible left to take
+                    continue
+                seg = dict(cand)
+                seg["start_time"] = cand["start_time"] + st
+                seg["end_time"]   = cand["start_time"] + b
+                seg["subword"] = seg["_cut"] = True
+                seg["spliced_from"] = cword
+                seg["matched"] = 1
+                break
+            if seg is None:
+                return None
+            segments.append(seg)
+            continue
+
         if flag:                                  # no FA trim: verbatim / slice
             seg = dict(cclip)
             sliced = isinstance(flag, tuple)

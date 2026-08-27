@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["MRS_DATA_DIR"] = tempfile.mkdtemp(prefix="ytp-splice-")
 
 from app import database  # noqa: E402
-from app.phonemes import _near, guess_phonemes, word_to_phonemes  # noqa: E402
+from app.phonemes import (_AFFRICATES, _HALF_COST, _SKIP_COST, _SUB_COST,
+                          _near, guess_phonemes, word_to_phonemes)  # noqa: E402
 
 failures: list[str] = []
 
@@ -65,6 +66,23 @@ for p in ("P", "AA", "NG"):
 for a, b in (("P", "S"), ("IY", "UW"), ("M", "K")):
     if b in _near(a):
         failures.append(f"  {a} should not accept {b}")
+
+# Cost ordering is the whole safety property of the non-strict modes. A real
+# match costs about 1.0 per unit, so each fallback has to sit far enough above
+# that no chain of them can undercut a plan made of real matches:
+#
+#   real match  <  affricate half  <  substitution  <  dropped phoneme
+#
+# Get this wrong and turning the mode up silently rewrites words the corpus
+# could already say exactly -- which is what happened when a substitution was
+# priced at 1.6 and bought its way in to save two joins.
+if not 1.0 < _HALF_COST < _SUB_COST < _SKIP_COST:
+    failures.append(f"  cost ordering broken: half={_HALF_COST} "
+                    f"sub={_SUB_COST} skip={_SKIP_COST}")
+
+# Both affricates offer their fricative half. ZH is not listed as a target
+# because _EQUIV folds ZH into SH before the target is ever looked up.
+check("affricate halves", _AFFRICATES, {"CH": "SH", "JH": "SH"})
 
 # The mode setting: strict unless a corpus says otherwise, and unknown values
 # fall back rather than reaching the splicer as something it cannot handle.
