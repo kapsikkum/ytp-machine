@@ -600,6 +600,12 @@ def invalidate_user_dict() -> None:
     """Forget the CSV so an edit takes effect on the next lookup."""
     global _user_dict
     _user_dict = None
+    # Memoised answers were computed against the old file, and the index is
+    # built from them.
+    try:
+        word_to_phonemes.cache_clear()
+    except Exception:
+        pass
     _direct.cache_clear() if hasattr(_direct, "cache_clear") else None
 
 
@@ -767,6 +773,7 @@ def _resolve_simple(w: str) -> list[str] | None:
     return None
 
 
+@lru_cache(maxsize=100_000)
 def word_to_phonemes(word: str) -> list[str] | None:
     """Return stripped ARPAbet phonemes for *word*, or None.
 
@@ -923,17 +930,31 @@ def find_phoneme_splice(
     half_index: defaultdict[str, list] = defaultdict(list)
     for word, clips in clips_by_word.items():
         w = word.lower()
-        if w in _OVERRIDES:               # non-CMU corpus words (shhhh, oclock…)
-            cphones = [_EQUIV.get(p, p) for p in _OVERRIDES[w]]
-        else:
-            prons = d.get(w)
-            if not prons:
-                continue
-            # Only the PRIMARY pronunciation — secondary CMU variants often
-            # don't match the audio (e.g. "get" has a G-IH-T variant, but
-            # Michael says "g-eh-t", so using it for "shit"'s IH-T gives
-            # "sh-et").
-            cphones = [_EQUIV.get(p, p) for p in prons[0]]
+        # The same resolution the rest of the module uses, rather than a bare
+        # CMU lookup.
+        #
+        # This decides what sounds the splicer believes a clip contains, and it
+        # used to consult only _OVERRIDES and CMU -- so the per-corpus
+        # dictionary, restored contractions, British spellings, acronyms,
+        # numbers and derived forms all applied to the word being asked for and
+        # not to the words it was built out of. Two consequences, both bad:
+        #
+        #   - every clip of "dont", "usb", "kilometres" and the rest stayed
+        #     invisible to the splicer, even after they had pronunciations
+        #   - a corpus could not correct the dictionary about its own speaker.
+        #     CMU is American and says tom-AY-to; Rosen says tom-AH-to, so the
+        #     splicer cut "mate" out of the middle of "tomato" and produced
+        #     "mart". Writing the real pronunciation into pronunciations.csv
+        #     did nothing, because this line never read it.
+        #
+        # word_to_phonemes only returns the primary pronunciation, which is
+        # still the point of the old comment here: CMU's secondary variants
+        # often do not match the audio ("get" has a G-IH-T variant, but Michael
+        # says g-EH-t, so using it for "shit" gives "sh-et").
+        raw = word_to_phonemes(w)
+        if not raw:
+            continue
+        cphones = [_EQUIV.get(p, p) for p in raw]
         for pos in range(len(cphones)):
             index[cphones[pos]].append((word, cphones, clips, pos))
             half = _AFFRICATES.get(cphones[pos])
