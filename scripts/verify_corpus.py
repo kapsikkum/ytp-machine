@@ -158,6 +158,50 @@ def compare(caption: list[tuple[str, float]],
             "drifted": drifted}
 
 
+def report_unspliceable(show: int) -> int:
+    """Stored words with no pronunciation, worst first.
+
+    A word with no pronunciation is skipped by the splice index entirely: it
+    still matches as a whole word, so nothing looks wrong, but every clip of it
+    is unusable as splice material and the word cannot be built if the corpus
+    lacks a recording. That is invisible from the outside, which is why it is
+    worth printing.
+
+    No list of exceptions can ever be complete -- speakers invent words, and a
+    dictionary cannot hold names or coinages -- so the maintainable form of
+    "exhaustive" is this: measure your own corpus and add what actually turns
+    up. Most of what remains here is genuinely unknowable, and outside strict
+    mode the splicer guesses a pronunciation from spelling anyway.
+    """
+    from collections import Counter
+    from app.phonemes import word_to_phonemes
+
+    init_db()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT word, count(*) FROM word_clips GROUP BY word").fetchall()
+    total_clips = sum(n for _w, n in rows)
+    bad = Counter({w: n for w, n in rows if not word_to_phonemes(w)})
+    stranded = sum(bad.values())
+
+    print(f"corpus '{active()['slug']}': {len(rows)} distinct words, "
+          f"{total_clips} clips")
+    if not bad:
+        print("every stored word has a pronunciation -- nothing is stranded.")
+        return 0
+    print(f"{len(bad)} words have no pronunciation, stranding {stranded} clips "
+          f"({stranded * 100 // max(total_clips, 1)}% of the corpus)\n")
+    for word, n in bad.most_common(show):
+        print(f"  {n:>4}  {word}")
+    if len(bad) > show:
+        print(f"  … and {len(bad) - show} more (--show N for more)")
+    print("\nWorth adding to app/phonemes.py when a word is really said some "
+          "other way\n(_SAID_AS_WORD) or spelled out letter by letter "
+          "(_SPELLED_OUT). Names and\ncoinages cannot be helped and are fine "
+          "to leave.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--source-id", type=int)
@@ -167,7 +211,13 @@ def main() -> int:
     ap.add_argument("--refresh", action="store_true",
                     help="Re-fetch captions instead of using the cached copy")
     ap.add_argument("--cookies-from-browser", default=None, metavar="BROWSER")
+    ap.add_argument("--unspliceable", action="store_true",
+                    help="Skip the caption check and list stored words that have "
+                         "no pronunciation. Needs no network.")
     args = ap.parse_args()
+
+    if args.unspliceable:
+        return report_unspliceable(args.show)
 
     if args.source_id is None and not args.all:
         return int(bool(sys.stderr.write(

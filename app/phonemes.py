@@ -226,6 +226,199 @@ _BRITISH_ENDINGS = (("our", "or"), ("ise", "ize"), ("ised", "ized"),
                     ("yse", "yze"), ("ogue", "og"))
 
 
+# Acronyms said letter by letter. There is no rule that separates these from
+# ordinary short words -- "usb" is "you ess bee" but "nug" is "nug", and "wii"
+# is "wee" rather than three letters -- so the ones that actually turn up in
+# corpora are listed instead of guessed at. Spelling every unknown short token
+# out loud would mangle far more words than it rescued.
+_SPELLED_OUT = {
+    # computing
+    "usb", "cpu", "gpu", "ssd", "hdd", "hdmi", "rgb", "rgba", "fps", "pc",
+    "led", "lcd", "oled", "crt", "dvd", "cd", "vga", "dvi", "ram", "rom",
+    "bios", "os", "url", "dns", "ip", "lan", "wan", "vpn", "ssh", "ftp",
+    "html", "css", "sql", "api", "sdk", "ide", "cli", "gui", "wsl", "xp",
+    "nt", "ms", "pdf", "png", "svg", "mp3", "mp4", "avi", "hd", "uhd", "sd",
+    "psu", "pcb", "pci", "sata", "nvme", "emmc", "sdxc", "rtx", "gtx", "amd",
+    "vsync", "aio", "rgbw", "kvm", "nas", "raid", "tb", "gb", "mb", "kb",
+    # cars and workshop
+    "lpg", "cvt", "abs", "ecu", "vin", "rpm", "suv", "awd", "fwd", "rwd",
+    "atv", "utv", "hp", "bhp", "psi", "dpf", "egr", "obd", "vtec", "dohc",
+    "sohc", "mpg", "kph", "mph", "bmw", "gmc", "gm", "vw", "cls", "amg",
+    "rs", "gt", "gti", "sti", "wrx", "ute", "wd", "ba", "rt", "xr", "ss",
+    # general
+    "tv", "usa", "uk", "us", "eu", "nz", "atm", "id", "ai", "faq", "diy",
+    "ceo", "cfo", "hr", "pr", "vip", "ufo", "dj", "mc", "kfc", "bbc", "cnn",
+    "nasa", "fbi", "cia", "dna", "rna", "iq", "ok", "pm", "am", "bc", "ad",
+    "asap", "etc", "ie", "eg", "aka", "brb", "lol", "wtf", "omg", "imo",
+    "xx", "xxx", "ii", "iii", "iv", "vi", "vii", "viii", "ix", "xi", "xii",
+    # Turned up by scripts/verify_corpus.py --unspliceable on real corpora.
+    "exe", "gta", "psp", "tnt", "udp", "tcp", "vram", "zif", "dlss", "obs",
+    "sdl", "rca", "rts", "efi", "esp", "ngk", "pcv", "pcp", "epa", "iso",
+    "ui", "vm", "vr", "dc", "rf", "rj", "ep", "xl", "xt", "xf", "vl", "cf",
+    "cv", "va", "yf", "av", "jb", "jdm", "mx", "px", "kc", "ltt", "mg",
+    "mot", "hsv", "iga", "bfi", "brz", "sl", "sma", "ut", "uv", "ipd", "pmb",
+    "pp", "gms", "evs", "cvt", "cvts", "bmws", "sma", "ecu",
+}
+
+# Acronyms and brand names said as a word rather than letter by letter. These
+# cannot be told apart from the set above by any rule -- "wii" is "wee" and
+# "wsl" is three letters, and nothing in the spelling says which -- so both
+# lists are enumerated rather than inferred.
+_SAID_AS_WORD = {
+    "wii":     ["W", "IY"],
+    "wifi":    ["W", "AY", "F", "AY"],
+    "wi":      ["W", "AY"],
+    "ubuntu":  ["UW", "B", "UU", "N", "T", "UW"],
+    "github":  ["G", "IH", "T", "HH", "AH", "B"],
+    "ipod":    ["AY", "P", "AA", "D"],
+    "ipad":    ["AY", "P", "AE", "D"],
+    "iphone":  ["AY", "F", "OW", "N"],
+    "emulator": ["EH", "M", "Y", "AH", "L", "EY", "T", "ER"],
+    "emulators": ["EH", "M", "Y", "AH", "L", "EY", "T", "ER", "Z"],
+    "speedo":  ["S", "P", "IY", "D", "OW"],
+    "turbo":   ["T", "ER", "B", "OW"],
+    "vac":     ["V", "AE", "K"],
+    "plonk":   ["P", "L", "AA", "NG", "K"],
+    "booger":  ["B", "UH", "G", "ER"],
+    "boogered": ["B", "UH", "G", "ER", "D"],
+    "goobers": ["G", "UW", "B", "ER", "Z"],
+    "turd":    ["T", "ER", "D"],
+    "cack":    ["K", "AE", "K"],
+    "manky":   ["M", "AE", "NG", "K", "IY"],
+    "fugly":   ["F", "AH", "G", "L", "IY"],
+    "friggin": ["F", "R", "IH", "G", "IH", "N"],
+    "frigging": ["F", "R", "IH", "G", "IH", "NG"],
+    "effed":   ["EH", "F", "T"],
+    "cuz":     ["K", "AH", "Z"],
+    "splines": ["S", "P", "L", "AY", "N", "Z"],
+    "igniter": ["IH", "G", "N", "AY", "T", "ER"],
+    "crusties": ["K", "R", "AH", "S", "T", "IY", "Z"],
+    "gloopy":  ["G", "L", "UW", "P", "IY"],
+    "eggy":    ["EH", "G", "IY"],
+    "crinkling": ["K", "R", "IH", "NG", "K", "L", "IH", "NG"],
+
+    # Vocalisations. Whisper writes these as words, and with no pronunciation
+    # they were both unspliceable and unusable as splice material -- which for
+    # a corpus full of reactions is a lot of very characteristic audio.
+    "hmm":  ["HH", "M"],
+    "mmm":  ["M"],
+    "mm":   ["M"],
+    "hm":   ["HH", "M"],
+    "eww":  ["IY", "UW"],
+    "ew":   ["IY", "UW"],
+    "ugh":  ["AH", "G"],
+    "argh": ["AA", "R"],
+    "aah":  ["AA"],
+    "ahh":  ["AA"],
+    "ooh":  ["UW"],
+    "oooh": ["UW"],
+    "woo":  ["W", "UW"],
+    "yay":  ["Y", "EY"],
+    "huh":  ["HH", "AH"],
+    "meh":  ["M", "EH"],
+    "shh":  ["SH"],
+    "psh":  ["P", "SH"],
+    "brr":  ["B", "R"],
+}
+
+
+def _letters_to_phones(letters: str) -> list[str] | None:
+    """Phonemes for a run of letters read out one at a time: u-s-b."""
+    out: list[str] = []
+    for ch in letters:
+        prons = _dict().get(ch)
+        if not prons:
+            return None
+        out.extend(prons[0])
+    return out or None
+
+
+def _number_to_phones(digits: str) -> list[str] | None:
+    """Phonemes for a run of digits, spoken as a number: 50 -> "fifty"."""
+    try:
+        from num2words import num2words
+        spoken = num2words(int(digits))
+    except Exception:
+        return None
+    out: list[str] = []
+    for part in re.split(r"[\s-]+", spoken):
+        part = re.sub(r"[^a-z]", "", part.lower())
+        if not part:
+            continue
+        prons = _dict().get(part)
+        if not prons:
+            return None
+        out.extend(prons[0])
+    return out or None
+
+
+def _alphanumeric_phones(w: str) -> list[str] | None:
+    """Phonemes for a token mixing letters and digits: ps5, v8, xr6, i30.
+
+    A token containing a digit is never an English word, so unlike the bare
+    acronyms above this can be decided by rule rather than by list. Each run of
+    letters is a word if the dictionary knows one ("i" in "i30") and read out
+    letter by letter otherwise ("ps" in "ps5"); each run of digits is spoken as
+    a number.
+    """
+    parts = re.findall(r"[a-z]+|\d+", w)
+    if not parts or not any(p.isdigit() for p in parts) or not any(
+            p.isalpha() for p in parts):
+        return None
+    out: list[str] = []
+    for part in parts:
+        got = (_number_to_phones(part) if part.isdigit()
+               else ((_dict().get(part) or [None])[0] or _letters_to_phones(part)))
+        if not got:
+            return None
+        out.extend(got)
+    return out
+
+
+# British spellings, applied wherever they appear rather than only at the end of
+# a word. Suffix-only rules caught "colour" and missed "colours", "favourite",
+# "kilometres" and "carburettor" -- the inflected forms, which is most of how
+# words actually turn up in speech.
+_BRITISH_ANYWHERE = (
+    ("our", "or"),        # colour, favourite, vapours
+    ("ise", "ize"),       # realise, organised
+    ("isa", "iza"),       # organisation
+    ("yse", "yze"),       # analyse
+    ("ogue", "og"),       # catalogue
+    ("aemi", "emi"),      # anaemic
+    ("oeu", "eu"),        # manoeuvre
+    ("tt", "t"),          # carburettor
+    ("ll", "l"),          # travelling, cancelled
+)
+
+_RE_ENDING = re.compile(r"([bcdfghjklmnpqrstvwxz])re(s?)$")
+
+
+def _americanised(w: str):
+    """Plausible American spellings of *w*, tried when CMU has not got it."""
+    seen = {w}
+    for british, american in _BRITISH_ANYWHERE:
+        if british in w:
+            cand = w.replace(british, american)
+            if cand not in seen:
+                seen.add(cand)
+                yield cand
+    # -re -> -er after a consonant: metre, centres, kilometres. The plural has
+    # to be part of the pattern, because "kilometres" ends in -res and a
+    # suffix-only -re rule never sees it.
+    cand = _RE_ENDING.sub(r"\1er\2", w)
+    if cand not in seen:
+        seen.add(cand)
+        yield cand
+    # Everything at once, for a label carrying more than one Briticism.
+    both = w
+    for british, american in _BRITISH_ANYWHERE:
+        both = both.replace(british, american)
+    both = _RE_ENDING.sub(r"\1er\2", both)
+    if both not in seen:
+        yield both
+
+
 def _spelling_variants(w: str):
     """Other spellings of *w* worth trying when the dictionary has not got it."""
     # "dont" -> "don't". The apostrophe replaces nothing and sits before the
@@ -253,12 +446,125 @@ def _direct(w: str) -> list[str] | None:
     prons = _dict().get(w)
     if prons:
         return prons[0]
-    # Only reached once the word itself is not in the dictionary, so a variant
-    # can never displace a real pronunciation -- it only fills a hole.
+    # Only reached once the word itself is not in the dictionary, so none of
+    # this can displace a real pronunciation -- it only fills a hole.
     for variant in _spelling_variants(w):
         prons = _dict().get(variant)
         if prons:
             return prons[0]
+    if w in _SAID_AS_WORD:
+        return list(_SAID_AS_WORD[w])
+    if w.isdigit():
+        return _number_to_phones(w)
+    if w in _SPELLED_OUT:
+        return _letters_to_phones(w)
+    # Drawn-out vocalisations: "ohhhhh", "brrrrrrra", "hahahaha". Whisper
+    # spells the length out, so every stretch is its own unique label. Collapse
+    # the repeats and try again -- "ohhh" is "oh", said longer.
+    for collapse in (r"\1", r"\1\1"):
+        # Once down to a single letter, once to a doubled one: "ohhhhh" wants
+        # "oh" and "brrrr" wants "brr", and no single rule gives both.
+        squashed = re.sub(r"(.)\1{2,}", collapse, w)
+        if squashed == w:
+            continue
+        got = _OVERRIDES.get(squashed) or _SAID_AS_WORD.get(squashed)
+        if got:
+            return list(got)
+        prons = _dict().get(squashed)
+        if prons:
+            return prons[0]
+    # "hahahaha", "lalala": a syllable repeated. Say it once.
+    m = re.fullmatch(r"(.{2,3}?)\1{1,}", w)
+    if m:
+        prons = _dict().get(m.group(1))
+        if prons:
+            return prons[0]
+        got = _SAID_AS_WORD.get(m.group(1))
+        if got:
+            return list(got)
+    return _alphanumeric_phones(w)
+
+
+# Endings CMU does not list separately, with the phonemes they add. An English
+# dictionary holds "smelly" but not "smelliest", "snip" but not "snipped", and
+# a corpus of ordinary speech is full of the derived forms -- they were a
+# larger share of the unpronounceable words than every acronym put together.
+#
+# The base is found by undoing the three spelling changes English makes when it
+# adds a suffix: a dropped silent e (save + able), a doubled final consonant
+# (snip + ed), and y turning to i (smelly + est).
+_SUFFIX_PHONES = (
+    ("iest",  ["IY", "AH", "S", "T"]),
+    ("est",   ["AH", "S", "T"]),
+    ("ier",   ["IY", "ER"]),
+    ("iness", ["IY", "N", "AH", "S"]),
+    ("ness",  ["N", "AH", "S"]),
+    ("ily",   ["AH", "L", "IY"]),
+    ("ly",    ["L", "IY"]),
+    ("able",  ["AH", "B", "AH", "L"]),
+    ("ible",  ["AH", "B", "AH", "L"]),
+    ("ish",   ["IH", "SH"]),
+    ("y",     ["IY"]),
+)
+
+_DOUBLE = "bdfglmnprstz"
+
+
+def _bases_for(stem: str):
+    """Spellings the base might have had before a suffix was added."""
+    yield stem
+    yield stem + "e"                                  # save + able -> savable
+    if len(stem) > 2 and stem[-1] == stem[-2] and stem[-1] in _DOUBLE:
+        yield stem[:-1]                               # snipp + ed -> snip
+    if stem.endswith("i"):
+        yield stem[:-1] + "y"                         # smelli + est -> smelly
+
+
+# Prefixes that leave the base word intact. "unplayable" is "un" + a word CMU
+# does not carry either, so the prefix has to come off before the suffix rules
+# get a look at what is left.
+_PREFIX_PHONES = (
+    ("un",     ["AH", "N"]),
+    ("re",     ["R", "IY"]),
+    ("over",   ["OW", "V", "ER"]),
+    ("under",  ["AH", "N", "D", "ER"]),
+    ("non",    ["N", "AA", "N"]),
+    ("mis",    ["M", "IH", "S"]),
+    ("pre",    ["P", "R", "IY"]),
+)
+
+
+def _voiced_ending(phones: list[str]) -> list[str]:
+    """The phonemes -ed adds, which depend on the sound before it."""
+    last = phones[-1]
+    if last in ("T", "D"):
+        return ["AH", "D"]
+    return ["T"] if last in ("P", "K", "F", "S", "SH", "CH", "TH") else ["D"]
+
+
+def _suffixed(w: str) -> list[str] | None:
+    """Phonemes for a derived form: base pronunciation plus the suffix."""
+    # -ed and -ing over a doubled consonant: "snipped" -> snip, "modded" -> mod.
+    # The plain rules in _resolve_simple do not undo the doubling.
+    for suffix in ("ed", "ing"):
+        if len(w) > len(suffix) + 2 and w.endswith(suffix):
+            stem = w[: -len(suffix)]
+            if len(stem) > 2 and stem[-1] == stem[-2] and stem[-1] in _DOUBLE:
+                got = _direct(stem[:-1])
+                if got:
+                    return got + (["IH", "NG"] if suffix == "ing"
+                                  else _voiced_ending(got))
+    for suffix, phones in _SUFFIX_PHONES:
+        if len(w) <= len(suffix) + 2 or not w.endswith(suffix):
+            continue
+        stem = w[: -len(suffix)]
+        for base in _bases_for(stem):
+            got = _direct(base)
+            if got:
+                # A base ending in the suffix's own vowel would say it twice.
+                if phones[0] == "IY" and got[-1] == "IY":
+                    return got + phones[1:]
+                return got + phones
     return None
 
 
@@ -303,6 +609,24 @@ def word_to_phonemes(word: str) -> list[str] | None:
     r = _resolve_simple(w)
     if r:
         return r
+    # An American spelling, then the inflection rules on top of it, so
+    # "kilometres" reaches "kilometers" and "vapours" reaches "vapors" through
+    # the plural rule rather than each needing an entry of its own.
+    for cand in _americanised(w):
+        r = _resolve_simple(cand)
+        if r:
+            return r
+    # Derived forms: "smelliest" from "smelly", "snipped" from "snip".
+    r = _suffixed(w)
+    if r:
+        return r
+    # A prefix on a word that itself needed deriving: "unplayable".
+    for prefix, phones in _PREFIX_PHONES:
+        if len(w) > len(prefix) + 2 and w.startswith(prefix):
+            rest = w[len(prefix):]
+            got = _resolve_simple(rest) or _suffixed(rest)
+            if got:
+                return phones + got
     # compound: longest balanced split where both halves are real words
     best = None
     for i in range(len(w) - 2, 1, -1):       # prefer a longer first half

@@ -34,13 +34,17 @@ CASES: list[tuple[str, list[str]]] = [
     ("330i",          ["three", "hundred", "and", "thirty", "i"]),
     ("4x4",           ["four", "by", "four"]),
 
-    # Units. "km" has no CMU pronunciation at all; the expansion has to land on
-    # a spelling the dictionary knows, which is American -- "kilometres" is not
-    # in it, so expanding to that swaps one miss for another.
-    ("km",            ["kilometers"]),
-    ("50km",          ["fifty", "kilometers"]),
+    # Units. "km" has no pronunciation of its own, so it has to expand to a
+    # word that does. It used to have to expand to the *American* spelling as
+    # well: CMU is an American dictionary and had no "kilometres", so the
+    # British form swapped one unpronounceable token for another. phonemes.py
+    # now derives British spellings, so both forms work and the expansion keeps
+    # the spelling the speaker would use -- which is also the one most likely
+    # to match a clip directly in a British or Australian corpus.
+    ("km",            ["kilometres"]),
+    ("50km",          ["fifty", "kilometres"]),
     ("100kg",         ["one", "hundred", "kilograms"]),
-    ("50mm",          ["fifty", "millimeters"]),
+    ("50mm",          ["fifty", "millimetres"]),
     ("2l",            ["two", "litres"]),
 
     # Decades, not units. "s" is deliberately not seconds: reading it that way
@@ -51,9 +55,9 @@ CASES: list[tuple[str, list[str]]] = [
     ("5s",            ["five", "s"]),
 
     # Rates: the slash is the word "per".
-    ("km/h",          ["kilometers", "per", "hour"]),
-    ("80kmh",         ["eighty", "kilometers", "per", "hour"]),
-    ("l/100km",       ["litres", "per", "hundred", "kilometers"]),
+    ("km/h",          ["kilometres", "per", "hour"]),
+    ("80kmh",         ["eighty", "kilometres", "per", "hour"]),
+    ("l/100km",       ["litres", "per", "hundred", "kilometres"]),
     # ...but not every slash is a rate.
     ("and/or",        ["and", "or"]),
 

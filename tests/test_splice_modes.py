@@ -88,6 +88,37 @@ for word in ("are", "more", "our", "four", "ant", "want", "front", "point",
 check("a real word keeps its own pronunciation",
       word_to_phonemes("four"), ["F", "AO", "R"])
 
+# Words CMU does not list because they are derived, spelled the British way,
+# written as digits, or an acronym. Together these stranded 903 clips across
+# four corpora -- every one findable as a whole word and useless for splicing,
+# because the phoneme index skips anything with no pronunciation.
+for word in ("smelliest", "shiniest", "crustier", "boggy", "flappy", "funnily",
+             "savable", "springiness", "rattly", "stumpy", "modded", "snipped",
+             "unplayable", "rebadged",
+             "kilometres", "favourite", "vapours", "carburettor", "colours",
+             "realised", "centres", "travelling",
+             "10", "50", "100", "000", "1985",
+             "usb", "cpu", "ssd", "tv", "ps5", "v8", "i30",
+             "hmm", "mmm", "ohhhhh", "hahahaha", "brrrr", "wii"):
+    if not word_to_phonemes(word):
+        failures.append(f"  {word!r} has no pronunciation")
+
+# None of those rules may fire on a word with its own entry. These end in the
+# letters the suffix and spelling rules rewrite, or open with a prefix.
+for word in ("very", "really", "happy", "city", "body", "any", "early", "only",
+             "family", "our", "four", "hour", "all", "tell", "little", "better",
+             "under", "one", "red", "bed", "sing", "ring", "reed", "ten", "two"):
+    if not word_to_phonemes(word):
+        failures.append(f"  {word!r} lost its pronunciation to a derivation rule")
+check("a plain word is untouched", word_to_phonemes("happy"), ["HH", "AE", "P", "IY"])
+
+# Coinages stay unresolved on purpose. Spelling every unknown short token out
+# loud would mangle far more words than it rescued -- "nug" is not N-U-G -- so
+# strict mode reports them missing and the looser modes guess from spelling.
+for word in ("nug", "zoop", "blorp"):
+    if word_to_phonemes(word):
+        failures.append(f"  {word!r} was given a pronunciation it should not have")
+
 # Cost ordering is the whole safety property of the non-strict modes. A real
 # match costs about 1.0 per unit, so each fallback has to sit far enough above
 # that no chain of them can undercut a plan made of real matches:
