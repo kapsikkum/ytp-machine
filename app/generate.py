@@ -267,6 +267,55 @@ def _find_noise(word: str) -> dict[str, Any] | None:
     return pick_clip(pool, word) if pool else None
 
 
+# Loudness a stretch has to stay under to count as silence, and how many
+# candidates to audition before giving up.
+#
+# An idle region is a gap between two *transcribed* words, and a gap in a
+# transcript is not silence -- it is where nothing was transcribed. On a corpus
+# of poetry read aloud those coincide, which is why this went unnoticed; on
+# commentary videos they do not, because the gaps are full of music, b-roll and
+# speech Whisper skipped. Measured on one such corpus, 22 of 25 sampled "idle"
+# regions had audible sound in them, so a full stop played somebody saying
+# "300" as its moment of quiet.
+#
+# find_noises.py has always known this -- it mines exactly these gaps for
+# clicks and spews. The two modules held opposite beliefs about the same audio.
+_IDLE_MAX_RMS = 400.0
+_IDLE_TRIES = 12
+_idle_rms_cache: dict[tuple, float] = {}
+
+
+def _region_rms(source_file: str, start: float, duration: float) -> float:
+    """Loudness of a slice, or 0.0 if it cannot be read."""
+    key = (source_file, round(start, 2), round(duration, 2))
+    if key in _idle_rms_cache:
+        return _idle_rms_cache[key]
+    import subprocess as _sp, tempfile as _tf, wave as _wave, os as _os
+    tmp = _os.path.join(_tf.gettempdir(), f"_idle_{_os.getpid()}.wav")
+    rms = 0.0
+    try:
+        _sp.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}",
+                 "-t", f"{duration:.3f}", "-i", source_file,
+                 "-ac", "1", "-ar", "16000", tmp], capture_output=True)
+        with _wave.open(tmp, "rb") as w:
+            raw = w.readframes(w.getnframes())
+        if raw:
+            import array, math
+            samples = array.array("h")
+            samples.frombytes(raw[: len(raw) // 2 * 2])
+            if samples:
+                rms = math.sqrt(sum(v * v for v in samples) / len(samples))
+    except Exception:
+        rms = 0.0                      # unreadable: treat as quiet, not as loud
+    finally:
+        try:
+            _os.remove(tmp)
+        except OSError:
+            pass
+    _idle_rms_cache[key] = rms
+    return rms
+
+
 def _pick_idle(duration: float) -> dict[str, Any] | None:
     """Return a clip dict for a *duration*-second slice of on-screen silence
     (Michael idle between lines), or None if no idle region is available."""
@@ -274,7 +323,21 @@ def _pick_idle(duration: float) -> dict[str, Any] | None:
         return None
     cands = [r for r in _idle_clips if (r["end"] - r["start"]) >= duration]
     if cands:
-        r = random.choice(cands)
+        # Audition a few, take the first that is actually quiet. Returning None
+        # is a real answer: the caller falls back to a frozen frame and padded
+        # silence, which is silent by construction rather than by assumption.
+        for r in random.sample(cands, min(_IDLE_TRIES, len(cands))):
+            span = (r["end"] - r["start"]) - duration
+            st = r["start"] + (random.uniform(0, span) if span > 0 else 0)
+            if _region_rms(r["source_file"], st, duration) <= _IDLE_MAX_RMS:
+                return {
+                    "source_file": r["source_file"],
+                    "start_time": st, "end_time": st + duration,
+                    "prev_end": st, "next_start": st + duration,
+                    "word": "", "id": None,
+                    "fade_in": 0.0, "fade_out": 0.0,
+                }
+        return None
     else:
         r = max(_idle_clips, key=lambda r: r["end"] - r["start"])
         duration = min(duration, r["end"] - r["start"])
@@ -1119,6 +1182,12 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                     idle = _pick_idle(_STOP_PAUSE)
                     if idle is not None:
                         segments.append(idle)
+                    else:
+                        # No quiet footage to hold on. Freeze the last frame and
+                        # pad the audio instead -- silent because it is made,
+                        # not found.
+                        segments[-1]["pause_after"] = max(
+                            segments[-1].get("pause_after", 0.0), _STOP_PAUSE)
                 elif i < n - 1:
                     segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), _WORD_GAP)
             i += 1
@@ -1205,6 +1274,9 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                 idle = _pick_idle(_STOP_PAUSE)
                 if idle is not None:
                     segments.append(idle)
+                else:
+                    segments[-1]["pause_after"] = max(
+                        segments[-1].get("pause_after", 0.0), _STOP_PAUSE)
             elif last_idx < n - 1:
                 segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), _WORD_GAP)
 
