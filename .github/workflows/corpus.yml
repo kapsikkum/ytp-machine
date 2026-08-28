@@ -67,8 +67,12 @@ jobs:
             rm -rf /tmp/verify
             mkdir -p /tmp/verify
             MRS_DATA_DIR=/tmp/verify python scripts/corpus.py unpack "$CORPUS.$ext"
-            test -f /tmp/verify/corpora/"$CORPUS"/corpus.db
-            echo "$ext: $(du -sh /tmp/verify/corpora/"$CORPUS" | cut -f1) restored"
+            # A bundle holds corpus.db, downloads/ and transcripts/ at its top
+            # level -- the corpus name is not inside it -- so unpack without
+            # --into lays them out at the data-dir root, not under corpora/.
+            test -f /tmp/verify/corpus.db
+            test -d /tmp/verify/downloads
+            echo "$ext: $(du -sh /tmp/verify | cut -f1), $(ls /tmp/verify/downloads | wc -l) videos"
           done
 
       - name: Attach them to a release
