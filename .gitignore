@@ -59,3 +59,9 @@ _fa_*.wav
 # and sat there at 1.8 GB.
 *.tar.zst
 *.tar.gz
+
+# The global pronunciation dictionary. The repo root doubles as the default
+# data directory, so this is somebody's own word list, not part of the
+# project. The per-corpus ones under corpora/ stay tracked -- those belong
+# to the voice and travel with it.
+/pronunciations.csv
