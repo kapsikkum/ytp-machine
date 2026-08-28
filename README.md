@@ -10,12 +10,53 @@ and the `ice` of another.
 
 ## TLDR: get it running
 
+From a clone:
+
 ```bash
-docker compose up --build
+docker compose up
 ```
 
 Open <http://localhost:8765> and type a sentence. That is the whole thing — the
-Michael Rosen corpus is in the repo, so a fresh clone already works.
+Michael Rosen corpus is committed, so a fresh clone already works.
+
+That pulls the published image. Add `--build` only when you have changed the
+code, which saves compiling 3 GB that already exists on GHCR.
+
+The image is on GHCR if you would rather not use compose:
+
+```bash
+docker pull ghcr.io/kapsikkum/ytp-machine:latest
+```
+
+It carries **no corpus** — one has to be mounted, because a voice is 100 MB to
+2 GB of video and does not belong inside an image. So point it at one:
+
+```bash
+docker run -p 8765:8765 -v ytp-data:/app/data -v ./corpora/michael-rosen:/corpus:ro ghcr.io/kapsikkum/ytp-machine:latest
+```
+
+Any of three sources works: a corpus directory or a `.tar.zst` bundle mounted at
+`/corpus`, bundles dropped in `/packs`, or `CORPUS_URL` pointing at one over
+HTTP. With none of them it says exactly that and stops, rather than serving an
+app that answers everything with "no clips found".
+
+With no clone at all, `CORPUS_URL` is the way in — the **corpus** workflow packs
+a corpus and attaches it to a release, which is the only place a 100 MB+ bundle
+can sit at a stable public URL:
+
+```bash
+docker run -p 8765:8765 -v ytp-data:/app/data -e CORPUS_URL=https://github.com/kapsikkum/ytp-machine/releases/download/corpus/michael-rosen.tar.zst ghcr.io/kapsikkum/ytp-machine:latest
+```
+
+Run it from the Actions tab, or push a `corpus-*` tag. It packs, unpacks the
+result to prove it is whole, and uploads it.
+
+Pin the tag for anything you care about — `:latest` moves under you on the next
+push, and every commit is also tagged by its full sha:
+
+```bash
+docker pull ghcr.io/kapsikkum/ytp-machine:e4f6b8250ad18f0157acae513c779e83e7d7ca6e
+```
 
 No GPU needed to *run* it. You do want one to build a new corpus.
 

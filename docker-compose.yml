@@ -5,6 +5,11 @@
 # first time the container finds no database.
 services:
   app:
+    # Named, so `docker compose pull` can fetch the published build instead of
+    # spending several minutes and 3 GB making an identical one locally. With
+    # only `build:` here, every clone had to compile its own copy of an image
+    # that already exists on GHCR.
+    image: ghcr.io/kapsikkum/ytp-machine:latest
     build: .
     environment:
       # Affects nothing in the app itself, but keeps container logs readable

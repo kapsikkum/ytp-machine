@@ -1,0 +1,70 @@
+name: corpus
+
+# Publish the shipped corpus as a downloadable bundle.
+#
+# The corpus is committed as loose files because GitHub rejects any single file
+# over 100 MB and the packed bundle is 103 MB. A release asset has no such
+# limit, which makes it the one place a bundle can live at a stable public URL
+# -- and a URL is what the container wants: CORPUS_URL is the only way to run
+# the published image without a clone to mount a corpus from.
+#
+# Deliberately not an Actions artifact: those expire, and downloading one needs
+# an authenticated API call, so it cannot be handed to CORPUS_URL.
+#
+# Manual, because packing 110 MB on every push would be waste. Run it from the
+# Actions tab, or push a tag like corpus-2026-08-28.
+
+on:
+  workflow_dispatch:
+    inputs:
+      corpus:
+        description: Which corpus to pack
+        default: michael-rosen
+      tag:
+        description: Release tag to attach it to
+        default: corpus
+  push:
+    tags: ["corpus-*"]
+
+permissions:
+  contents: write
+
+env:
+  CORPUS: ${{ github.event.inputs.corpus || 'michael-rosen' }}
+  TAG: ${{ github.event.inputs.tag || 'corpus' }}
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pack the corpus
+        run: |
+          pip install zstandard
+          python scripts/corpus.py pack --corpus "$CORPUS" --out "$CORPUS.tar.zst"
+          python scripts/corpus.py info "$CORPUS.tar.zst"
+
+      - name: Check it unpacks
+        # The packer once produced truncated bundles that passed their own
+        # checksum, because the checksum was taken over the same truncated
+        # bytes. Reading it back is the only check that means anything.
+        run: |
+          mkdir -p /tmp/verify
+          MRS_DATA_DIR=/tmp/verify python scripts/corpus.py unpack "$CORPUS.tar.zst"
+          test -f /tmp/verify/corpora/"$CORPUS"/corpus.db
+          du -sh /tmp/verify/corpora/"$CORPUS"
+
+      - name: Attach it to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" \
+            --title "Corpus bundles" \
+            --notes "Packed corpora, for CORPUS_URL. See the README."
+          gh release upload "$TAG" "$CORPUS.tar.zst" --clobber
+          echo "CORPUS_URL=https://github.com/${{ github.repository }}/releases/download/$TAG/$CORPUS.tar.zst"
