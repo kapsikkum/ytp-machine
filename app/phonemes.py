@@ -1155,6 +1155,42 @@ def _chosen_from_recipe(
     return chosen
 
 
+# Roughly how long a phoneme needs to be heard, and the extra a vowel wants.
+#
+# Nothing in the splice path looked at duration before, so a unit was cut from
+# whichever clip the DP happened to pick. That is fine for a word said once,
+# and wrong for the common ones: "it" has 3,537 clips in one corpus with a
+# median of 110ms, which for IH plus T leaves a vowel too short to hear. "shit"
+# came out "shht" -- both consonants present, the vowel gone.
+#
+# A preference, not a filter: when nothing meets the floor the longest clip is
+# still used, because a short vowel beats reporting the word missing.
+_MIN_PER_PHONE = 0.05
+_VOWEL_EXTRA = 0.05
+
+
+def _clip_floor(phones) -> float:
+    """The shortest a clip can plausibly be and still contain *phones*."""
+    need = _MIN_PER_PHONE * len(phones)
+    if any(_is_vowel(p) for p in phones):
+        need += _VOWEL_EXTRA
+    return need
+
+
+def _by_audibility(clips: list[dict], phones) -> list[dict]:
+    """Clips ordered so the ones long enough to hold *phones* come first.
+
+    Among those, shortest-first: a clip with room for the sounds is wanted, not
+    the longest one in the corpus, which is usually a drawn-out or mis-aligned
+    outlier.
+    """
+    floor = _clip_floor(phones)
+    def key(c):
+        dur = c["end_time"] - c["start_time"]
+        return (0, dur) if dur >= floor else (1, -dur)
+    return sorted(clips, key=key)
+
+
 def _realise(
     chosen: list[tuple],
     target_phones: list[str],
@@ -1273,7 +1309,12 @@ def _realise(
             segments.append(seg)
             continue
 
-        clips_chosen = [cclip] + [c for c in clips_by_word.get(cword, []) if c is not cclip]
+        # Long enough to be heard first, then the DP's pick, then the rest.
+        # The DP chooses a source *word* well and a clip of it arbitrarily, so
+        # this is where a 110ms "it" gets passed over for one with a vowel in
+        # it.
+        pool = clips_by_word.get(cword) or [cclip]
+        clips_chosen = _by_audibility(pool, sub)
         if penalty:                               # down-rated clips tried last
             clips_chosen.sort(key=lambda c: penalty.get(c.get("id"), 0))
         seg = _try(cword, clips_chosen, cpos, ctotal, sub, last_v)
@@ -1281,7 +1322,7 @@ def _realise(
             for _ncuts, w, cl, ps, total in _sources_for(sub):
                 if w == cword:
                     continue
-                seg = _try(w, cl, ps, total, sub, last_v)
+                seg = _try(w, _by_audibility(cl, sub), ps, total, sub, last_v)
                 if seg is not None:
                     break
         if seg is None:                          # last resort: whole word clip
