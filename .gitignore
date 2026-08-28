@@ -27,8 +27,6 @@ app.log
 # Packed bundles are artefacts -- useful for moving a corpus to a server or
 # keeping a backup, but the repo carries the loose corpus instead.
 corpus/
-corpus-*.tar.zst
-corpus-*.tar.gz
 
 # Source packs are large binaries; the directory is tracked, its contents are not.
 packs/*
@@ -53,3 +51,11 @@ corpora/*/captions/
 _rb_*.wav
 _nz_*.wav
 _fa_*.wav
+
+# Corpus bundles. `pack` writes to the working directory by default, so one
+# lands in the checkout after every build. These were matched only as
+# corpus-*.tar.zst, which is the default date-stamped name -- a bundle named
+# after its corpus, which is what build_corpus makes, went straight past it
+# and sat there at 1.8 GB.
+*.tar.zst
+*.tar.gz
