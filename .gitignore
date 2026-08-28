@@ -47,3 +47,9 @@ corpora/*/captions/
 # otherwise put a half-downloaded 3 GB corpus into history forever.
 /corpora/*
 !/corpora/michael-rosen/
+
+# Scratch audio, if an older version of the scripts is still around or a
+# run is killed before it tidies up. These are tens of megabytes each.
+_rb_*.wav
+_nz_*.wav
+_fa_*.wav

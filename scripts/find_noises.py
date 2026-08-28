@@ -15,6 +15,7 @@ Usage:
 import argparse
 import os
 import subprocess
+import tempfile
 import sys
 import wave
 
@@ -40,7 +41,7 @@ def _load(path):
 def _bursts_in_gap(source_file, g_start, g_end):
     """Return list of (abs_start, abs_end, peak) energetic bursts in a gap."""
     import numpy as np
-    tmp = f"_nz_{os.getpid()}.wav"
+    tmp = os.path.join(tempfile.gettempdir(), f"_nz_{os.getpid()}.wav")
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-ss", f"{g_start:.4f}", "-t", f"{g_end - g_start:.4f}",

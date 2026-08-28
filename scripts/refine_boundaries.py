@@ -17,6 +17,7 @@ Usage:
 import argparse
 import os
 import subprocess
+import tempfile
 import sys
 import wave
 
@@ -102,7 +103,13 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
         return (0, 0, 0.0)
 
     from app.database import resolve_path
-    tmp = f"_rb_{os.getpid()}.wav"
+    # Scratch audio goes to the system temp directory, not the working directory.
+    # ffmpeg is handed a path and does not care, but the working directory is
+    # usually the repo: a killed run left a 50 MB wav sitting in it, syncing to
+    # OneDrive and one `git add -A` away from the history. The temp directory is
+    # also the right place for something this size -- it is cleaned up by the
+    # system if a process dies before its own cleanup runs.
+    tmp = os.path.join(tempfile.gettempdir(), f"_rb_{os.getpid()}.wav")
     subprocess.run(["ffmpeg", "-y", "-i", resolve_path(src["source_file"]), "-ac", "1", "-ar", str(_SR), tmp],
                    capture_output=True)
     wav = _load_wav(tmp)
