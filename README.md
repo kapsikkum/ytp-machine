@@ -203,6 +203,34 @@ and works for any word in any corpus.
 A run is one clip, so it is reversed or not as a whole — marking one word ends
 the run there rather than quietly reversing its neighbours.
 
+## Checking a corpus
+
+Whisper's mistakes are invisible from inside. A word it mishears is stored
+confidently under the wrong spelling, so the corpus looks complete and simply
+never produces that word — "rupees" was transcribed as "rubies", the most
+quotable word in that corpus, unreachable by typing it.
+
+```bash
+python scripts/verify_corpus.py --all
+python scripts/verify_corpus.py --source-id 3 --show 40
+```
+
+This fetches YouTube's own captions and matches them to the stored labels by
+timestamp, reporting **missed** words (caption text with no clip near it, so
+speech the transcription skipped) and **disagreements** (both systems heard
+something at the same moment and spelled it differently).
+
+Captions are not ground truth. Uploader-written subtitles would be, but most
+channels do not publish any; what is available is Google's speech recognition,
+with its own failures. The value is that it is a *different* system from
+Whisper — the two agreeing means something, and the two disagreeing is worth a
+person deciding. Nothing is edited: to act on a finding, put a transcript you
+trust in `transcripts/<video_id>.txt` and run `correct.py`.
+
+Repeated disagreements matter far more than one-offs. A word both systems
+disagree about every time it is said is a systematic mishearing; a single one is
+usually the two of them splitting a phrase differently.
+
 ## How hard it tries
 
 A corpus can only say what it has heard. When a word isn't there, the splicer
@@ -301,6 +329,7 @@ scripts/realign.py            better word timestamps via stable-ts
 scripts/refine_boundaries.py  frame-accurate boundaries via CTC alignment
 scripts/correct.py            relabel misheard words from a real transcript
 scripts/find_noises.py        pull non-verbal noises out of the gaps
+scripts/verify_corpus.py      check stored labels against YouTube captions
 scripts/corpus.py             pack / unpack / migrate / inspect
 corpora/<name>/               one voice: corpus.db + downloads/ + transcripts/
 packs/                        drop bundles here to install on next start

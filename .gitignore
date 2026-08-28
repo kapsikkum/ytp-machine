@@ -33,3 +33,17 @@ corpus-*.tar.gz
 # Source packs are large binaries; the directory is tracked, its contents are not.
 packs/*
 !packs/README.md
+
+# Cached YouTube captions, fetched by scripts/verify_corpus.py.
+# Derived, re-fetchable, and someone else's text -- not ours to keep
+# in git or to ship inside a corpus bundle.
+corpora/*/captions/
+
+# Corpora you build locally. Only the shipped Michael Rosen corpus is in
+# git -- as loose files, because the bundle exceeds GitHub's 100 MB limit.
+# Everything else is derived data: gigabytes of binary that never
+# delta-compresses and can be rebuilt from a channel link. Ignored rather
+# than merely untracked, because `git add -A` during an ingest will
+# otherwise put a half-downloaded 3 GB corpus into history forever.
+/corpora/*
+!/corpora/michael-rosen/

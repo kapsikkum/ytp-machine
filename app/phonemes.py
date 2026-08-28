@@ -203,12 +203,63 @@ def _base_phones(b: str) -> list[str] | None:
     return prons[0] if prons else None
 
 
+# Contraction endings, for putting back the apostrophe the ingest stripped.
+#
+# transcribe() reduces every word to [^\w], so "don't" is stored as "dont" --
+# and CMU has "don't", not "dont". The result was that the commonest words in
+# any corpus had no pronunciation at all and were skipped by the splice index
+# entirely: 2,879 clips in one corpus, 496 of them "dont" alone. They still
+# matched as whole words, so nothing looked wrong; they simply never
+# contributed a phoneme to anything, which quietly threw away the
+# best-recorded material in the corpus.
+# The apostrophe goes *inside* the n't family -- "don't", not "do'nt" -- so it
+# cannot be handled by the same split as the rest.
+_CONTRACTION_ENDINGS = ("ve", "ll", "re", "d", "s", "m")
+
+# British spellings, which CMU (American) does not carry. Whisper writes what
+# the speaker sounds like, so a British or Australian channel produces labels
+# the dictionary has never seen: "honourable" had three clips and no
+# pronunciation, while "honorable" had a pronunciation and no clips, leaving
+# three real recordings unreachable from either spelling.
+_BRITISH_ENDINGS = (("our", "or"), ("ise", "ize"), ("ised", "ized"),
+                    ("ising", "izing"), ("isation", "ization"),
+                    ("yse", "yze"), ("ogue", "og"))
+
+
+def _spelling_variants(w: str):
+    """Other spellings of *w* worth trying when the dictionary has not got it."""
+    # "dont" -> "don't". The apostrophe replaces nothing and sits before the
+    # final t, so this is not the same operation as the endings below.
+    if len(w) > 3 and w.endswith("nt"):
+        yield w[:-1] + "'t"
+    for suffix in _CONTRACTION_ENDINGS:
+        # > len(suffix), not >= : "ive" is exactly one letter plus the ending,
+        # and it is one of the commonest words a stripped apostrophe ruins.
+        if len(w) > len(suffix) and w.endswith(suffix):
+            yield w[: -len(suffix)] + "'" + suffix
+    for british, american in _BRITISH_ENDINGS:
+        if len(w) > len(british) + 1 and w.endswith(british):
+            yield w[: -len(british)] + american
+    # -re -> -er (centre, litre, theatre). Only after a consonant and only on a
+    # long enough word, so "are" and "more" are left alone.
+    if len(w) > 4 and w.endswith("re") and w[-3] not in "aeiou":
+        yield w[:-2] + "er"
+
+
 def _direct(w: str) -> list[str] | None:
-    """Phonemes from the override table or CMU dict only (no fallbacks)."""
+    """Phonemes from the override table or CMU dict (spelling variants aside)."""
     if w in _OVERRIDES:
         return list(_OVERRIDES[w])
     prons = _dict().get(w)
-    return prons[0] if prons else None
+    if prons:
+        return prons[0]
+    # Only reached once the word itself is not in the dictionary, so a variant
+    # can never displace a real pronunciation -- it only fills a hole.
+    for variant in _spelling_variants(w):
+        prons = _dict().get(variant)
+        if prons:
+            return prons[0]
+    return None
 
 
 def _resolve_simple(w: str) -> list[str] | None:

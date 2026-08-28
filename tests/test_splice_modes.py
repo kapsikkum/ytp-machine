@@ -67,6 +67,27 @@ for a, b in (("P", "S"), ("IY", "UW"), ("M", "K")):
     if b in _near(a):
         failures.append(f"  {a} should not accept {b}")
 
+# A stripped apostrophe and a British spelling both leave a label CMU has never
+# seen, so the word has no pronunciation and the splice index skips every clip
+# of it. These are the commonest words in any corpus -- "dont" alone was 496
+# clips -- so they are also its best-recorded material, silently unused.
+for word in ("dont", "ive", "doesnt", "didnt", "isnt", "wasnt", "hes", "itll",
+             "theyre", "youre", "cant", "wont", "im", "thats",
+             "honourable", "colour", "realise", "centre", "litre"):
+    if not word_to_phonemes(word):
+        failures.append(f"  {word!r} still has no pronunciation")
+
+# The variants are only tried once the word itself is absent, so a real word
+# must come back untouched. "ant", "want", "front" and "point" all end in "nt"
+# without being contractions, and "are"/"more"/"our"/"four" end in the letters
+# the British-spelling rules rewrite.
+for word in ("are", "more", "our", "four", "ant", "want", "front", "point",
+             "is", "red", "dog", "some"):
+    if not word_to_phonemes(word):
+        failures.append(f"  {word!r} lost its pronunciation to a spelling rule")
+check("a real word keeps its own pronunciation",
+      word_to_phonemes("four"), ["F", "AO", "R"])
+
 # Cost ordering is the whole safety property of the non-strict modes. A real
 # match costs about 1.0 per unit, so each fallback has to sit far enough above
 # that no chain of them can undercut a plan made of real matches:
