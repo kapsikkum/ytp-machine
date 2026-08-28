@@ -8,6 +8,73 @@ Words the corpus has are spliced in directly. Words it doesn't are built from
 phonemes taken out of other words, so `rice` can come from the `r` of one word
 and the `ice` of another.
 
+## TLDR: get it running
+
+```bash
+docker compose up --build
+```
+
+Open <http://localhost:8765> and type a sentence. That is the whole thing — the
+Michael Rosen corpus is in the repo, so a fresh clone already works.
+
+No GPU needed to *run* it. You do want one to build a new corpus.
+
+---
+
+## TLDR: train it on a channel
+
+**1. One environment with a GPU**, somewhere your file sync will not touch
+(OneDrive locks DLLs mid-install and torch dies with a `WinError 32` naming an
+innocent file):
+
+```bash
+python -m venv C:/Users/you/.venvs/ytp
+```
+
+```bash
+C:/Users/you/.venvs/ytp/Scripts/python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
+```
+
+```bash
+C:/Users/you/.venvs/ytp/Scripts/python.exe -m pip install -r requirements.txt
+```
+
+**2. Build it.** One command does download, transcribe, align and pack:
+
+```bash
+python scripts/build_corpus.py @SomeChannel --limit 10 --data-dir C:/Users/you/ytp-corpora/some-channel
+```
+
+Ten long videos is a good first target — roughly an hour of GPU time and about
+5,000 distinct words. `--limit 0` takes the whole channel. Re-running skips what
+is already ingested, so a run you interrupt just carries on.
+
+**3. Install it** wherever the server runs:
+
+```bash
+python scripts/corpus.py install some-channel.tar.zst --name some-channel
+```
+
+Then pick the voice from the dropdown, or `POST /api/corpus`.
+
+**4. Optional, but it is what makes it sound good.** The build leaves a
+`pronunciations.csv` in the data directory listing every word it cannot
+pronounce, commented out. Uncomment a line and say what the word rhymes with:
+
+```csv
+wii,wee
+nug,nugget
+usb,=letters
+```
+
+Then `POST /api/reload`. To rebuild that list later, point it at the corpus:
+
+```bash
+MRS_DATA_DIR=C:/Users/you/ytp-corpora/some-channel MRS_CORPUS=some-channel python scripts/verify_corpus.py --unspliceable --write-template
+```
+
+---
+
 ## Run it
 
 ```bash
