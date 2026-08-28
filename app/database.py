@@ -67,34 +67,53 @@ def list_corpora() -> list[dict]:
 _active: dict | None = None
 
 
+def _corpus_entry(slug: str) -> dict:
+    """Where a corpus called *slug* lives, installed or not yet.
+
+    In the modern one-directory-per-corpus form: pointing a fresh install at
+    the legacy loose path meant the very first ingest recreated the layout
+    everything else is migrating away from, and it would need migrating again
+    immediately.
+    """
+    directory = os.path.join(CORPORA_DIR, slug)
+    return {"slug": slug, "name": slug.replace("-", " ").title(),
+            "dir": directory, "db": os.path.join(directory, "corpus.db")}
+
+
 def active() -> dict:
     """The selected corpus, picking one on first use if nothing is set."""
     global _active
     if _active is None:
         available = list_corpora()
-        if not available:
-            # Nothing installed yet, so this is where the first corpus gets
-            # laid out. It goes in the modern one-directory-per-corpus form:
-            # pointing a fresh install at the legacy loose path meant the very
-            # first ingest recreated the layout everything else is migrating
-            # away from, and it would need migrating again immediately.
-            slug = _slugify(os.environ.get("MRS_CORPUS") or "default")
-            directory = os.path.join(CORPORA_DIR, slug)
-            _active = {"slug": slug, "name": slug.replace("-", " ").title(),
-                       "dir": directory,
-                       "db": os.path.join(directory, "corpus.db")}
+        preferred = os.environ.get("MRS_CORPUS")
+
+        if preferred:
+            # An explicit name always wins, and names the corpus even when it
+            # does not exist yet -- that is precisely the case where a new one
+            # is about to be built.
+            #
+            # list_corpora() only reports directories that already hold a .db,
+            # so a corpus being created for the first time matched nothing here
+            # and fell through to "whatever sorts first". Asking to build
+            # "james-channel" in a data directory that already held
+            # "michael-rosen" therefore downloaded into michael-rosen's
+            # downloads/ -- the shipped corpus, in git -- while the header
+            # printed the name it was supposed to be using. Every build that
+            # ever worked did so only because it pointed --data-dir at an empty
+            # directory, where the no-corpora branch below got it right by
+            # accident.
+            slug = _slugify(preferred)
+            _active = (next((c for c in available if c["slug"] == slug), None)
+                       or _corpus_entry(slug))
+        elif available:
+            # Nothing asked for: the legacy "default" corpus, else whatever
+            # sorts first. Without the middle step a restart silently switched
+            # voices, because the listing is alphabetical and an installed pack
+            # can sort ahead of the corpus that was there all along.
+            _active = (next((c for c in available if c["slug"] == "default"), None)
+                       or available[0])
         else:
-            # Order of preference: what MRS_CORPUS asks for, then the legacy
-            # "default" corpus, then whatever sorts first. Without the middle
-            # step a restart silently switched voices, because the listing is
-            # alphabetical and an installed pack can sort ahead of the corpus
-            # that was there all along.
-            preferred = os.environ.get("MRS_CORPUS")
-            _active = (
-                next((c for c in available if c["slug"] == preferred), None)
-                or next((c for c in available if c["slug"] == "default"), None)
-                or available[0]
-            )
+            _active = _corpus_entry("default")
     return _active
 
 

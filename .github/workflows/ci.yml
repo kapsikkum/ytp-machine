@@ -33,6 +33,11 @@ jobs:
           pip install num2words nltk
           python tests/test_tokenize.py
 
+      - name: Corpus selection
+        # This decides where downloads and clip rows are written, so a mistake
+        # does not fail -- it succeeds against the wrong corpus.
+        run: python tests/test_corpus_select.py
+
       - name: Splice modes
         # Guessed pronunciations and phoneme substitutions only run outside
         # strict mode, so a mistake here is invisible until someone turns the
