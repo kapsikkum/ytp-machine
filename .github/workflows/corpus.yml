@@ -43,28 +43,42 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Pack the corpus
+      - name: Pack the corpus, both ways
+        # .tar.zst is the smaller one and what pack writes by default; .tar.gz
+        # needs nothing installed to open, which matters for anyone who just
+        # wants to look inside a bundle without setting up the project first.
+        # unpack reads either, and the container accepts either at /corpus,
+        # /packs or CORPUS_URL.
         run: |
           pip install zstandard
           python scripts/corpus.py pack --corpus "$CORPUS" --out "$CORPUS.tar.zst"
+          python scripts/corpus.py pack --corpus "$CORPUS" --out "$CORPUS.tar.gz"
           python scripts/corpus.py info "$CORPUS.tar.zst"
+          python scripts/corpus.py info "$CORPUS.tar.gz"
 
-      - name: Check it unpacks
+      - name: Check they unpack
         # The packer once produced truncated bundles that passed their own
         # checksum, because the checksum was taken over the same truncated
-        # bytes. Reading it back is the only check that means anything.
+        # bytes. Reading it back is the only check that means anything, and
+        # both formats get it -- the bug was in the zstd path, and only the
+        # gzip one had ever actually shipped.
         run: |
-          mkdir -p /tmp/verify
-          MRS_DATA_DIR=/tmp/verify python scripts/corpus.py unpack "$CORPUS.tar.zst"
-          test -f /tmp/verify/corpora/"$CORPUS"/corpus.db
-          du -sh /tmp/verify/corpora/"$CORPUS"
+          for ext in tar.zst tar.gz; do
+            rm -rf /tmp/verify
+            mkdir -p /tmp/verify
+            MRS_DATA_DIR=/tmp/verify python scripts/corpus.py unpack "$CORPUS.$ext"
+            test -f /tmp/verify/corpora/"$CORPUS"/corpus.db
+            echo "$ext: $(du -sh /tmp/verify/corpora/"$CORPUS" | cut -f1) restored"
+          done
 
-      - name: Attach it to a release
+      - name: Attach them to a release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" \
             --title "Corpus bundles" \
             --notes "Packed corpora, for CORPUS_URL. See the README."
-          gh release upload "$TAG" "$CORPUS.tar.zst" --clobber
-          echo "CORPUS_URL=https://github.com/${{ github.repository }}/releases/download/$TAG/$CORPUS.tar.zst"
+          gh release upload "$TAG" "$CORPUS.tar.zst" "$CORPUS.tar.gz" --clobber
+          BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+          echo "CORPUS_URL=$BASE/$CORPUS.tar.zst"
+          echo "CORPUS_URL=$BASE/$CORPUS.tar.gz   (needs no zstandard)"
