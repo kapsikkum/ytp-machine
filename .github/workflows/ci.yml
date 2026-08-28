@@ -33,6 +33,16 @@ jobs:
           pip install num2words nltk
           python tests/test_tokenize.py
 
+      - name: Bundle round-trip
+        # A corpus bundle that packs, checksums and lists cleanly can still be
+        # truncated -- every .tar.zst ever written was, and it surfaced days
+        # later on a server. zstandard is installed explicitly because without
+        # it the packer falls back to gzip and the test passes having never
+        # touched the path that broke.
+        run: |
+          pip install zstandard
+          python tests/test_bundle.py
+
       - name: Corpus selection
         # This decides where downloads and clip rows are written, so a mistake
         # does not fail -- it succeeds against the wrong corpus.

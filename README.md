@@ -313,6 +313,28 @@ once exhausted the container's thread ceiling before the queue existed.
 | `POST /api/reload` | drop the clip cache after an ingest or correction |
 | `GET /api/stats` | corpus totals |
 
+## Tests
+
+```bash
+python tests/test_tokenize.py        # tokeniser: expansions, markers, boundaries
+python tests/test_splice_modes.py    # pronunciations, substitutions, cost order
+python tests/test_corpus_select.py   # which corpus a run writes into
+python tests/test_bundle.py          # a bundle survives a round trip
+```
+
+Those four run in CI and need nothing but `num2words`, `nltk` and `zstandard`.
+
+```bash
+python tests/test_end_to_end.py      # ~30s: one real video, start to finish
+```
+
+That one is not in CI — it downloads a 63-second video, transcribes it, refines
+the boundaries and generates sentences from it, so it needs the network, ffmpeg,
+torch and a Whisper model. Run it before shipping anything that touches ingest,
+clip selection or the ffmpeg builder. It is the only test that exercises those
+together, and the bugs that have escaped so far escaped *between* the parts
+rather than inside any one of them.
+
 ## Layout
 
 ```

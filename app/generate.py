@@ -53,11 +53,33 @@ _VOTE_FLOOR = 0.02
 _VOTE_CEIL = 8.0
 
 
+# Net score at which a clip stops being used as a real recording at all.
+#
+# Starving a clip is the right response to one downvote -- the clip may be fine
+# and the vote a mood -- but it is the wrong response to a clip somebody has
+# rejected twice, because starving still plays it when nothing else is
+# available, which is exactly when a bad take is most annoying. Past this, the
+# word is spliced from other words instead: a synthetic word beats a recording
+# that has been turned down repeatedly.
+#
+# It applies to runs too. A run is one clip covering several words, so a
+# rejected word inside it cannot be swapped out -- the run has to end there.
+_VETO_SCORE = -2
+
+
 def _vote_weight(score: int) -> float:
     """A net vote count as a multiplier on a clip's chance of being picked."""
     if not score:
         return 1.0
     return min(_VOTE_CEIL, max(_VOTE_FLOOR, _VOTE_BASE ** score))
+
+
+def _vetoed(word: str, clip: dict) -> bool:
+    """Has this clip been voted down far enough to stop using it for *word*?"""
+    cid = clip.get("id")
+    if cid is None:
+        return False
+    return (_splice_scores or {}).get((word.lower(), int(cid)), 0) <= _VETO_SCORE
 
 
 def _ensure_cache() -> None:
@@ -623,7 +645,14 @@ def pick_clip(rows: list[dict], word: str) -> dict[str, Any] | None:
 
 
 def _find_clip(word: str, cbw: dict) -> dict[str, Any] | None:
-    return pick_clip(cbw.get(word), word)
+    rows = cbw.get(word) or []
+    usable = [r for r in rows if not _vetoed(word, r)]
+    if rows and not usable:
+        # Every recording of this word has been rejected. Returning None sends
+        # the caller to the splicer, which is the point: build it out of other
+        # words rather than play a take that was turned down.
+        return None
+    return pick_clip(usable, word)
 
 
 # ── Contiguous-phrase detection ────────────────────────────────────────────────
@@ -644,11 +673,14 @@ def _find_run(words: list[str], i: int) -> tuple[int, int, int, int] | None:
 
     for src, idx in _word_positions.get(words[i], []):
         seq = _ordered_by_source[src]
+        if _vetoed(words[i], seq[idx]):
+            continue                 # this run opens on a take already rejected
         k = 1
         while (i + k < len(words)
                and idx + k < len(seq)
                and seq[idx + k]["word"] == words[i + k]
-               and seq[idx + k]["start_time"] - seq[idx + k - 1]["end_time"] <= _MAX_RUN_GAP):
+               and seq[idx + k]["start_time"] - seq[idx + k - 1]["end_time"] <= _MAX_RUN_GAP
+               and not _vetoed(words[i + k], seq[idx + k])):
             k += 1
         if k < 2:
             continue
