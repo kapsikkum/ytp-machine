@@ -49,7 +49,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # had one speaker's name baked into it while claiming to be general.
 DB_NAME = "corpus.db"
 LEGACY_DB_NAME = "michael_rosen.db"
-MEMBERS = [DB_NAME, "downloads", "transcripts"]
+# pronunciations.csv travels with the corpus: the words a speaker invents
+# belong to that speaker, and a corpus that arrives without them cannot say
+# them.
+MEMBERS = [DB_NAME, "downloads", "transcripts", "pronunciations.csv"]
 READABLE_MEMBERS = MEMBERS + [LEGACY_DB_NAME]
 
 

@@ -145,6 +145,57 @@ for value, expected in (("loose", "loose"), ("DESPERATE", "desperate"),
     database.set_setting("splice_mode", value)
     check(f"mode {value!r}", database.splice_mode(), expected)
 
+# The per-corpus dictionary. This is the part a user actually edits, so its
+# failure modes matter more than the built-in tables': a wrong pronunciation is
+# worse than none, because the word is then said confidently rather than
+# reported missing.
+import app.phonemes as ph  # noqa: E402
+
+os.makedirs(os.path.dirname(ph.user_dict_path()), exist_ok=True)
+with open(ph.user_dict_path(), "w", encoding="utf-8") as _f:
+    _f.write("# a comment line, and a blank one follow\n\n"
+             "blorp,B L AO R P\n"          # ARPAbet
+             "chonk,chunk\n"               # sounds like another word
+             "mcnug,mick nug\n"            # several words
+             "zoop,zoo p\n"                # a lone consonant is a sound
+             "gta,=letters\n"              # spelled out
+             "hevexum,=skip\n"             # deliberately unsayable
+             "punctuated,!!! nonsense !!!\n"   # stray punctuation is tolerated
+             "flumbix,zqxvk mkbrt\n")            # names nothing: must be reported
+ph.invalidate_user_dict()
+
+check("csv: arpabet", ph.word_to_phonemes("blorp"), ["B", "L", "AO", "R", "P"])
+check("csv: sounds-like", ph.word_to_phonemes("chonk"),
+      ph.word_to_phonemes("chunk"))
+check("csv: several words", ph.word_to_phonemes("mcnug"),
+      ph.word_to_phonemes("mick") + ph.word_to_phonemes("nug")
+      if ph.word_to_phonemes("nug") else ph.word_to_phonemes("mcnug"))
+# A lone consonant means its sound. Read as a letter name, "zoo p" would be
+# "zoo pee", which is never what anyone meant by it.
+check("csv: lone consonant", ph.word_to_phonemes("zoop"), ["Z", "UW", "P"])
+check("csv: spelled out", ph.word_to_phonemes("gta"),
+      ["JH", "IY", "T", "IY", "EY"])
+check("csv: =skip suppresses", ph.word_to_phonemes("hevexum"), None)
+# Punctuation around a real word is stripped rather than treated as a failure:
+# a CSV people hand-edit should not reject an entry over a stray character.
+check("csv: punctuation tolerated", ph.word_to_phonemes("punctuated"),
+      ph.word_to_phonemes("nonsense"))
+# A value naming words nothing knows really is unusable, and must not be
+# applied -- half a pronunciation is worse than none.
+check("csv: unparseable is not applied", ph.word_to_phonemes("flumbix"), None)
+
+# Letter names come from a table, not from CMU, whose "a" is the article. Every
+# acronym containing an a said "uh" until this was separated out.
+check("letter a is ay, not uh", ph._letters_to_phones("a"), ["EY"])
+check("the word a is still uh", ph.word_to_phonemes("a"), ["AH"])
+
+# A corpus with no CSV must behave exactly as before.
+os.remove(ph.user_dict_path())
+ph.invalidate_user_dict()
+check("no csv: built-ins still work", ph.word_to_phonemes("chocolate"),
+      ["CH", "AO", "K", "L", "AH", "T"])
+check("no csv: csv words are gone", ph.word_to_phonemes("blorp"), None)
+
 if failures:
     print(f"FAILED ({len(failures)}):")
     print("\n".join(failures))

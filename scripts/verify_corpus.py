@@ -158,7 +158,47 @@ def compare(caption: list[tuple[str, float]],
             "drifted": drifted}
 
 
-def report_unspliceable(show: int) -> int:
+def write_template(words) -> str:
+    """Append the unpronounceable words to the corpus's CSV, commented out.
+
+    Commented, because a wrong pronunciation is worse than none: it does not
+    report the word missing, it says something else confidently. Uncomment a
+    line once you have filled in how it actually sounds.
+    """
+    from app.phonemes import user_dict_path
+    path = user_dict_path()
+    existing = set()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8-sig") as f:
+            for line in f:
+                head = line.lstrip("# ").split(",", 1)[0].strip().lower()
+                if head:
+                    existing.add(head)
+
+    new = [(w, n) for w, n in words if w not in existing]
+    if not new:
+        return path
+    fresh = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as f:
+        if fresh:
+            f.write("# How to say the words no dictionary has. Two columns:\n"
+                    "#\n"
+                    "#   nug,N AH G       ARPAbet, if you know it\n"
+                    "#   wii,wee          or just a word that already sounds right\n"
+                    "#   mcnug,mick nug   several words are fine\n"
+                    "#   usb,=letters     read it out letter by letter\n"
+                    "#   hevexum,=skip    leave it unsayable on purpose\n"
+                    "#\n"
+                    "# The second form is the one to use -- nobody should have to\n"
+                    "# learn ARPAbet to say that \"wii\" rhymes with \"wee\".\n")
+        f.write("\n# Added by verify_corpus.py --unspliceable --write-template.\n"
+                "# Uncomment and fill in the ones worth saying.\n")
+        for word, n in new:
+            f.write(f"#{word},   # {n} clip{'s' if n != 1 else ''}\n")
+    return path
+
+
+def report_unspliceable(show: int, write: bool = False) -> int:
     """Stored words with no pronunciation, worst first.
 
     A word with no pronunciation is skipped by the splice index entirely: it
@@ -195,10 +235,14 @@ def report_unspliceable(show: int) -> int:
         print(f"  {n:>4}  {word}")
     if len(bad) > show:
         print(f"  … and {len(bad) - show} more (--show N for more)")
-    print("\nWorth adding to app/phonemes.py when a word is really said some "
-          "other way\n(_SAID_AS_WORD) or spelled out letter by letter "
-          "(_SPELLED_OUT). Names and\ncoinages cannot be helped and are fine "
-          "to leave.")
+    if write:
+        path = write_template(bad.most_common())
+        print(f"\nwritten to {path} -- uncomment the ones worth saying.")
+    else:
+        print("\nTo say any of these, put them in the corpus's "
+              "pronunciations.csv\n(--write-template starts the file for you). "
+              "Names and coinages are\nfine to leave: outside strict mode the "
+              "splicer guesses them from spelling.")
     return 0
 
 
@@ -211,13 +255,17 @@ def main() -> int:
     ap.add_argument("--refresh", action="store_true",
                     help="Re-fetch captions instead of using the cached copy")
     ap.add_argument("--cookies-from-browser", default=None, metavar="BROWSER")
+    ap.add_argument("--write-template", action="store_true",
+                    help="With --unspliceable, write the words into the corpus's "
+                         "pronunciations.csv for you to fill in. Never overwrites "
+                         "entries you have already made.")
     ap.add_argument("--unspliceable", action="store_true",
                     help="Skip the caption check and list stored words that have "
                          "no pronunciation. Needs no network.")
     args = ap.parse_args()
 
     if args.unspliceable:
-        return report_unspliceable(args.show)
+        return report_unspliceable(args.show, args.write_template)
 
     if args.source_id is None and not args.all:
         return int(bool(sys.stderr.write(

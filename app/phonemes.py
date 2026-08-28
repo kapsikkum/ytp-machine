@@ -15,11 +15,15 @@ Example
 Target "penis" (typed "pee nes") → "pee"(peach, cut) + "nes"(…)
 """
 
+import logging
+import os
 import re
 import random
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 _VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY",
            "IH", "IY", "OW", "OY", "UH", "UW"}
@@ -322,14 +326,31 @@ _SAID_AS_WORD = {
 }
 
 
+# The names of the letters, spelled out. Not taken from CMU, which holds the
+# *word* each letter spells: its "a" is the article, so every acronym with an a
+# in it came out saying "uh" -- "gta" as "gee tee uh". The distinction does not
+# exist in the dictionary, so the table has to.
+_LETTER_NAMES = {
+    "a": ["EY"],       "b": ["B", "IY"],   "c": ["S", "IY"],
+    "d": ["D", "IY"],  "e": ["IY"],        "f": ["EH", "F"],
+    "g": ["JH", "IY"], "h": ["EY", "CH"],  "i": ["AY"],
+    "j": ["JH", "EY"], "k": ["K", "EY"],   "l": ["EH", "L"],
+    "m": ["EH", "M"],  "n": ["EH", "N"],   "o": ["OW"],
+    "p": ["P", "IY"],  "q": ["K", "Y", "UW"], "r": ["AA", "R"],
+    "s": ["EH", "S"],  "t": ["T", "IY"],   "u": ["Y", "UW"],
+    "v": ["V", "IY"],  "w": ["D", "AH", "B", "AH", "L", "Y", "UW"],
+    "x": ["EH", "K", "S"], "y": ["W", "AY"], "z": ["Z", "IY"],
+}
+
+
 def _letters_to_phones(letters: str) -> list[str] | None:
     """Phonemes for a run of letters read out one at a time: u-s-b."""
     out: list[str] = []
     for ch in letters:
-        prons = _dict().get(ch)
-        if not prons:
+        name = _LETTER_NAMES.get(ch)
+        if not name:
             return None
-        out.extend(prons[0])
+        out.extend(name)
     return out or None
 
 
@@ -439,8 +460,128 @@ def _spelling_variants(w: str):
         yield w[:-2] + "er"
 
 
+# ── User dictionary ───────────────────────────────────────────────────────────
+#
+# The tables in this file are a starting set, not an answer. A corpus can be
+# built from any channel, and every speaker brings words no dictionary holds --
+# names, in-jokes, brand names, coinages. Editing Python to add one is the wrong
+# ask, so each corpus carries its own CSV and it wins over everything here.
+#
+#     corpora/<name>/pronunciations.csv
+#
+# Two columns, and the second may be written either way round:
+#
+#     nug,N AH G          ARPAbet, if you know it
+#     wii,wee             or just a word that already sounds right
+#     mcnug,mick nug      several words are fine
+#     usb,=letters        read it out letter by letter
+#     hevexum,=skip       leave it unpronounceable on purpose
+#
+# The second form is the one to use. Nobody should have to learn ARPAbet to
+# tell a program that "wii" rhymes with "wee".
+_USER_DICT_NAME = "pronunciations.csv"
+_user_dict: dict[str, list[str] | None] | None = None
+
+_ARPABET = _VOWELS | {"B", "CH", "D", "DH", "F", "G", "HH", "JH", "K", "L",
+                      "M", "N", "NG", "P", "R", "S", "SH", "T", "TH", "V",
+                      "W", "Y", "Z", "ZH"}
+
+
+def user_dict_path() -> str:
+    """Where the active corpus keeps its own pronunciations."""
+    from app.database import active
+    return os.path.join(active()["dir"], _USER_DICT_NAME)
+
+
+def _parse_user_value(value: str) -> list[str] | None | str:
+    """One CSV value into phonemes, None to suppress, or "?" if unresolvable."""
+    value = value.strip()
+    if not value:
+        return "?"
+    if value.lower() in ("=skip", "=none", "-"):
+        return None                    # deliberately left unpronounceable
+    if value.lower() == "=letters":
+        return "=letters"
+    tokens = value.replace(",", " ").split()
+    if tokens and all(t.upper() in _ARPABET for t in tokens):
+        return [t.upper() for t in tokens]
+    # Otherwise it names words that already sound right. Resolved through the
+    # ordinary machinery, so "mick nug" works even though "nug" is only in this
+    # same file -- as long as it was defined before it is used.
+    out: list[str] = []
+    for token in tokens:
+        clean = re.sub(r"[^a-z']", "", token.lower())
+        if not clean:
+            continue
+        # A lone consonant means its sound, not its name. "zoop,zoo p" is
+        # plainly zoo + a p on the end, and reading it as "zoo pee" is never
+        # what anybody meant.
+        if len(clean) == 1 and clean not in "aeiou":
+            out.append(clean.upper())
+            continue
+        got = _direct(clean)
+        if not got:
+            return "?"
+        out.extend(got)
+    return out or "?"
+
+
+def _load_user_dict() -> dict[str, list[str] | None]:
+    global _user_dict
+    if _user_dict is not None:
+        return _user_dict
+    _user_dict = {}
+    rejected: list[tuple[str, str]] = []
+    try:
+        path = user_dict_path()
+    except Exception:
+        return _user_dict
+    if not os.path.exists(path):
+        return _user_dict
+    import csv
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            for row in csv.reader(f):
+                if not row or row[0].lstrip().startswith("#"):
+                    continue
+                word = re.sub(r"[^\w']", "", row[0].strip().lower())
+                if not word or len(row) < 2:
+                    continue
+                parsed = _parse_user_value(row[1])
+                if parsed == "=letters":
+                    _user_dict[word] = _letters_to_phones(word)
+                elif parsed == "?":
+                    # Silence here is the worst outcome: the entry looks
+                    # applied, the word stays unsayable, and nothing explains
+                    # why. Usually a typo, or a word defined in terms of
+                    # another word nothing knows yet.
+                    rejected.append((word, row[1].strip()))
+                else:
+                    _user_dict[word] = parsed   # list, or None to suppress
+    except Exception as exc:
+        log.warning("could not read %s: %s", path, exc)
+    if _user_dict:
+        log.info("%d user pronunciations from %s", len(_user_dict), path)
+    for word, value in rejected:
+        log.warning("%s: could not make sense of %r for %r -- use ARPAbet, "
+                    "words that already sound right, =letters or =skip",
+                    _USER_DICT_NAME, value, word)
+    return _user_dict
+
+
+def invalidate_user_dict() -> None:
+    """Forget the CSV so an edit takes effect on the next lookup."""
+    global _user_dict
+    _user_dict = None
+    _direct.cache_clear() if hasattr(_direct, "cache_clear") else None
+
+
 def _direct(w: str) -> list[str] | None:
-    """Phonemes from the override table or CMU dict (spelling variants aside)."""
+    """Phonemes from the user CSV, the override table, or CMU."""
+    user = _load_user_dict()
+    if w in user:
+        got = user[w]
+        return list(got) if got else None      # an explicit None suppresses
     if w in _OVERRIDES:
         return list(_OVERRIDES[w])
     prons = _dict().get(w)

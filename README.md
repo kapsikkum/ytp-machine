@@ -231,6 +231,44 @@ Repeated disagreements matter far more than one-offs. A word both systems
 disagree about every time it is said is a systematic mishearing; a single one is
 usually the two of them splitting a phrase differently.
 
+## Teaching it words
+
+Any channel invents words a dictionary has never held — names, in-jokes, brand
+names, coinages — and a word with no pronunciation cannot be spliced at all.
+Each corpus therefore carries its own dictionary:
+
+```
+corpora/<name>/pronunciations.csv
+```
+
+Two columns, and the second can be written whichever way suits:
+
+```csv
+nug,N AH G          # ARPAbet, if you know it
+wii,wee             # or just a word that already sounds right
+mcnug,mick nug      # several words are fine
+usb,=letters        # read it out letter by letter
+hevexum,=skip       # leave it unsayable on purpose
+```
+
+The second form is the one to reach for. Nobody should have to learn ARPAbet to
+say that "wii" rhymes with "wee".
+
+To find out what is worth adding:
+
+```bash
+python scripts/verify_corpus.py --unspliceable --write-template
+```
+
+That lists every stored word with no pronunciation, worst first, and writes them
+into the CSV commented out, ready to fill in. It needs no network. The file packs
+with the corpus, so a bundle arrives knowing how to say its own words, and edits
+take effect on the next `POST /api/reload`.
+
+Entries here beat everything built in, and a line that cannot be parsed is
+reported rather than ignored — silence would leave the word unsayable with
+nothing to explain why.
+
 ## How hard it tries
 
 A corpus can only say what it has heard. When a word isn't there, the splicer

@@ -201,6 +201,12 @@ def invalidate_cache() -> None:
     _noise_by_word       = {}
     _all_noises          = []
     _splice_scores       = None
+    # The CSV is per-corpus, so switching corpus or reloading must drop it too.
+    try:
+        from app.phonemes import invalidate_user_dict
+        invalidate_user_dict()
+    except Exception:
+        pass
 
 
 def _penalty_for(word: str) -> dict[int, int]:
