@@ -17,6 +17,17 @@ _PAD_END_LAST = 0.45 # more tail for the final word so its release isn't clipped
 _SAFETY     = 0.05   # gap to leave before a neighbouring word (start side)
 _TAIL_GAP   = 0.05   # gap before next word on the tail (runs are clamped precisely
                      # at the last word's content end, so this can stay modest)
+# The least tail a word ending in a sonorant may have. M, N, NG, L and R fade
+# out rather than stopping, and an aligner puts the boundary where the energy
+# drops, not where the sound ends -- so cutting at the boundary loses the part
+# that identifies it. "rosen" became "rose" and "mum" became "mu".
+#
+# Allowed to run slightly into the next word, which is the trade being made
+# deliberately: a nasal bleeding 40ms into the following onset is a far smaller
+# fault than the nasal not being there.
+_SONORANT_TAIL = 0.04
+_FINAL_SONORANTS = {"M", "N", "NG", "L", "R", "ER"}
+
 _BLEED_TAIL = 0.16   # bigger tail gap when a run ends on a word whose next source
                      # word is an adjacent vowel — its onset glide bleeds backward
                      # (e.g. "full of" + "oil" leaking the "oi"); cut well clear of it
@@ -901,6 +912,19 @@ def _trim(stderr: str, limit: int = 2000) -> str:
     return "\n".join([text[:head], marker, text[-tail:]])
 
 
+def _ends_in_sonorant(seg: dict[str, Any]) -> bool:
+    """Does this clip end on a sound that fades rather than stops?"""
+    word = (seg.get("word") or "").strip().split()
+    if not word:
+        return False
+    try:
+        from app.phonemes import word_to_phonemes
+        phones = word_to_phonemes(word[-1].lower())
+    except Exception:
+        return False
+    return bool(phones) and phones[-1] in _FINAL_SONORANTS
+
+
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -> None:
     """Encode *segments* to *out_path* in batches, then join them.
 
@@ -1006,17 +1030,30 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # (e.g. a word-final "s") isn't clipped.
         pad_end = _PAD_END_LAST if (final_tail and idx == len(segments) - 1) else _PAD_END
         next_start = seg.get("next_start")
+        # A sub-word unit is clamped on purpose and must stay exactly as cut;
+        # only whole words get their tail nursed.
+        whole_word = not seg.get("subword") and not seg.get("_cut")
+        floor = seg["end_time"]
+        if whole_word and _ends_in_sonorant(seg):
+            floor = seg["end_time"] + _SONORANT_TAIL
+
         if next_start is not None and next_start <= seg["end_time"] + 1e-3:
             # Tight butt-join (a clamped sub-word/interior splice unit): extract
             # exactly to the unit end so the join is seamless and we don't shrink it.
-            tail_end = seg["end_time"]
+            tail_end = floor
         elif next_start is not None:
             # A real following word in the source: extend into the gap but stop
             # well before its onset so its coarticulation isn't caught.
-            tail_end = min(seg["end_time"] + pad_end, next_start - _TAIL_GAP)
-            tail_end = max(tail_end, start + 0.05)
+            #
+            # Clamped to *at least* the word's own end. This used to be a plain
+            # min(), so whenever the next word began sooner than _TAIL_GAP --
+            # 20ms apart is ordinary in connected speech -- the clamp did not
+            # merely decline to extend the clip, it cut 30ms off the end of it.
+            tail_end = min(seg["end_time"] + pad_end,
+                           max(floor, next_start - _TAIL_GAP))
+            tail_end = max(tail_end, start + 0.05, floor)
         else:
-            tail_end = seg["end_time"] + pad_end
+            tail_end = max(seg["end_time"] + pad_end, floor)
 
         duration = tail_end - start
         clip_durations.append(duration)
