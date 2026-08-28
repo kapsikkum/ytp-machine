@@ -462,12 +462,21 @@ def _spelling_variants(w: str):
 
 # ── User dictionary ───────────────────────────────────────────────────────────
 #
-# The tables in this file are a starting set, not an answer. A corpus can be
-# built from any channel, and every speaker brings words no dictionary holds --
-# names, in-jokes, brand names, coinages. Editing Python to add one is the wrong
-# ask, so each corpus carries its own CSV and it wins over everything here.
+# The tables in this file are a starting set, not an answer. Any channel brings
+# words no dictionary holds -- names, in-jokes, brand names, coinages -- and
+# editing Python to add one is the wrong ask, so they live in a CSV instead.
 #
-#     corpora/<name>/pronunciations.csv
+#     $MRS_DATA_DIR/pronunciations.csv        every corpus on this machine
+#     corpora/<name>/pronunciations.csv       just this one, and packs with it
+#
+# The global file is the one to use. Most of what needs teaching is not specific
+# to a speaker at all -- "usb", "wii", "kilometres" are the same words whoever
+# is saying them -- and keeping a copy per corpus would mean maintaining the
+# same entries once per channel ingested.
+#
+# The per-corpus file is for a speaker's own vocabulary, and it wins over the
+# global one. It travels inside the bundle, so a corpus arrives able to say its
+# own coinages on a machine that has never heard of them.
 #
 # Two columns, and the second may be written either way round:
 #
@@ -487,10 +496,27 @@ _ARPABET = _VOWELS | {"B", "CH", "D", "DH", "F", "G", "HH", "JH", "K", "L",
                       "W", "Y", "Z", "ZH"}
 
 
+def global_dict_path() -> str:
+    """The dictionary shared by every corpus in this data directory."""
+    from app.database import DATA_DIR
+    return os.path.join(DATA_DIR, _USER_DICT_NAME)
+
+
 def user_dict_path() -> str:
-    """Where the active corpus keeps its own pronunciations."""
+    """The active corpus's own dictionary, which overrides the global one."""
     from app.database import active
     return os.path.join(active()["dir"], _USER_DICT_NAME)
+
+
+def _dict_paths() -> list[str]:
+    """Global first, corpus second -- later files win."""
+    paths = []
+    for get in (global_dict_path, user_dict_path):
+        try:
+            paths.append(get())
+        except Exception:
+            pass
+    return paths
 
 
 def _parse_user_value(value: str) -> list[str] | None | str:
@@ -531,41 +557,42 @@ def _load_user_dict() -> dict[str, list[str] | None]:
     if _user_dict is not None:
         return _user_dict
     _user_dict = {}
-    rejected: list[tuple[str, str]] = []
-    try:
-        path = user_dict_path()
-    except Exception:
-        return _user_dict
-    if not os.path.exists(path):
-        return _user_dict
+    rejected: list[tuple[str, str, str]] = []
     import csv
-    try:
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            for row in csv.reader(f):
-                if not row or row[0].lstrip().startswith("#"):
-                    continue
-                word = re.sub(r"[^\w']", "", row[0].strip().lower())
-                if not word or len(row) < 2:
-                    continue
-                parsed = _parse_user_value(row[1])
-                if parsed == "=letters":
-                    _user_dict[word] = _letters_to_phones(word)
-                elif parsed == "?":
-                    # Silence here is the worst outcome: the entry looks
-                    # applied, the word stays unsayable, and nothing explains
-                    # why. Usually a typo, or a word defined in terms of
-                    # another word nothing knows yet.
-                    rejected.append((word, row[1].strip()))
-                else:
-                    _user_dict[word] = parsed   # list, or None to suppress
-    except Exception as exc:
-        log.warning("could not read %s: %s", path, exc)
-    if _user_dict:
-        log.info("%d user pronunciations from %s", len(_user_dict), path)
-    for word, value in rejected:
+    for path in _dict_paths():
+        if not os.path.exists(path):
+            continue
+        loaded = 0
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                for row in csv.reader(f):
+                    if not row or row[0].lstrip().startswith("#"):
+                        continue
+                    word = re.sub(r"[^\w']", "", row[0].strip().lower())
+                    if not word or len(row) < 2:
+                        continue
+                    parsed = _parse_user_value(row[1])
+                    if parsed == "=letters":
+                        _user_dict[word] = _letters_to_phones(word)
+                    elif parsed == "?":
+                        # Silence here is the worst outcome: the entry looks
+                        # applied, the word stays unsayable, and nothing
+                        # explains why. Usually a typo, or a word defined in
+                        # terms of another word nothing knows yet.
+                        rejected.append((path, word, row[1].strip()))
+                        continue
+                    else:
+                        _user_dict[word] = parsed   # list, or None to suppress
+                    loaded += 1
+        except Exception as exc:
+            log.warning("could not read %s: %s", path, exc)
+            continue
+        if loaded:
+            log.info("%d pronunciations from %s", loaded, path)
+    for path, word, value in rejected:
         log.warning("%s: could not make sense of %r for %r -- use ARPAbet, "
                     "words that already sound right, =letters or =skip",
-                    _USER_DICT_NAME, value, word)
+                    os.path.basename(path), value, word)
     return _user_dict
 
 

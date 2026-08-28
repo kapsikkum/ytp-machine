@@ -189,7 +189,28 @@ check("csv: unparseable is not applied", ph.word_to_phonemes("flumbix"), None)
 check("letter a is ay, not uh", ph._letters_to_phones("a"), ["EY"])
 check("the word a is still uh", ph.word_to_phonemes("a"), ["AH"])
 
-# A corpus with no CSV must behave exactly as before.
+# The global file applies to every corpus; the corpus's own file overrides it.
+# Most of what needs teaching -- "usb", "wii", "kilometres" -- is the same
+# whoever is speaking, so keeping it per corpus would mean maintaining the same
+# entries once per channel ingested.
+with open(ph.global_dict_path(), "w", encoding="utf-8") as _f:
+    _f.write("glorbex,shard\n"      # only global
+             "zoop,zip\n")          # also in the corpus file, which must win
+ph.invalidate_user_dict()
+
+check("global applies", ph.word_to_phonemes("glorbex"),
+      ph.word_to_phonemes("shard"))
+check("corpus overrides global", ph.word_to_phonemes("zoop"), ["Z", "UW", "P"])
+check("corpus-only entry still works", ph.word_to_phonemes("chonk"),
+      ph.word_to_phonemes("chunk"))
+
+os.remove(ph.global_dict_path())
+ph.invalidate_user_dict()
+check("global removed, corpus remains", ph.word_to_phonemes("zoop"),
+      ["Z", "UW", "P"])
+check("global-only word is gone", ph.word_to_phonemes("glorbex"), None)
+
+# Neither file: exactly the behaviour before any of this existed.
 os.remove(ph.user_dict_path())
 ph.invalidate_user_dict()
 check("no csv: built-ins still work", ph.word_to_phonemes("chocolate"),

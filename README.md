@@ -235,11 +235,19 @@ usually the two of them splitting a phrase differently.
 
 Any channel invents words a dictionary has never held — names, in-jokes, brand
 names, coinages — and a word with no pronunciation cannot be spliced at all.
-Each corpus therefore carries its own dictionary:
+There are two places to teach it one:
 
 ```
-corpora/<name>/pronunciations.csv
+$MRS_DATA_DIR/pronunciations.csv     every corpus on this machine
+corpora/<name>/pronunciations.csv    just that one, and packs with its bundle
 ```
+
+Use the global file. Most of what needs teaching is not specific to a speaker —
+"usb", "wii" and "kilometres" are the same words whoever says them — and a
+per-corpus copy would have to be maintained again for every channel ingested.
+The per-corpus file is for a speaker's own coinages; it overrides the global one
+and travels inside the bundle, so a corpus arrives able to say its own words on
+a machine that has never heard of them.
 
 Two columns, and the second can be written whichever way suits:
 
@@ -261,9 +269,9 @@ python scripts/verify_corpus.py --unspliceable --write-template
 ```
 
 That lists every stored word with no pronunciation, worst first, and writes them
-into the CSV commented out, ready to fill in. It needs no network. The file packs
-with the corpus, so a bundle arrives knowing how to say its own words, and edits
-take effect on the next `POST /api/reload`.
+into the global CSV commented out, ready to fill in (`--per-corpus` to keep them
+with one corpus instead). It needs no network, and edits take effect on the next
+`POST /api/reload`.
 
 Entries here beat everything built in, and a line that cannot be parsed is
 reported rather than ignored — silence would leave the word unsayable with

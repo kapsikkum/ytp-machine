@@ -274,6 +274,17 @@ def main() -> int:
             argv += ["--device", args.device]
         _run("2/3  Sharpen word boundaries", argv, env)
 
+    if not args.skip_ingest or not args.skip_refine:
+        # Start the corpus's dictionary before packing, so the bundle carries
+        # it. A new corpus always contains words no dictionary has -- names,
+        # coinages, the speaker's own vocabulary -- and they are unsayable
+        # until somebody says how. Left commented out: a wrong pronunciation
+        # is worse than none, because the word then gets said confidently
+        # instead of reported missing.
+        _run("      Note the words it cannot say",
+             ["scripts/verify_corpus.py", "--unspliceable", "--write-template",
+              "--show", "12"], env)
+
     if not args.skip_pack:
         _run("3/3  Pack the bundle",
              ["scripts/corpus.py", "pack", "--corpus", slug, "--out", out], env)
@@ -282,6 +293,10 @@ def main() -> int:
     _summarise(db_path)
     if not args.skip_pack and os.path.exists(out):
         print(f"  bundle: {out}  ({os.path.getsize(out) / 1e6:.0f} MB)")
+        csv = os.path.join(corpus_dir, "pronunciations.csv")
+        if os.path.exists(csv):
+            print(f"  words it cannot say are listed in {csv}\n"
+                  f"  (commented out -- uncomment the ones worth teaching it)")
         print("\nInstall it wherever the server runs:")
         print(f"  python scripts/corpus.py install {os.path.basename(out)} --name {slug}")
         print("  curl -X POST localhost:8765/api/reload")

@@ -158,15 +158,18 @@ def compare(caption: list[tuple[str, float]],
             "drifted": drifted}
 
 
-def write_template(words) -> str:
+def write_template(words, per_corpus: bool = False) -> str:
     """Append the unpronounceable words to the corpus's CSV, commented out.
 
     Commented, because a wrong pronunciation is worse than none: it does not
     report the word missing, it says something else confidently. Uncomment a
     line once you have filled in how it actually sounds.
     """
-    from app.phonemes import user_dict_path
-    path = user_dict_path()
+    from app.phonemes import global_dict_path, user_dict_path
+    # The global file by default: most of what turns up is not specific to a
+    # speaker, and a per-corpus copy would have to be maintained again for
+    # every channel ingested.
+    path = user_dict_path() if per_corpus else global_dict_path()
     existing = set()
     if os.path.exists(path):
         with open(path, encoding="utf-8-sig") as f:
@@ -198,7 +201,8 @@ def write_template(words) -> str:
     return path
 
 
-def report_unspliceable(show: int, write: bool = False) -> int:
+def report_unspliceable(show: int, write: bool = False,
+                        per_corpus: bool = False) -> int:
     """Stored words with no pronunciation, worst first.
 
     A word with no pronunciation is skipped by the splice index entirely: it
@@ -236,13 +240,14 @@ def report_unspliceable(show: int, write: bool = False) -> int:
     if len(bad) > show:
         print(f"  … and {len(bad) - show} more (--show N for more)")
     if write:
-        path = write_template(bad.most_common())
+        path = write_template(bad.most_common(), per_corpus)
         print(f"\nwritten to {path} -- uncomment the ones worth saying.")
     else:
-        print("\nTo say any of these, put them in the corpus's "
-              "pronunciations.csv\n(--write-template starts the file for you). "
-              "Names and coinages are\nfine to leave: outside strict mode the "
-              "splicer guesses them from spelling.")
+        print("\nTo say any of these, put them in pronunciations.csv "
+              "(--write-template starts\nit for you; --per-corpus to keep them "
+              "with this corpus instead of\nsharing them). Names and coinages "
+              "are fine to leave: outside strict\nmode the splicer guesses "
+              "them from spelling.")
     return 0
 
 
@@ -259,13 +264,18 @@ def main() -> int:
                     help="With --unspliceable, write the words into the corpus's "
                          "pronunciations.csv for you to fill in. Never overwrites "
                          "entries you have already made.")
+    ap.add_argument("--per-corpus", action="store_true",
+                    help="With --write-template, write into this corpus's own "
+                         "dictionary instead of the global one. Use it for a "
+                         "speaker's own coinages, which travel with the bundle.")
     ap.add_argument("--unspliceable", action="store_true",
                     help="Skip the caption check and list stored words that have "
                          "no pronunciation. Needs no network.")
     args = ap.parse_args()
 
     if args.unspliceable:
-        return report_unspliceable(args.show, args.write_template)
+        return report_unspliceable(args.show, args.write_template,
+                                   args.per_corpus)
 
     if args.source_id is None and not args.all:
         return int(bool(sys.stderr.write(
