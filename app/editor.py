@@ -39,6 +39,11 @@ class ClipEdit(BaseModel):
     end_time: float | None = None
 
 
+class Rating(BaseModel):
+    word: str
+    score: int
+
+
 class NewClip(BaseModel):
     word: str
     start_time: float
@@ -122,6 +127,22 @@ def source_clips(source_id: int):
         except Exception:
             pass                      # a corpus packed before noise_clips existed
 
+        # A rating is keyed on (target word, clip). The target is the word
+        # being *built*, which is often not this clip's own word: a downvote
+        # says "this clip sounded wrong used for that", which is why one clip
+        # can carry several. Fetched in one query rather than per clip -- a
+        # source has thousands.
+        ratings: dict[int, dict[str, int]] = {}
+        try:
+            for r in conn.execute(
+                    "SELECT word, clip_id, score FROM splice_ratings"):
+                ratings.setdefault(r["clip_id"], {})[r["word"]] = r["score"]
+        except Exception:
+            pass                      # a corpus packed before splice_ratings
+
+    for c in rows:
+        c["ratings"] = ratings.get(c["id"], {}) if c["kind"] == "word" else {}
+
     words = [c for c in rows if c["kind"] == "word"]
     for i, c in enumerate(rows):
         dur = c["end_time"] - c["start_time"]
@@ -137,6 +158,8 @@ def source_clips(source_id: int):
             flags.append("overlaps next")
         if dur > 1.5:
             flags.append("very long")
+        if any(v < 0 for v in c["ratings"].values()):
+            flags.append("downvoted")
         c["flags"] = flags
     return {"source": dict(src), "clips": rows}
 
@@ -242,6 +265,46 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
     log.info("EDIT    clip %s -> %s %.3f-%.3f", clip_id, out["word"],
              out["start_time"], out["end_time"])
     return out
+
+
+@router.put("/clip/{clip_id}/rating")
+def set_rating(clip_id: int, rating: Rating):
+    """Set a clip's score for one target word.
+
+    Ratings are normally cast from the generator -- you hear a bad splice and
+    downvote it, which is one vote at a time and blind to what is already
+    there. Here the whole picture is visible, so the score is set outright
+    rather than nudged: a clip that has collected -3 from three bad sentences
+    can be forgiven in one move, or condemned without having to generate the
+    same sentence three times.
+
+    Only word clips have them. Noises are never spliced into a word.
+    """
+    init_db()
+    import re
+    word = re.sub(r"[^\w]", "", rating.word).lower()
+    if not word:
+        raise HTTPException(status_code=400, detail="a rating needs a word")
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM word_clips WHERE id=?",
+                            (clip_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=f"no word clip {clip_id}")
+        if rating.score == 0:
+            # Neutral is the absence of a rating, so it is stored as one. A
+            # row of zeroes would read as "judged and found average", which is
+            # not a thing the splicer or anybody else means.
+            conn.execute("DELETE FROM splice_ratings WHERE word=? AND clip_id=?",
+                         (word, clip_id))
+        else:
+            conn.execute(
+                "INSERT INTO splice_ratings (word, clip_id, score) VALUES (?,?,?) "
+                "ON CONFLICT(word, clip_id) DO UPDATE SET score=?",
+                (word, clip_id, rating.score, rating.score))
+        out = {r["word"]: r["score"] for r in conn.execute(
+            "SELECT word, score FROM splice_ratings WHERE clip_id=?", (clip_id,))}
+    _invalidate()
+    log.info("RATE    clip %s for %r = %s", clip_id, word, rating.score)
+    return {"id": clip_id, "ratings": out}
 
 
 @router.delete("/clip/{clip_id}")

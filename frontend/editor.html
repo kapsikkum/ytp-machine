@@ -70,6 +70,12 @@
   .w:hover { border-color: #4a4a4a; }
   .w.sel  { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 700; }
   .w.flag { border-color: #6a4a00; color: #ffbe4d; }
+  .w.down { border-color: #6e1f1f; color: #ff9a9a; }
+  #ratings .r { display: flex; gap: 0.4rem; align-items: center;
+    margin-bottom: 0.3rem; font-size: 0.75rem; }
+  #ratings .r b { flex: 1; font-weight: 500; }
+  #ratings .r .s { color: var(--blue); min-width: 2rem; text-align: right; }
+  #ratings .r .s.bad { color: #ff9a9a; }
   .w.noise { border-color: #0e4a6e; color: var(--blue); font-style: italic; }
   .w.sel.flag { color: #000; }
 
@@ -159,6 +165,22 @@ selection: the generator will serve this corpus too."></select>
       </div>
       <div class="row"><button id="del" class="danger" style="flex:1">delete this clip</button></div>
       <div class="meta" id="meta"></div>
+
+      <div id="rating-box">
+      <h2 style="margin-top:1.1rem">Splice ratings</h2>
+      <div id="ratings"></div>
+      <div class="row">
+        <input id="r-word" placeholder="target word" style="flex:1">
+        <input id="r-score" type="number" step="1" value="-1" style="width:4.5rem">
+        <button id="r-set">set</button>
+      </div>
+      <div class="hint" style="margin-top:0.4rem">
+        A score against the word being <i>built</i>, not this clip's own word:
+        −1 tells the splicer to avoid this clip for that word unless it has
+        nothing else. 0 clears it. Leave the target blank to rate it for its
+        own word.
+      </div>
+      </div>
     </div>
     <div id="nosel" class="meta">Nothing selected — the waveform follows the
       video, so you can scrub to a gap and drag out a clip the transcription
@@ -282,12 +304,64 @@ async function selectSource(id) {
 }
 
 // ── transcript ─────────────────────────────────────────────────────────────
+// A clip's ratings, and a way out of them. Shown as they are stored -- one
+// row per target word -- because a clip that is bad for "the" and fine for
+// "there" is the ordinary case, and a single number could not say that.
+function renderRatings() {
+  const box = $('ratings');
+  box.innerHTML = '';
+  const rs = (sel && sel.ratings) || {};
+  const words = Object.keys(rs).sort();
+  if (!words.length) {
+    box.innerHTML = '<div class="meta">No ratings — the splicer treats this '
+                  + 'clip as it finds it.</div>';
+  }
+  for (const w of words) {
+    const row = document.createElement('div');
+    row.className = 'r';
+    row.innerHTML = `<b></b><span class="s${rs[w] < 0 ? ' bad' : ''}"></span>`;
+    row.firstChild.textContent = w;
+    row.lastChild.textContent = rs[w] > 0 ? '+' + rs[w] : rs[w];
+    for (const [label, score] of [['−', rs[w] - 1], ['+', rs[w] + 1], ['×', 0]]) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.padding = '0.05rem 0.35rem';
+      b.title = score === 0 ? 'clear this rating' : `set to ${score}`;
+      b.onclick = () => setRating(w, score);
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+  }
+  // Ratings belong to word clips; a noise is never spliced into a word.
+  $('rating-box').style.display = (sel && sel.kind !== 'noise') ? '' : 'none';
+}
+
+async function setRating(word, score) {
+  if (!sel) return;
+  try {
+    const out = await api(`/clip/${sel.id}/rating`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: word || sel.word, score }),
+    });
+    sel.ratings = out.ratings;
+    sel.flags = sel.flags.filter(f => f !== 'downvoted');
+    if (Object.values(out.ratings).some(v => v < 0)) sel.flags.push('downvoted');
+    renderRatings();
+    renderWords();
+    say(`${word || sel.word}: ${score === 0 ? 'rating cleared' : score}`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+}
+
+$('r-set').onclick = () => setRating($('r-word').value.trim(),
+                                     parseInt($('r-score').value, 10) || 0);
+
 function renderWords() {
   const box = $('words');
   box.innerHTML = '';
   for (const c of clips) {
     const b = document.createElement('span');
     b.className = 'w' + (c.kind === 'noise' ? ' noise' : '')
+                + (c.flags.includes('downvoted') ? ' down' : '')
                 + (c.flags.length ? ' flag' : '')
                 + (sel && sel.id === c.id && sel.kind === c.kind ? ' sel' : '');
     b.textContent = c.kind === 'noise' ? '*' + c.word + '*' : c.word;
@@ -315,6 +389,8 @@ function select(c) {
     (next ? `before <b>${next.word}</b>, gap <b>${Math.round((next.start_time - c.end_time) * 1000)}ms</b><br>` : '') +
     (c.flags.length ? `<span style="color:#ffbe4d">${c.flags.join(', ')}</span>` : '');
   markDirty();
+  $('r-word').value = '';
+  renderRatings();
   renderWords();
   vid.currentTime = c.start_time;
   loadEnvelope();
@@ -745,7 +821,7 @@ async function addClip(kind) {
     });
     newSpan = null;
     $('a-span').textContent = 'drag on the waveform';
-    clips.push({ ...out, flags: [], gap_after: null });
+    clips.push({ ...out, flags: [], gap_after: null, ratings: {} });
     clips.sort((a, b) => a.start_time - b.start_time);
     $('a-word').value = '';
     renderWords();
