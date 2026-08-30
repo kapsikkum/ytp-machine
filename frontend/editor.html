@@ -88,7 +88,8 @@
 
 <header>
   <h1>CORPUS EDITOR</h1>
-  <span class="muted" id="corpus">…</span>
+  <select id="corpus" title="Which voice to edit. This is the app-wide
+selection: the generator will serve this corpus too."></select>
   <select id="source"></select>
   <span class="muted" id="counts"></span>
   <a href="/" style="margin-left:auto">← generator</a>
@@ -186,10 +187,49 @@ async function api(path, opts) {
   return body;
 }
 
+// ── corpora ────────────────────────────────────────────────────────────────
+// Switching here switches it everywhere: there is one active corpus per
+// process and the generator reads the same one. That is worth knowing before
+// you change it on a server somebody else is using, so the control says so.
+async function loadCorpora(current) {
+  const r = await fetch('/api/corpora');
+  if (!r.ok) return;
+  const d = await r.json();
+  const sel = $('corpus');
+  sel.innerHTML = '';
+  for (const c of d.corpora) {
+    const o = document.createElement('option');
+    o.value = c.slug;
+    o.textContent = c.error ? `${c.name} (unreadable)` : `${c.name} — ${(c.clips || 0).toLocaleString()} clips`;
+    o.disabled = !!c.error;
+    if (c.slug === (current || d.active)) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+$('corpus').onchange = async () => {
+  const slug = $('corpus').value;
+  $('corpus').disabled = true;
+  try {
+    const r = await fetch('/api/corpus', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+    if (!r.ok) throw new Error('could not switch corpus');
+    sel = null; env = null; clips = [];
+    await loadSources();
+    say(`editing ${slug}`, 'ok');
+  } catch (e) {
+    say(String(e.message), 'err');
+  } finally {
+    $('corpus').disabled = false;
+  }
+};
+
 // ── sources ────────────────────────────────────────────────────────────────
 async function loadSources() {
   const d = await api('/sources');
-  $('corpus').textContent = d.corpus;
+  await loadCorpora(d.corpus);
   $('source').innerHTML = '';
   for (const s of d.sources) {
     const o = document.createElement('option');
