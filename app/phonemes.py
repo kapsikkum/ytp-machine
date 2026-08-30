@@ -1212,6 +1212,80 @@ def _by_audibility(clips: list[dict], phones) -> list[dict]:
     return sorted(clips, key=key)
 
 
+# A splice unit is trusted to be sound all the way to its stored end, and it is
+# not. An aligner marks a boundary where it stops being confident, which for a
+# short word is often well past where the word stopped: Morshu's "i" is stored
+# as 140ms, of which only the first ~40ms is the vowel and the rest is the
+# silent closure of the "can't" that follows it.
+#
+# Spliced into the middle of another word, that silence is a hole. "time" came
+# out as t + [i, long gap] + m, which the ear hears as two words rather than
+# one -- and since the gap is the run-up to "can't", it sounds like the phrase
+# it was cut from.
+#
+# Trimmed relative to the unit's own peak, so it adapts to a whisper as
+# readily as a shout, and never below a floor -- a stop's closure is silence
+# that belongs to the sound.
+_TRIM_FLOOR = 0.18       # fraction of the unit's peak that still counts as sound
+_TRIM_KEEP = 0.03        # always keep this much after the last audible moment
+_TRIM_MIN = 0.045        # never shorten a unit below this
+
+
+@lru_cache(maxsize=20_000)
+def _audible_end(source_file: str, start: float, end: float) -> float:
+    """Where the sound in this span actually stops.
+
+    Memoised: the same handful of clips supply most splices, and the answer
+    depends only on the audio, which does not change under us.
+    """
+    import array
+    import math
+    import os
+    import subprocess
+    import tempfile
+    import wave
+
+    dur = end - start
+    if dur <= _TRIM_MIN:
+        return end
+    tmp = os.path.join(tempfile.gettempdir(), f"_tr_{os.getpid()}.wav")
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
+                        "-t", f"{dur:.4f}", "-i", source_file,
+                        "-ac", "1", "-ar", "16000", tmp], capture_output=True)
+        with wave.open(tmp, "rb") as w:
+            raw = w.readframes(w.getnframes())
+    except Exception:
+        return end
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    if not raw:
+        return end
+    samples = array.array("h")
+    samples.frombytes(raw[: len(raw) // 2 * 2])
+    if not samples:
+        return end
+
+    win = 160                                   # 10ms
+    env = [math.sqrt(sum(v * v for v in samples[k:k + win]) / win)
+           for k in range(0, len(samples) - win, win)]
+    if not env:
+        return end
+    peak = max(env)
+    if peak <= 0:
+        return end
+    floor = peak * _TRIM_FLOOR
+    last = 0
+    for i, level in enumerate(env):
+        if level >= floor:
+            last = i
+    trimmed = start + (last + 1) * (win / 16000.0) + _TRIM_KEEP
+    return max(start + _TRIM_MIN, min(end, trimmed))
+
+
 def _realise(
     chosen: list[tuple],
     target_phones: list[str],
@@ -1257,6 +1331,11 @@ def _realise(
             s = dict(cand)
             s["start_time"] = cand["start_time"] + cs
             s["end_time"]   = cand["start_time"] + ce
+            # Drop any dead air the aligner left on the end. A unit is going
+            # inside another word, where a silence reads as a word boundary.
+            s["end_time"] = _audible_end(cand["source_file"],
+                                         s["start_time"], s["end_time"])
+            s["next_start"] = s["end_time"]      # nothing follows it in the join
             s["subword"]    = cut
             s["_cut"]       = cut
             s["spliced_from"] = w
@@ -1352,6 +1431,14 @@ def _realise(
             pool = clips_by_word.get(cword) or [cclip]
             best = max(pool, key=lambda c: c["end_time"] - c["start_time"])
             seg = dict(best); seg["_cut"] = False
+            # Whole-word units get the dead-air trim as well, and need it most:
+            # this branch is reached when alignment could not cut the word at
+            # all, so nothing has looked at where the sound actually stops. It
+            # is where Morshu's "i" came through carrying 100ms of the closure
+            # before "can't", which turned "time" into "t-i-[gap]-m".
+            seg["end_time"] = _audible_end(seg["source_file"],
+                                           seg["start_time"], seg["end_time"])
+            seg["next_start"] = seg["end_time"]
             seg["spliced_from"] = cword; seg["matched"] = matched
         segments.append(seg)
 
