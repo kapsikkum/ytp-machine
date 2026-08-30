@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>corpus editor · ytp machine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --yellow: #ffe500;
+    --green:  #00ff88;
+    --red:    #ff3c3c;
+    --blue:   #7dd3fc;
+    --dark:   #0d0d0d;
+    --panel:  #141414;
+    --border: #2a2a2a;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--dark); color: #e8e8e8;
+    font-family: 'Roboto Mono', monospace; font-size: 0.8rem;
+    min-height: 100vh; padding: 1rem;
+  }
+  a { color: var(--yellow); }
+  h1 { font-size: 0.95rem; color: var(--yellow); letter-spacing: 0.06em; }
+  header { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+           margin-bottom: 0.9rem; }
+  header .muted { color: #777; }
+
+  select, input, button {
+    font: inherit; background: var(--panel); color: #e8e8e8;
+    border: 1px solid var(--border); border-radius: 4px; padding: 0.3rem 0.5rem;
+  }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #4a4a4a; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
+  button.danger  { color: var(--red); border-color: #5a0000; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1rem; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; }
+  .panel h2 { font-size: 0.75rem; color: #777; letter-spacing: 0.08em;
+              text-transform: uppercase; margin-bottom: 0.6rem; font-weight: 400; }
+
+  video { width: 100%; max-height: 42vh; background: #000; border-radius: 4px; display: block; }
+  canvas { width: 100%; height: 120px; display: block; background: #0a0a0a;
+           border: 1px solid var(--border); border-radius: 4px; cursor: crosshair; }
+  .hint { color: #666; font-size: 0.7rem; margin-top: 0.4rem; line-height: 1.5; }
+
+  #words { display: flex; flex-wrap: wrap; gap: 0.3rem; max-height: 30vh; overflow-y: auto; }
+  .w {
+    background: #1b1b1b; border: 1px solid var(--border); border-radius: 3px;
+    padding: 0.15rem 0.4rem; cursor: pointer; white-space: nowrap;
+  }
+  .w:hover { border-color: #4a4a4a; }
+  .w.sel  { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 700; }
+  .w.flag { border-color: #6a4a00; color: #ffbe4d; }
+  .w.sel.flag { color: #000; }
+
+  .row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
+  .row label { color: #777; width: 3.6rem; flex: none; }
+  .row input { flex: 1; min-width: 0; }
+  .nudge { display: flex; gap: 0.25rem; }
+  .nudge button { padding: 0.2rem 0.35rem; font-size: 0.7rem; }
+  .meta { color: #777; line-height: 1.7; }
+  .meta b { color: #e8e8e8; font-weight: 400; }
+  #status { margin-top: 0.6rem; min-height: 1.2em; }
+  #status.err { color: var(--red); }
+  #status.ok  { color: var(--green); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CORPUS EDITOR</h1>
+  <span class="muted" id="corpus">…</span>
+  <select id="source"></select>
+  <span class="muted" id="counts"></span>
+  <a href="/" style="margin-left:auto">← generator</a>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="panel" style="margin-bottom:1rem">
+      <video id="vid" preload="metadata"></video>
+      <canvas id="wave"></canvas>
+      <div class="hint">
+        Waveform shows 3s around the selected word. <b>Click</b> to set the start,
+        <b>shift-click</b> to set the end. Yellow lines are this word's edges;
+        grey lines are its neighbours.
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Transcript — click a word to edit it</h2>
+      <div id="words"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Selected</h2>
+    <div id="editor" style="display:none">
+      <div class="row"><label>word</label><input id="w-word"></div>
+      <div class="row">
+        <label>start</label><input id="w-start" type="number" step="0.005">
+        <span class="nudge">
+          <button data-nudge="start" data-by="-0.05">−50</button>
+          <button data-nudge="start" data-by="-0.01">−10</button>
+          <button data-nudge="start" data-by="0.01">+10</button>
+          <button data-nudge="start" data-by="0.05">+50</button>
+        </span>
+      </div>
+      <div class="row">
+        <label>end</label><input id="w-end" type="number" step="0.005">
+        <span class="nudge">
+          <button data-nudge="end" data-by="-0.05">−50</button>
+          <button data-nudge="end" data-by="-0.01">−10</button>
+          <button data-nudge="end" data-by="0.01">+10</button>
+          <button data-nudge="end" data-by="0.05">+50</button>
+        </span>
+      </div>
+      <div class="row" style="margin-top:0.7rem">
+        <button id="play" class="primary" style="flex:1">▶ play (space)</button>
+        <button id="save" class="primary" style="flex:1">save</button>
+      </div>
+      <div class="row"><button id="del" class="danger" style="flex:1">delete this clip</button></div>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div id="nosel" class="meta">Nothing selected.</div>
+
+    <h2 style="margin-top:1.2rem">Add a missing word</h2>
+    <div class="row"><label>word</label><input id="a-word" placeholder="what was said"></div>
+    <div class="row"><button id="add" style="flex:1">add at playhead (0.4s)</button></div>
+
+    <div id="status"></div>
+    <div class="hint" style="margin-top:0.8rem">
+      Edits apply immediately — the generator drops its cache on every change,
+      so the next sentence uses the new timings. Nothing is written to the
+      videos themselves, only to the corpus database.
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
+let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
+
+const fmt = t => t.toFixed(3);
+function say(msg, kind) { const s = $('status'); s.textContent = msg; s.className = kind || ''; }
+
+async function api(path, opts) {
+  const r = await fetch('/api/edit' + path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
+  return body;
+}
+
+// ── sources ────────────────────────────────────────────────────────────────
+async function loadSources() {
+  const d = await api('/sources');
+  $('corpus').textContent = d.corpus;
+  $('source').innerHTML = '';
+  for (const s of d.sources) {
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = `${s.id}. ${(s.title || s.video_id).slice(0, 46)} (${s.clips})`;
+    $('source').appendChild(o);
+  }
+  if (d.sources.length) selectSource(d.sources[0].id);
+}
+
+async function selectSource(id) {
+  sourceId = id; sel = null; env = null;
+  const d = await api('/source/' + id);
+  clips = d.clips;
+  $('counts').textContent = `${clips.length} clips`;
+  vid.src = `/api/edit/source/${id}/video`;
+  renderWords();
+  $('editor').style.display = 'none';
+  $('nosel').style.display = '';
+  drawWave();
+}
+
+// ── transcript ─────────────────────────────────────────────────────────────
+function renderWords() {
+  const box = $('words');
+  box.innerHTML = '';
+  for (const c of clips) {
+    const b = document.createElement('span');
+    b.className = 'w' + (c.flags.length ? ' flag' : '') + (sel && sel.id === c.id ? ' sel' : '');
+    b.textContent = c.word;
+    b.title = `${fmt(c.start_time)}–${fmt(c.end_time)} (${Math.round((c.end_time - c.start_time) * 1000)}ms)`
+            + (c.flags.length ? '\n' + c.flags.join(', ') : '');
+    b.onclick = () => select(c);
+    box.appendChild(b);
+  }
+}
+
+function select(c) {
+  sel = c;
+  $('editor').style.display = '';
+  $('nosel').style.display = 'none';
+  $('w-word').value = c.word;
+  $('w-start').value = fmt(c.start_time);
+  $('w-end').value = fmt(c.end_time);
+  const i = clips.indexOf(c);
+  const prev = i > 0 ? clips[i - 1] : null, next = clips[i + 1] || null;
+  $('meta').innerHTML =
+    `length <b>${Math.round((c.end_time - c.start_time) * 1000)}ms</b><br>` +
+    (prev ? `after <b>${prev.word}</b>, gap <b>${Math.round((c.start_time - prev.end_time) * 1000)}ms</b><br>` : '') +
+    (next ? `before <b>${next.word}</b>, gap <b>${Math.round((next.start_time - c.end_time) * 1000)}ms</b><br>` : '') +
+    (c.flags.length ? `<span style="color:#ffbe4d">${c.flags.join(', ')}</span>` : '');
+  renderWords();
+  vid.currentTime = c.start_time;
+  loadEnvelope();
+}
+
+// ── waveform ───────────────────────────────────────────────────────────────
+async function loadEnvelope() {
+  if (!sel) return;
+  const pad = 1.5;
+  const a = Math.max(0, sel.start_time - pad), b = sel.end_time + pad;
+  try { env = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`); }
+  catch (e) { env = null; say(String(e.message), 'err'); }
+  drawWave();
+}
+
+function drawWave() {
+  const w = wave.clientWidth, h = wave.clientHeight;
+  wave.width = w; wave.height = h;
+  ctx.clearRect(0, 0, w, h);
+  if (!env || !env.values.length) return;
+  const span = env.end - env.start, peak = env.peak || 1;
+  const x = t => ((t - env.start) / span) * w;
+
+  ctx.fillStyle = '#1d3b2a';
+  env.values.forEach((v, i) => {
+    const bh = Math.min(h, (v / peak) * h);
+    ctx.fillRect((i / env.values.length) * w, (h - bh) / 2, Math.max(1, w / env.values.length), bh);
+  });
+
+  // neighbours first, so the selected word's edges draw on top
+  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1;
+  for (const c of clips) {
+    if (sel && c.id === sel.id) continue;
+    for (const t of [c.start_time, c.end_time]) {
+      if (t < env.start || t > env.end) continue;
+      ctx.beginPath(); ctx.moveTo(x(t), 0); ctx.lineTo(x(t), h); ctx.stroke();
+    }
+  }
+  if (sel) {
+    const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
+    ctx.fillStyle = 'rgba(255,229,0,0.10)';
+    ctx.fillRect(x(s), 0, Math.max(1, x(e) - x(s)), h);
+    ctx.strokeStyle = '#ffe500'; ctx.lineWidth = 2;
+    for (const t of [s, e]) { ctx.beginPath(); ctx.moveTo(x(t), 0); ctx.lineTo(x(t), h); ctx.stroke(); }
+  }
+}
+
+wave.onclick = ev => {
+  if (!sel || !env) return;
+  const r = wave.getBoundingClientRect();
+  const t = env.start + ((ev.clientX - r.left) / r.width) * (env.end - env.start);
+  $(ev.shiftKey ? 'w-end' : 'w-start').value = fmt(t);
+  drawWave();
+};
+
+// ── editing ────────────────────────────────────────────────────────────────
+document.querySelectorAll('[data-nudge]').forEach(b => {
+  b.onclick = () => {
+    const f = $(b.dataset.nudge === 'start' ? 'w-start' : 'w-end');
+    f.value = fmt(parseFloat(f.value) + parseFloat(b.dataset.by));
+    drawWave();
+  };
+});
+['w-start', 'w-end'].forEach(id => $(id).oninput = drawWave);
+
+function playSelection() {
+  const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
+  if (!(e > s)) return;
+  vid.currentTime = s; playUntil = e; vid.play();
+}
+vid.ontimeupdate = () => { if (playUntil !== null && vid.currentTime >= playUntil) { vid.pause(); playUntil = null; } };
+$('play').onclick = playSelection;
+
+$('save').onclick = async () => {
+  if (!sel) return;
+  try {
+    const out = await api('/clip/' + sel.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: $('w-word').value,
+                             start_time: parseFloat($('w-start').value),
+                             end_time: parseFloat($('w-end').value) }),
+    });
+    Object.assign(sel, out);
+    clips.sort((a, b) => a.start_time - b.start_time);
+    renderWords(); select(sel);
+    say(`saved “${out.word}”`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+$('del').onclick = async () => {
+  if (!sel || !confirm(`Delete the clip for “${sel.word}”?`)) return;
+  try {
+    await api('/clip/' + sel.id, { method: 'DELETE' });
+    clips = clips.filter(c => c.id !== sel.id);
+    sel = null;
+    $('editor').style.display = 'none'; $('nosel').style.display = '';
+    renderWords(); drawWave();
+    say('deleted', 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+$('add').onclick = async () => {
+  const word = $('a-word').value.trim();
+  if (!word) { say('type the word first', 'err'); return; }
+  const s = vid.currentTime;
+  try {
+    const out = await api(`/source/${sourceId}/clip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word, start_time: s, end_time: s + 0.4 }),
+    });
+    clips.push({ ...out, flags: [], gap_after: null });
+    clips.sort((a, b) => a.start_time - b.start_time);
+    $('a-word').value = '';
+    renderWords();
+    select(clips.find(c => c.id === out.id));
+    say(`added “${out.word}” — now set its edges`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+$('source').onchange = () => selectSource(parseInt($('source').value, 10));
+
+document.addEventListener('keydown', ev => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(ev.target.tagName)) return;
+  if (ev.code === 'Space') { ev.preventDefault(); playSelection(); }
+});
+window.addEventListener('resize', drawWave);
+
+loadSources().catch(e => say(String(e.message), 'err'));
+</script>
+</body>
+</html>

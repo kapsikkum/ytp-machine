@@ -45,6 +45,12 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 
+# The corpus editor, on its own prefix. It is the only thing here that writes
+# to word_clips outside an ingest, so it is kept apart from the generation API
+# rather than folded into it.
+from app.editor import router as editor_router  # noqa: E402
+app.include_router(editor_router, prefix="/api/edit")
+
 # Serve generated videos
 app.mount("/output", StaticFiles(directory="output"), name="output")
 

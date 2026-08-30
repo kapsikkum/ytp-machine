@@ -311,6 +311,31 @@ and works for any word in any corpus.
 A run is one clip, so it is reversed or not as a whole — marking one word ends
 the run there rather than quietly reversing its neighbours.
 
+## Fixing a corpus by hand
+
+<http://localhost:8765/editor.html>
+
+The checker below finds words that are *labelled* wrong. This finds the other
+half: words whose **timings** are wrong, which is most of what makes a
+generation sound bad. An aligner puts an edge where it stops being confident,
+not where the sound starts and stops — that is why "mrs rosen" lost its N and
+why "time" once took its T from the word after it.
+
+Pick a source, click a word. You get the video seeked to it, a waveform of the
+three seconds around it with its edges drawn on, and the neighbouring words'
+edges in grey. Click the waveform to move the start, shift-click to move the
+end, or nudge by 10ms and 50ms. Space plays just that clip, so you can hear the
+edit before saving it.
+
+Words are flagged when their shape has caused trouble before — very short, very
+long, or overlapping the next word. On one ASMR source, 335 of 1,011 clips
+overlap their neighbour.
+
+You can also relabel a word Whisper misheard, delete a clip that is unusable,
+or add one it skipped entirely. Every edit drops the generator's cache, so the
+next sentence uses the new timings. Nothing touches the videos — only the
+corpus database, which is what travels in the bundle.
+
 ## Checking a corpus
 
 Whisper's mistakes are invisible from inside. A word it mishears is stored
@@ -505,6 +530,9 @@ scripts/realign.py            better word timestamps via stable-ts
 scripts/refine_boundaries.py  frame-accurate boundaries via CTC alignment
 scripts/correct.py            relabel misheard words from a real transcript
 scripts/find_noises.py        pull non-verbal noises out of the gaps
+app/editor.py                 the corpus editor's API (the only writer
+                              outside an ingest)
+frontend/editor.html          fix words and timings by hand, with a waveform
 scripts/verify_corpus.py      check stored labels against YouTube captions
 scripts/corpus.py             pack / unpack / migrate / inspect
 corpora/<name>/               one voice: corpus.db + downloads/ + transcripts/
