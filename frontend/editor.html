@@ -51,6 +51,17 @@
            border: 1px solid var(--border); border-radius: 4px; cursor: crosshair; }
   .hint { color: #666; font-size: 0.7rem; margin-top: 0.4rem; line-height: 1.5; }
 
+  /* Above the canvas rather than beside it: these are used while looking at
+     the waveform, and a control you have to look away from is a control you
+     stop using. */
+  #tools { display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;
+           margin: 0.6rem 0 0.4rem; }
+  #tools label { color: #777; font-size: 0.7rem; display: flex; gap: 0.4rem;
+                 align-items: center; }
+  #tools input[type=range] { width: 8rem; accent-color: var(--yellow); padding: 0; }
+  #tools .val { color: var(--yellow); min-width: 2.6rem; text-align: right; }
+  #tools .grow { margin-left: auto; display: flex; gap: 0.4rem; }
+
   #words { display: flex; flex-wrap: wrap; gap: 0.3rem; max-height: 30vh; overflow-y: auto; }
   .w {
     background: #1b1b1b; border: 1px solid var(--border); border-radius: 3px;
@@ -87,9 +98,25 @@
   <div>
     <div class="panel" style="margin-bottom:1rem">
       <video id="vid" preload="metadata"></video>
+      <div id="tools">
+        <label>gain
+          <input id="gain" type="range" min="1" max="40" step="0.5" value="1">
+          <span class="val" id="gain-v">1.0x</span>
+        </label>
+        <label>zoom
+          <input id="zoom" type="range" min="0.15" max="3" step="0.05" value="1.5">
+          <span class="val" id="zoom-v">1.50s</span>
+        </label>
+        <span class="grow">
+          <button id="play2">▶ play</button>
+          <button id="save2" class="primary">save</button>
+        </span>
+      </div>
       <canvas id="wave"></canvas>
       <div class="hint">
-        Waveform shows 3s around the selected word. <b>Click</b> to set the start,
+        <b>Gain</b> amplifies quiet audio so you can see where a sound really
+        starts and stops; <b>zoom</b> narrows the window around the word.
+        <b>Click</b> the waveform to set the start,
         <b>shift-click</b> to set the end. Yellow lines are this word's edges;
         grey lines are its neighbours.
       </div>
@@ -222,7 +249,7 @@ function select(c) {
 // ── waveform ───────────────────────────────────────────────────────────────
 async function loadEnvelope() {
   if (!sel) return;
-  const pad = 1.5;
+  const pad = parseFloat($('zoom').value);
   const a = Math.max(0, sel.start_time - pad), b = sel.end_time + pad;
   try { env = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`); }
   catch (e) { env = null; say(String(e.message), 'err'); }
@@ -237,11 +264,27 @@ function drawWave() {
   const span = env.end - env.start, peak = env.peak || 1;
   const x = t => ((t - env.start) / span) * w;
 
+  // Gain is applied to the drawing, not the data. Quiet speech -- a whisper,
+  // the tail of a nasal, the closure before a stop -- is exactly where the
+  // edges that matter live, and at 1x it is a flat line you cannot aim at.
+  // Anything past full height is clipped, which is fine: the point is seeing
+  // where sound starts and stops, not measuring how loud it got.
+  const gain = parseFloat($('gain').value);
   ctx.fillStyle = '#1d3b2a';
   env.values.forEach((v, i) => {
-    const bh = Math.min(h, (v / peak) * h);
+    const bh = Math.min(h, (v / peak) * h * gain);
     ctx.fillRect((i / env.values.length) * w, (h - bh) / 2, Math.max(1, w / env.values.length), bh);
   });
+  // A line at the clipping level, so an amplified view still shows which parts
+  // are genuinely loud rather than merely scaled past the top.
+  if (gain > 1) {
+    ctx.strokeStyle = 'rgba(255,229,0,0.18)'; ctx.lineWidth = 1;
+    for (const y of [0.5, -0.5]) {
+      ctx.beginPath();
+      ctx.moveTo(0, h / 2 + y * (h / gain)); ctx.lineTo(w, h / 2 + y * (h / gain));
+      ctx.stroke();
+    }
+  }
 
   // neighbours first, so the selected word's edges draw on top
   ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1;
@@ -278,6 +321,15 @@ document.querySelectorAll('[data-nudge]').forEach(b => {
   };
 });
 ['w-start', 'w-end'].forEach(id => $(id).oninput = drawWave);
+
+$('gain').oninput = () => {
+  $('gain-v').textContent = parseFloat($('gain').value).toFixed(1) + 'x';
+  drawWave();                       // redraw only: the data is unchanged
+};
+$('zoom').oninput = () => {
+  $('zoom-v').textContent = parseFloat($('zoom').value).toFixed(2) + 's';
+};
+$('zoom').onchange = loadEnvelope;  // refetch only when the drag settles
 
 function playSelection() {
   const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
@@ -332,6 +384,9 @@ $('add').onclick = async () => {
     say(`added “${out.word}” — now set its edges`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
 };
+
+$('play2').onclick = playSelection;
+$('save2').onclick = () => $('save').click();
 
 $('source').onchange = () => selectSource(parseInt($('source').value, 10));
 
