@@ -187,6 +187,8 @@ const $ = id => document.getElementById(id);
 const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
 let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
 let hoverT = null, dragging = null, newSpan = null, stopTimer = null;
+let pendingSeek = null;    // a play waiting on a seek that has not landed yet
+let envSeq = 0, envLoading = false;
 const _LEAD = 30;          // ms shaved off, to land before the next word
 
 const fmt = t => t.toFixed(3);
@@ -253,6 +255,7 @@ async function loadSources() {
 }
 
 async function selectSource(id) {
+  cancelPlayback();
   sourceId = id; sel = null; env = null;
   const d = await api('/source/' + id);
   clips = d.clips;
@@ -261,7 +264,10 @@ async function selectSource(id) {
   renderWords();
   $('editor').style.display = 'none';
   $('nosel').style.display = '';
-  drawWave();
+  // Nothing is selected yet, so the waveform follows the video -- but only if
+  // something asks for it. Without this the canvas sits empty until the first
+  // word is clicked, which reads as broken rather than as idle.
+  loadEnvelope();
 }
 
 // ── transcript ─────────────────────────────────────────────────────────────
@@ -283,6 +289,7 @@ function renderWords() {
 
 function select(c) {
   if (sel && c !== sel && !mayLeave()) return;
+  cancelPlayback();
   sel = c;
   $('editor').style.display = '';
   $('nosel').style.display = 'none';
@@ -311,8 +318,26 @@ async function loadEnvelope() {
   // when you want to.
   const a = sel ? Math.max(0, sel.start_time - pad) : Math.max(0, vid.currentTime - pad);
   const b = sel ? sel.end_time + pad : vid.currentTime + pad;
-  try { env = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`); }
-  catch (e) { env = null; say(String(e.message), 'err'); }
+  // Fetching takes long enough to see, and until it lands `env` still holds
+  // the *previous* clip's audio. Drawing the new word's edges over it puts
+  // the yellow grips in a place that means nothing. So the waveform is dimmed
+  // while it is out of date, and the overlays wait for the real thing.
+  //
+  // The sequence number is because these can land out of order: click along a
+  // row of words quickly and the slowest request wins, leaving the picture on
+  // a word you already left.
+  const seq = ++envSeq;
+  envLoading = true;
+  drawWave();
+  try {
+    const got = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`);
+    if (seq !== envSeq) return;            // a newer request is on its way
+    env = got;
+  } catch (e) {
+    if (seq !== envSeq) return;
+    env = null; say(String(e.message), 'err');
+  }
+  envLoading = false;
   drawWave();
 }
 
@@ -331,6 +356,7 @@ function drawWave() {
   // where sound starts and stops, not measuring how loud it got.
   const gain = parseFloat($('gain').value);
   ctx.fillStyle = '#1d3b2a';
+  ctx.globalAlpha = envLoading ? 0.3 : 1;
   env.values.forEach((v, i) => {
     const bh = Math.min(h, (v / peak) * h * gain);
     ctx.fillRect((i / env.values.length) * w, (h - bh) / 2, Math.max(1, w / env.values.length), bh);
@@ -344,6 +370,14 @@ function drawWave() {
       ctx.moveTo(0, h / 2 + y * (h / gain)); ctx.lineTo(w, h / 2 + y * (h / gain));
       ctx.stroke();
     }
+  }
+
+  ctx.globalAlpha = 1;
+  if (envLoading) {
+    ctx.fillStyle = 'rgba(232,232,232,0.4)';
+    ctx.font = '11px Roboto Mono, monospace';
+    ctx.fillText('loading…', 8, 14);
+    return;                       // nothing else is true of this picture yet
   }
 
   // neighbours first, so the selected word's edges draw on top
@@ -523,12 +557,27 @@ function playSelection() {
   // back to ordinary play/pause, and to the dragged span if one exists.
   if (!sel) {
     clearTimeout(stopTimer); playUntil = null;
+    if (pendingSeek) { vid.removeEventListener('seeked', pendingSeek); pendingSeek = null; }
     if (newSpan && newSpan.b - newSpan.a > 0.02) return playSpan(newSpan.a, newSpan.b);
     if (vid.paused) { vid.play(); requestAnimationFrame(watchPlayhead); }
     else vid.pause();
     return;
   }
   playSpan(parseFloat($('w-start').value), parseFloat($('w-end').value));
+}
+
+// Everything a play in flight owns: the stop timer, the end marker, the
+// waveform-follow timer, and the one-shot seeked handler that has not fired
+// yet. That last one is why clicking a new word played the old one -- the
+// handler was parked waiting for a seek, and select()'s seek is a seek, so
+// the previous clip's play began at the new clip's position and ran for the
+// previous clip's length.
+function cancelPlayback() {
+  clearTimeout(stopTimer); stopTimer = null;
+  clearTimeout(wave._followTimer);
+  playUntil = null;
+  if (pendingSeek) { vid.removeEventListener('seeked', pendingSeek); pendingSeek = null; }
+  if (!vid.paused) vid.pause();
 }
 
 function playSpan(s, e) {
@@ -544,6 +593,7 @@ function playSpan(s, e) {
   // _LEAD trims a little more off, because erring early is inaudible and
   // erring late plays the next word.
   const begin = () => {
+    pendingSeek = null;
     vid.play();
     clearTimeout(stopTimer);
     stopTimer = setTimeout(() => {
@@ -552,6 +602,7 @@ function playSpan(s, e) {
     requestAnimationFrame(watchPlayhead);   // backstop
   };
   if (Math.abs(vid.currentTime - s) > 0.004) {
+    pendingSeek = begin;
     vid.addEventListener('seeked', begin, { once: true });
     vid.currentTime = s;
   } else {
@@ -652,6 +703,7 @@ $('save2').onclick = () => $('save').click();
 
 function deselect() {
   if (!mayLeave()) return;
+  cancelPlayback();
   sel = null;
   markDirty();
   $('editor').style.display = 'none';
