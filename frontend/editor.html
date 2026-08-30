@@ -186,7 +186,8 @@ non-verbal sound. Whisper cannot hear these at all.">add noise</button>
 const $ = id => document.getElementById(id);
 const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
 let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
-let hoverT = null, dragging = null, newSpan = null;
+let hoverT = null, dragging = null, newSpan = null, stopTimer = null;
+const _LEAD = 30;          // ms shaved off, to land before the next word
 
 const fmt = t => t.toFixed(3);
 function say(msg, kind) { const s = $('status'); s.textContent = msg; s.className = kind || ''; }
@@ -514,7 +515,23 @@ function playSelection() {
   const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
   if (!(e > s)) return;
   playUntil = e;
-  const begin = () => { vid.play(); requestAnimationFrame(watchPlayhead); };
+  // Stopped on the wall clock rather than on currentTime.
+  //
+  // currentTime advances a video frame at a time -- 25fps here, so 40ms steps
+  // -- and pause() is not instant either. Polling it therefore overshoots by
+  // up to a frame plus latency, which is still audible on a 150ms word. Real
+  // time is millisecond-accurate, and playback advances in real time.
+  //
+  // _LEAD trims a little more off, because erring early is inaudible and
+  // erring late plays the next word.
+  const begin = () => {
+    vid.play();
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(() => {
+      vid.pause(); playUntil = null; drawWave();
+    }, Math.max(20, (e - s) * 1000 - _LEAD));
+    requestAnimationFrame(watchPlayhead);   // backstop
+  };
   if (Math.abs(vid.currentTime - s) > 0.004) {
     vid.addEventListener('seeked', begin, { once: true });
     vid.currentTime = s;
@@ -527,7 +544,9 @@ function watchPlayhead() {
   drawWave();                              // keep the green playhead moving
   if (playUntil === null) return;
   if (vid.paused) { playUntil = null; return; }
-  if (vid.currentTime >= playUntil) { vid.pause(); playUntil = null; return; }
+  if (vid.currentTime >= playUntil) {
+    vid.pause(); playUntil = null; clearTimeout(stopTimer); return;
+  }
   requestAnimationFrame(watchPlayhead);
 }
 $('play').onclick = playSelection;
