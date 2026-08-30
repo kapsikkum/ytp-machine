@@ -17,15 +17,22 @@ _PAD_END_LAST = 0.45 # more tail for the final word so its release isn't clipped
 _SAFETY     = 0.05   # gap to leave before a neighbouring word (start side)
 _TAIL_GAP   = 0.05   # gap before next word on the tail (runs are clamped precisely
                      # at the last word's content end, so this can stay modest)
-# The least tail a word ending in a sonorant may have. M, N, NG, L and R fade
-# out rather than stopping, and an aligner puts the boundary where the energy
-# drops, not where the sound ends -- so cutting at the boundary loses the part
-# that identifies it. "rosen" became "rose" and "mum" became "mu".
+# How far a word ending in a sonorant may be extended to finish its consonant,
+# and how quiet the audio has to get before it counts as finished.
 #
-# Allowed to run slightly into the next word, which is the trade being made
-# deliberately: a nasal bleeding 40ms into the following onset is a far smaller
-# fault than the nasal not being there.
-_SONORANT_TAIL = 0.04
+# M, N, NG, L and R fade out rather than stopping, and an aligner puts the
+# boundary where it loses confidence, not where the sound ends. A fixed 40ms
+# was the first attempt and was not enough: "rosen" is stored ending at 1.640
+# and is still at full volume at 1.680, only dying away around 1.73. The
+# stored next_start, 1.660, is early for the same reason and cannot be used as
+# the limit either.
+#
+# So the end is measured rather than guessed -- extend while the sound is
+# still there, up to a cap. The cap matters: without one, a word running
+# straight into the next would swallow it.
+_SONORANT_TAIL = 0.04     # floor, when the audio cannot be read
+_SONORANT_MAX = 0.16      # never add more than this
+_SONORANT_QUIET = 0.22    # fraction of the word's own peak that counts as over
 _FINAL_SONORANTS = {"M", "N", "NG", "L", "R", "ER"}
 
 _BLEED_TAIL = 0.16   # bigger tail gap when a run ends on a word whose next source
@@ -912,6 +919,47 @@ def _trim(stderr: str, limit: int = 2000) -> str:
     return "\n".join([text[:head], marker, text[-tail:]])
 
 
+@lru_cache(maxsize=20_000)
+def _sound_ends(source_file: str, start: float, stored_end: float) -> float:
+    """Where a word's audio actually stops, at most _SONORANT_MAX past the end."""
+    import array, math, os, subprocess, tempfile, wave
+    limit = stored_end + _SONORANT_MAX
+    tmp = os.path.join(tempfile.gettempdir(), f"_st_{os.getpid()}.wav")
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
+                        "-t", f"{limit - start:.4f}", "-i", source_file,
+                        "-ac", "1", "-ar", "16000", tmp], capture_output=True)
+        with wave.open(tmp, "rb") as w:
+            raw = w.readframes(w.getnframes())
+    except Exception:
+        return stored_end + _SONORANT_TAIL
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    samples = array.array("h")
+    samples.frombytes(raw[: len(raw) // 2 * 2]) if raw else None
+    if not raw or not samples:
+        return stored_end + _SONORANT_TAIL
+    win = 160
+    env = [math.sqrt(sum(v * v for v in samples[k:k + win]) / win)
+           for k in range(0, len(samples) - win, win)]
+    if not env:
+        return stored_end + _SONORANT_TAIL
+    peak = max(env)
+    if peak <= 0:
+        return stored_end + _SONORANT_TAIL
+    floor = peak * _SONORANT_QUIET
+    # Walk on from the stored end for as long as the sound is still going.
+    i = int((stored_end - start) / (win / 16000.0))
+    j = i
+    while j < len(env) and env[j] >= floor:
+        j += 1
+    extra = (j - i) * (win / 16000.0)
+    return min(limit, stored_end + max(_SONORANT_TAIL, extra))
+
+
 def _ends_in_sonorant(seg: dict[str, Any]) -> bool:
     """Does this clip end on a sound that fades rather than stops?"""
     word = (seg.get("word") or "").strip().split()
@@ -1035,7 +1083,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         whole_word = not seg.get("subword") and not seg.get("_cut")
         floor = seg["end_time"]
         if whole_word and _ends_in_sonorant(seg):
-            floor = seg["end_time"] + _SONORANT_TAIL
+            floor = _sound_ends(seg["source_file"], seg["start_time"],
+                                seg["end_time"])
 
         if next_start is not None and next_start <= seg["end_time"] + 1e-3:
             # Tight butt-join (a clamped sub-word/interior splice unit): extract

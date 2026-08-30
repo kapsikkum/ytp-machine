@@ -1328,7 +1328,17 @@ def _realise(
             # ("and"→D picking up the "n" → "ed").
             if not front_cut:
                 cs = max(0.0, cs - 0.02)
+            # Both offsets must land inside the clip they came from. Forced
+            # alignment runs on a padded window, so it can return a time past
+            # the stored word -- and the release clamp above only applies on
+            # one branch, so on the others a unit could sit entirely outside
+            # its own source. "time" took its T from 4.111-4.171 while "want"
+            # ends at 4.074: the audio actually used belonged to the next word.
+            cs = max(0.0, min(cs, max(0.0, dur - 0.02)))
+            ce = max(cs + 0.02, min(ce, dur))
             s = dict(cand)
+            s["_src_start"] = cand["start_time"]
+            s["_src_end"]   = cand["end_time"]
             s["start_time"] = cand["start_time"] + cs
             s["end_time"]   = cand["start_time"] + ce
             # Drop any dead air the aligner left on the end. A unit is going
@@ -1431,6 +1441,8 @@ def _realise(
             pool = clips_by_word.get(cword) or [cclip]
             best = max(pool, key=lambda c: c["end_time"] - c["start_time"])
             seg = dict(best); seg["_cut"] = False
+            seg["_src_start"] = best["start_time"]
+            seg["_src_end"]   = best["end_time"]
             # Whole-word units get the dead-air trim as well, and need it most:
             # this branch is reached when alignment could not cut the word at
             # all, so nothing has looked at where the sound actually stops. It
@@ -1443,10 +1455,28 @@ def _realise(
         segments.append(seg)
 
     # Safety: never emit a degenerate (zero/negative/inaudible) span — it would
-    # crash the FFmpeg trim.  Clamp the end forward within the clip.
+    # crash the FFmpeg trim.
+    #
+    # Grown inside the source clip, backwards first. Pushing the end forward
+    # was how "time" took its T from beyond the end of "want": alignment left
+    # only 20ms of the word for it, and the guard made that up by walking
+    # 40ms into the word that follows -- so the audio used was not the source
+    # word at all.
+    _MIN_UNIT = 0.06
     for seg in segments:
-        if seg["end_time"] - seg["start_time"] < 0.04:
-            seg["end_time"] = seg["start_time"] + 0.06
+        if seg["end_time"] - seg["start_time"] >= 0.04:
+            continue
+        lo = seg.get("_src_start", seg["start_time"])
+        hi = seg.get("_src_end", seg["end_time"] + _MIN_UNIT)
+        need = _MIN_UNIT - (seg["end_time"] - seg["start_time"])
+        back = min(need, seg["start_time"] - lo)          # take it from before
+        seg["start_time"] -= max(0.0, back)
+        still = _MIN_UNIT - (seg["end_time"] - seg["start_time"])
+        if still > 0:
+            seg["end_time"] = min(hi, seg["end_time"] + still)
+        if seg["end_time"] - seg["start_time"] < 0.02:
+            # The clip itself has nothing usable in it.
+            seg["end_time"] = seg["start_time"] + 0.02
 
     last = len(segments) - 1
     for idx, seg in enumerate(segments):
