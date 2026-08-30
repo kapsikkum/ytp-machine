@@ -70,6 +70,7 @@
   .w:hover { border-color: #4a4a4a; }
   .w.sel  { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 700; }
   .w.flag { border-color: #6a4a00; color: #ffbe4d; }
+  .w.noise { border-color: #0e4a6e; color: var(--blue); font-style: italic; }
   .w.sel.flag { color: #000; }
 
   .row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
@@ -117,9 +118,10 @@ selection: the generator will serve this corpus too."></select>
       <div class="hint">
         <b>Gain</b> amplifies quiet audio so you can see where a sound really
         starts and stops; <b>zoom</b> narrows the window around the word.
-        <b>Click</b> the waveform to set the start,
-        <b>shift-click</b> to set the end. Yellow lines are this word's edges;
-        grey lines are its neighbours.
+        <b>Drag the yellow edges</b> to move this word's boundaries, or
+        <b>drag anywhere else</b> to mark out a new clip and name it on the
+        right. <b>Ctrl+scroll</b> zooms. Grey lines are neighbouring words,
+        green is the playhead.
       </div>
     </div>
     <div class="panel">
@@ -129,7 +131,8 @@ selection: the generator will serve this corpus too."></select>
   </div>
 
   <div class="panel">
-    <h2>Selected</h2>
+    <h2>Selected <button id="deselect" style="float:right;padding:0.05rem 0.35rem;
+        font-size:0.65rem">deselect (esc)</button></h2>
     <div id="editor" style="display:none">
       <div class="row"><label>word</label><input id="w-word"></div>
       <div class="row">
@@ -157,11 +160,18 @@ selection: the generator will serve this corpus too."></select>
       <div class="row"><button id="del" class="danger" style="flex:1">delete this clip</button></div>
       <div class="meta" id="meta"></div>
     </div>
-    <div id="nosel" class="meta">Nothing selected.</div>
+    <div id="nosel" class="meta">Nothing selected — the waveform follows the
+      video, so you can scrub to a gap and drag out a clip the transcription
+      missed.</div>
 
     <h2 style="margin-top:1.2rem">Add a missing word</h2>
     <div class="row"><label>word</label><input id="a-word" placeholder="what was said"></div>
-    <div class="row"><button id="add" style="flex:1">add at playhead (0.4s)</button></div>
+    <div class="row"><label>span</label><span id="a-span" class="meta">drag on the waveform</span></div>
+    <div class="row">
+      <button id="add" style="flex:1">add word</button>
+      <button id="add-noise" style="flex:1" title="A click, spew, hum or other
+non-verbal sound. Whisper cannot hear these at all.">add noise</button>
+    </div>
 
     <div id="status"></div>
     <div class="hint" style="margin-top:0.8rem">
@@ -176,6 +186,7 @@ selection: the generator will serve this corpus too."></select>
 const $ = id => document.getElementById(id);
 const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
 let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
+let hoverT = null, dragging = null, newSpan = null;
 
 const fmt = t => t.toFixed(3);
 function say(msg, kind) { const s = $('status'); s.textContent = msg; s.className = kind || ''; }
@@ -258,8 +269,10 @@ function renderWords() {
   box.innerHTML = '';
   for (const c of clips) {
     const b = document.createElement('span');
-    b.className = 'w' + (c.flags.length ? ' flag' : '') + (sel && sel.id === c.id ? ' sel' : '');
-    b.textContent = c.word;
+    b.className = 'w' + (c.kind === 'noise' ? ' noise' : '')
+                + (c.flags.length ? ' flag' : '')
+                + (sel && sel.id === c.id && sel.kind === c.kind ? ' sel' : '');
+    b.textContent = c.kind === 'noise' ? '*' + c.word + '*' : c.word;
     b.title = `${fmt(c.start_time)}–${fmt(c.end_time)} (${Math.round((c.end_time - c.start_time) * 1000)}ms)`
             + (c.flags.length ? '\n' + c.flags.join(', ') : '');
     b.onclick = () => select(c);
@@ -288,9 +301,13 @@ function select(c) {
 
 // ── waveform ───────────────────────────────────────────────────────────────
 async function loadEnvelope() {
-  if (!sel) return;
   const pad = parseFloat($('zoom').value);
-  const a = Math.max(0, sel.start_time - pad), b = sel.end_time + pad;
+  // With nothing selected, follow the video instead. Otherwise deselecting
+  // leaves a blank canvas, and a blank canvas is the one place you cannot
+  // drag out a clip for a word that was never transcribed -- which is exactly
+  // when you want to.
+  const a = sel ? Math.max(0, sel.start_time - pad) : Math.max(0, vid.currentTime - pad);
+  const b = sel ? sel.end_time + pad : vid.currentTime + pad;
   try { env = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`); }
   catch (e) { env = null; say(String(e.message), 'err'); }
   drawWave();
@@ -339,18 +356,128 @@ function drawWave() {
     const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
     ctx.fillStyle = 'rgba(255,229,0,0.10)';
     ctx.fillRect(x(s), 0, Math.max(1, x(e) - x(s)), h);
+    // Drawn as grips rather than hairlines, because they are meant to be
+    // grabbed: a 2px line is a target you miss.
     ctx.strokeStyle = '#ffe500'; ctx.lineWidth = 2;
-    for (const t of [s, e]) { ctx.beginPath(); ctx.moveTo(x(t), 0); ctx.lineTo(x(t), h); ctx.stroke(); }
+    ctx.fillStyle = '#ffe500';
+    for (const t of [s, e]) {
+      const px = x(t);
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+      ctx.fillRect(px - 3, 0, 6, 7);
+      ctx.fillRect(px - 3, h - 7, 6, 7);
+    }
+  }
+
+  // A span dragged out for a new clip.
+  if (newSpan) {
+    ctx.fillStyle = 'rgba(125,211,252,0.16)';
+    ctx.fillRect(x(newSpan.a), 0, Math.max(1, x(newSpan.b) - x(newSpan.a)), h);
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 1;
+    for (const t of [newSpan.a, newSpan.b]) {
+      ctx.beginPath(); ctx.moveTo(x(t), 0); ctx.lineTo(x(t), h); ctx.stroke();
+    }
+  }
+
+  // Where the video is.
+  if (vid.currentTime >= env.start && vid.currentTime <= env.end) {
+    ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x(vid.currentTime), 0);
+    ctx.lineTo(x(vid.currentTime), h); ctx.stroke();
+  }
+
+  // Where the mouse is, with the time under it -- without this you are
+  // aiming at a waveform with no idea what you are pointing at.
+  if (hoverT !== null) {
+    const px = x(hoverT);
+    ctx.strokeStyle = 'rgba(232,232,232,0.55)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+    const label = hoverT.toFixed(3) + 's';
+    ctx.font = '11px Roboto Mono, monospace';
+    const tw = ctx.measureText(label).width + 8;
+    const lx = Math.min(w - tw, Math.max(0, px + 4));
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(lx, 2, tw, 15);
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillText(label, lx + 4, 13);
   }
 }
 
-wave.onclick = ev => {
-  if (!sel || !env) return;
+function timeAt(ev) {
   const r = wave.getBoundingClientRect();
-  const t = env.start + ((ev.clientX - r.left) / r.width) * (env.end - env.start);
-  $(ev.shiftKey ? 'w-end' : 'w-start').value = fmt(t);
+  const frac = (ev.clientX - r.left) / r.width;
+  return env.start + Math.max(0, Math.min(1, frac)) * (env.end - env.start);
+}
+
+// Which boundary is under the pointer, if either. Measured in pixels, not
+// seconds, so the grab area stays the same size however far you zoom in.
+function grabbable(ev) {
+  if (!sel || !env) return null;
+  const r = wave.getBoundingClientRect();
+  const px = t => ((t - env.start) / (env.end - env.start)) * r.width;
+  const x = ev.clientX - r.left;
+  const ds = Math.abs(px(parseFloat($('w-start').value)) - x);
+  const de = Math.abs(px(parseFloat($('w-end').value)) - x);
+  if (Math.min(ds, de) > 7) return null;
+  return ds <= de ? 'start' : 'end';
+}
+
+wave.addEventListener('mousemove', ev => {
+  if (!env) return;
+  hoverT = timeAt(ev);
+  if (dragging === 'start' || dragging === 'end') {
+    $(dragging === 'start' ? 'w-start' : 'w-end').value = fmt(hoverT);
+  } else if (dragging === 'new') {
+    newSpan = { a: Math.min(newSpan.anchor, hoverT), b: Math.max(newSpan.anchor, hoverT),
+                anchor: newSpan.anchor };
+    $('a-span').textContent = `${fmt(newSpan.a)} → ${fmt(newSpan.b)}`;
+  } else {
+    wave.style.cursor = grabbable(ev) ? 'ew-resize' : 'crosshair';
+  }
   drawWave();
-};
+});
+
+wave.addEventListener('mouseleave', () => { hoverT = null; drawWave(); });
+
+wave.addEventListener('mousedown', ev => {
+  if (!env) return;
+  const grab = grabbable(ev);
+  if (grab) {
+    dragging = grab;                       // move an existing edge
+  } else {
+    // Drag out the span for a word the transcription missed. Doing this by
+    // eye against the waveform is the whole point -- the old way was a button
+    // that guessed 0.4s from the playhead and left you nudging blind.
+    dragging = 'new';
+    const t = timeAt(ev);
+    newSpan = { a: t, b: t, anchor: t };
+    $('a-span').textContent = `${fmt(t)} → ${fmt(t)}`;
+  }
+  ev.preventDefault();
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragging === 'new' && newSpan && newSpan.b - newSpan.a < 0.02) {
+    newSpan = null;                        // a click, not a drag
+    $('a-span').textContent = 'drag on the waveform';
+  }
+  dragging = null;
+  drawWave();
+});
+
+// Ctrl+scroll zooms, keeping the moment under the pointer where it is.
+wave.addEventListener('wheel', ev => {
+  if (!ev.ctrlKey || !env) return;
+  ev.preventDefault();
+  const z = $('zoom');
+  const step = ev.deltaY < 0 ? 0.8 : 1.25;
+  const next = Math.max(parseFloat(z.min), Math.min(parseFloat(z.max),
+                                                    parseFloat(z.value) * step));
+  if (next === parseFloat(z.value)) return;
+  z.value = next;
+  z.dispatchEvent(new Event('input'));
+  clearTimeout(wave._zoomTimer);
+  wave._zoomTimer = setTimeout(loadEnvelope, 120);   // one fetch, not thirty
+}, { passive: false });
 
 // ── editing ────────────────────────────────────────────────────────────────
 document.querySelectorAll('[data-nudge]').forEach(b => {
@@ -397,6 +524,7 @@ function playSelection() {
 }
 
 function watchPlayhead() {
+  drawWave();                              // keep the green playhead moving
   if (playUntil === null) return;
   if (vid.paused) { playUntil = null; return; }
   if (vid.currentTime >= playUntil) { vid.pause(); playUntil = null; return; }
@@ -407,7 +535,7 @@ $('play').onclick = playSelection;
 $('save').onclick = async () => {
   if (!sel) return;
   try {
-    const out = await api('/clip/' + sel.id, {
+    const out = await api(`/clip/${sel.id}?kind=${sel.kind || 'word'}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ word: $('w-word').value,
                              start_time: parseFloat($('w-start').value),
@@ -423,8 +551,8 @@ $('save').onclick = async () => {
 $('del').onclick = async () => {
   if (!sel || !confirm(`Delete the clip for “${sel.word}”?`)) return;
   try {
-    await api('/clip/' + sel.id, { method: 'DELETE' });
-    clips = clips.filter(c => c.id !== sel.id);
+    await api(`/clip/${sel.id}?kind=${sel.kind || 'word'}`, { method: 'DELETE' });
+    clips = clips.filter(c => !(c.id === sel.id && c.kind === sel.kind));
     sel = null;
     $('editor').style.display = 'none'; $('nosel').style.display = '';
     renderWords(); drawWave();
@@ -432,32 +560,52 @@ $('del').onclick = async () => {
   } catch (e) { say(String(e.message), 'err'); }
 };
 
-$('add').onclick = async () => {
+async function addClip(kind) {
   const word = $('a-word').value.trim();
   if (!word) { say('type the word first', 'err'); return; }
-  const s = vid.currentTime;
+  // The dragged span if there is one, otherwise a guess at the playhead.
+  const a = newSpan ? newSpan.a : vid.currentTime;
+  const b = newSpan ? newSpan.b : vid.currentTime + 0.4;
   try {
-    const out = await api(`/source/${sourceId}/clip`, {
+    const out = await api(`/source/${sourceId}/clip?kind=${kind}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word, start_time: s, end_time: s + 0.4 }),
+      body: JSON.stringify({ word, start_time: a, end_time: b }),
     });
+    newSpan = null;
+    $('a-span').textContent = 'drag on the waveform';
     clips.push({ ...out, flags: [], gap_after: null });
     clips.sort((a, b) => a.start_time - b.start_time);
     $('a-word').value = '';
     renderWords();
-    select(clips.find(c => c.id === out.id));
-    say(`added “${out.word}” — now set its edges`, 'ok');
+    select(clips.find(c => c.id === out.id && c.kind === out.kind));
+    say(`added ${kind} “${out.word}”`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
-};
+}
+$('add').onclick = () => addClip('word');
+$('add-noise').onclick = () => addClip('noise');
 
 $('play2').onclick = playSelection;
 $('save2').onclick = () => $('save').click();
+
+function deselect() {
+  sel = null;
+  $('editor').style.display = 'none';
+  $('nosel').style.display = '';
+  renderWords();
+  loadEnvelope();
+}
+$('deselect').onclick = deselect;
+
+// With nothing selected the waveform tracks the video, so a seek has to
+// refetch it -- otherwise scrubbing moves the playhead off the picture.
+vid.addEventListener('seeked', () => { if (!sel) loadEnvelope(); });
 
 $('source').onchange = () => selectSource(parseInt($('source').value, 10));
 
 document.addEventListener('keydown', ev => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(ev.target.tagName)) return;
   if (ev.code === 'Space') { ev.preventDefault(); playSelection(); }
+  if (ev.code === 'Escape') { deselect(); }
 });
 window.addEventListener('resize', drawWave);
 
