@@ -371,12 +371,37 @@ $('zoom').oninput = () => {
 };
 $('zoom').onchange = loadEnvelope;  // refetch only when the drag settles
 
+// Auditioning a clip has to play the clip and nothing else, or every edit is
+// judged against the wrong audio.
+//
+// Two things were wrong with doing this the obvious way. `timeupdate` fires
+// about four times a second -- measured at a 265ms median gap in this browser
+// -- so stopping on it overshot by up to a quarter second, which on a 150ms
+// word is nearly three times its length and lands in the middle of whatever
+// comes next. And setting currentTime is asynchronous: calling play()
+// immediately after can start from wherever the video already was.
+//
+// So: wait for the seek to land, then poll each animation frame, which is
+// about 16ms of slop instead of 265.
 function playSelection() {
   const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
   if (!(e > s)) return;
-  vid.currentTime = s; playUntil = e; vid.play();
+  playUntil = e;
+  const begin = () => { vid.play(); requestAnimationFrame(watchPlayhead); };
+  if (Math.abs(vid.currentTime - s) > 0.004) {
+    vid.addEventListener('seeked', begin, { once: true });
+    vid.currentTime = s;
+  } else {
+    begin();
+  }
 }
-vid.ontimeupdate = () => { if (playUntil !== null && vid.currentTime >= playUntil) { vid.pause(); playUntil = null; } };
+
+function watchPlayhead() {
+  if (playUntil === null) return;
+  if (vid.paused) { playUntil = null; return; }
+  if (vid.currentTime >= playUntil) { vid.pause(); playUntil = null; return; }
+  requestAnimationFrame(watchPlayhead);
+}
 $('play').onclick = playSelection;
 
 $('save').onclick = async () => {
