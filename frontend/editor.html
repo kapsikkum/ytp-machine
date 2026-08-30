@@ -188,14 +188,24 @@ const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
 let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
 let hoverT = null, dragging = null, newSpan = null, stopTimer = null;
 let pendingSeek = null;    // a play waiting on a seek that has not landed yet
+let pendingArm = null;     // a play waiting for the sound to actually start
 let envSeq = 0, envLoading = false;
+// Source ids restart at 1 in every corpus, so /source/1/video is a different
+// video depending on which corpus is active -- but it is the same URL, and
+// the browser caches it. Switching corpus therefore kept showing the first
+// corpus's first video. The slug goes on the URL to make them different
+// requests; the JSON is fetched no-store for the same reason.
+let corpusSlug = '';
+let follow = null;         // playhead time the view is scrolling to keep up with
+let watching = false;      // one animation loop, however playback was started
 const _LEAD = 30;          // ms shaved off, to land before the next word
 
 const fmt = t => t.toFixed(3);
 function say(msg, kind) { const s = $('status'); s.textContent = msg; s.className = kind || ''; }
 
 async function api(path, opts) {
-  const r = await fetch('/api/edit' + path, opts);
+  const r = await fetch('/api/edit' + path,
+                        { cache: 'no-store', ...(opts || {}) });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
   return body;
@@ -243,6 +253,7 @@ $('corpus').onchange = async () => {
 // ── sources ────────────────────────────────────────────────────────────────
 async function loadSources() {
   const d = await api('/sources');
+  corpusSlug = d.corpus;
   await loadCorpora(d.corpus);
   $('source').innerHTML = '';
   for (const s of d.sources) {
@@ -260,7 +271,7 @@ async function selectSource(id) {
   const d = await api('/source/' + id);
   clips = d.clips;
   $('counts').textContent = `${clips.length} clips`;
-  vid.src = `/api/edit/source/${id}/video`;
+  vid.src = `/api/edit/source/${id}/video?c=${encodeURIComponent(corpusSlug)}`;
   renderWords();
   $('editor').style.display = 'none';
   $('nosel').style.display = '';
@@ -312,12 +323,21 @@ function select(c) {
 // ── waveform ───────────────────────────────────────────────────────────────
 async function loadEnvelope() {
   const pad = parseFloat($('zoom').value);
+  // Following the playhead, the window is hung ahead of it rather than
+  // centred on it: you are watching for what is coming, and a centred view
+  // spends half of itself on what you have already heard.
+  if (follow !== null) return loadWindow(Math.max(0, follow - pad * 0.4),
+                                         follow + pad * 1.6);
   // With nothing selected, follow the video instead. Otherwise deselecting
   // leaves a blank canvas, and a blank canvas is the one place you cannot
   // drag out a clip for a word that was never transcribed -- which is exactly
   // when you want to.
   const a = sel ? Math.max(0, sel.start_time - pad) : Math.max(0, vid.currentTime - pad);
   const b = sel ? sel.end_time + pad : vid.currentTime + pad;
+  return loadWindow(a, b);
+}
+
+async function loadWindow(a, b) {
   // Fetching takes long enough to see, and until it lands `env` still holds
   // the *previous* clip's audio. Drawing the new word's edges over it puts
   // the yellow grips in a place that means nothing. So the waveform is dimmed
@@ -558,8 +578,9 @@ function playSelection() {
   if (!sel) {
     clearTimeout(stopTimer); playUntil = null;
     if (pendingSeek) { vid.removeEventListener('seeked', pendingSeek); pendingSeek = null; }
+    if (pendingArm) { vid.removeEventListener('playing', pendingArm); pendingArm = null; }
     if (newSpan && newSpan.b - newSpan.a > 0.02) return playSpan(newSpan.a, newSpan.b);
-    if (vid.paused) { vid.play(); requestAnimationFrame(watchPlayhead); }
+    if (vid.paused) vid.play();            // the play event starts the loop
     else vid.pause();
     return;
   }
@@ -573,10 +594,12 @@ function playSelection() {
 // the previous clip's play began at the new clip's position and ran for the
 // previous clip's length.
 function cancelPlayback() {
+  follow = null;                           // the view stops chasing the video
   clearTimeout(stopTimer); stopTimer = null;
   clearTimeout(wave._followTimer);
   playUntil = null;
   if (pendingSeek) { vid.removeEventListener('seeked', pendingSeek); pendingSeek = null; }
+  if (pendingArm) { vid.removeEventListener('playing', pendingArm); pendingArm = null; }
   if (!vid.paused) vid.pause();
 }
 
@@ -592,14 +615,35 @@ function playSpan(s, e) {
   //
   // _LEAD trims a little more off, because erring early is inaudible and
   // erring late plays the next word.
+  const stop = () => {
+    // Unless the audio is not where the clock says it should be. Over a
+    // network the video stalls, and a stall spends wall-clock time without
+    // spending any of the clip -- which cut words short on the server while
+    // being invisible locally, where nothing ever stalls. Re-arm on what is
+    // actually left instead.
+    const left = (e - vid.currentTime) * 1000;
+    if (!vid.paused && left > _LEAD + 10) {
+      stopTimer = setTimeout(stop, Math.max(20, left - _LEAD));
+      return;
+    }
+    vid.pause(); playUntil = null; drawWave();
+  };
+  const arm = () => {
+    pendingArm = null;
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(stop, Math.max(20, (e - vid.currentTime) * 1000 - _LEAD));
+  };
   const begin = () => {
     pendingSeek = null;
     vid.play();
-    clearTimeout(stopTimer);
-    stopTimer = setTimeout(() => {
-      vid.pause(); playUntil = null; drawWave();
-    }, Math.max(20, (e - s) * 1000 - _LEAD));
-    requestAnimationFrame(watchPlayhead);   // backstop
+    // Timing from here assumes the sound starts here. Over the network it
+    // does not: the first frames can be a few hundred ms away, and the clip
+    // lost exactly that much off its end. 'playing' fires when it is really
+    // running, and the remaining time is then measured from where it really
+    // is rather than from where it was asked to be.
+    pendingArm = arm;
+    vid.addEventListener('playing', arm, { once: true });
+    watch();                                // backstop, and the playhead
   };
   if (Math.abs(vid.currentTime - s) > 0.004) {
     pendingSeek = begin;
@@ -629,17 +673,31 @@ function mayLeave() {
       || confirm(`Unsaved changes to “${sel.word}”. Discard them?`);
 }
 
+function watch() {
+  if (watching) return;                    // never two loops drawing at once
+  watching = true;
+  requestAnimationFrame(watchPlayhead);
+}
+
+// Playback can start from the video's own controls, and used to leave the
+// playhead frozen and the view stuck, because only the toolbar button ran
+// the loop.
+vid.addEventListener('play', watch);
+
 function watchPlayhead() {
   drawWave();                              // keep the green playhead moving
-  if (vid.paused) { playUntil = null; return; }
+  if (vid.paused) { playUntil = null; watching = false; return; }
   if (playUntil !== null && vid.currentTime >= playUntil) {
     vid.pause(); playUntil = null; clearTimeout(stopTimer); return;
   }
-  // Playing freely, the playhead walks off the right of the window. Follow
-  // it, or the waveform stops being about what you are hearing.
-  if (!sel && env && vid.currentTime > env.end - 0.15) {
-    clearTimeout(wave._followTimer);
-    wave._followTimer = setTimeout(loadEnvelope, 60);
+  // Playing on past the window, the playhead walks off the right-hand edge
+  // and the picture stops being about what you are hearing. Scroll it -- and
+  // with a word selected too, because playing on from a word to hear it in
+  // context is the ordinary way to check a boundary is right.
+  if (env && !envLoading
+      && (vid.currentTime > env.end - 0.15 || vid.currentTime < env.start)) {
+    follow = vid.currentTime;
+    loadEnvelope();
   }
   requestAnimationFrame(watchPlayhead);
 }

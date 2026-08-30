@@ -142,9 +142,19 @@ def source_clips(source_id: int):
 
 
 @router.get("/source/{source_id}/video")
-def source_video(source_id: int):
-    """The video itself, so the browser can seek around in it."""
-    return FileResponse(_source_path(source_id), media_type="video/mp4")
+def source_video(source_id: int, c: str = ""):
+    """The video itself, so the browser can seek around in it.
+
+    `c` is the corpus slug. It is unused here -- the active corpus already
+    decided which file this id means -- and exists only so the URL differs
+    between corpora, because source ids start again at 1 in each one and a
+    cached /source/1/video from another corpus is the wrong video entirely.
+
+    no-cache rather than no-store: revalidating on the ETag is enough to
+    notice the file changed, and still lets seeking reuse what it has.
+    """
+    return FileResponse(_source_path(source_id), media_type="video/mp4",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/source/{source_id}/envelope")
