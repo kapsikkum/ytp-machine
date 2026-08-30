@@ -282,6 +282,7 @@ function renderWords() {
 }
 
 function select(c) {
+  if (sel && c !== sel && !mayLeave()) return;
   sel = c;
   $('editor').style.display = '';
   $('nosel').style.display = 'none';
@@ -295,6 +296,7 @@ function select(c) {
     (prev ? `after <b>${prev.word}</b>, gap <b>${Math.round((c.start_time - prev.end_time) * 1000)}ms</b><br>` : '') +
     (next ? `before <b>${next.word}</b>, gap <b>${Math.round((next.start_time - c.end_time) * 1000)}ms</b><br>` : '') +
     (c.flags.length ? `<span style="color:#ffbe4d">${c.flags.join(', ')}</span>` : '');
+  markDirty();
   renderWords();
   vid.currentTime = c.start_time;
   loadEnvelope();
@@ -427,6 +429,7 @@ wave.addEventListener('mousemove', ev => {
   hoverT = timeAt(ev);
   if (dragging === 'start' || dragging === 'end') {
     $(dragging === 'start' ? 'w-start' : 'w-end').value = fmt(hoverT);
+    markDirty();
   } else if (dragging === 'new') {
     newSpan = { a: Math.min(newSpan.anchor, hoverT), b: Math.max(newSpan.anchor, hoverT),
                 anchor: newSpan.anchor };
@@ -485,10 +488,12 @@ document.querySelectorAll('[data-nudge]').forEach(b => {
   b.onclick = () => {
     const f = $(b.dataset.nudge === 'start' ? 'w-start' : 'w-end');
     f.value = fmt(parseFloat(f.value) + parseFloat(b.dataset.by));
+    markDirty();
     drawWave();
   };
 });
-['w-start', 'w-end'].forEach(id => $(id).oninput = drawWave);
+['w-start', 'w-end'].forEach(id => $(id).oninput = () => { markDirty(); drawWave(); });
+$('w-word').oninput = markDirty;
 
 $('gain').oninput = () => {
   $('gain-v').textContent = parseFloat($('gain').value).toFixed(1) + 'x';
@@ -512,7 +517,21 @@ $('zoom').onchange = loadEnvelope;  // refetch only when the drag settles
 // So: wait for the seek to land, then poll each animation frame, which is
 // about 16ms of slop instead of 265.
 function playSelection() {
-  const s = parseFloat($('w-start').value), e = parseFloat($('w-end').value);
+  // With nothing selected there is no span to play, but there is still a
+  // video, and wanting to hear the bit you are looking at is the normal case
+  // -- you scrub to a gap to find the word the transcription missed. So fall
+  // back to ordinary play/pause, and to the dragged span if one exists.
+  if (!sel) {
+    clearTimeout(stopTimer); playUntil = null;
+    if (newSpan && newSpan.b - newSpan.a > 0.02) return playSpan(newSpan.a, newSpan.b);
+    if (vid.paused) { vid.play(); requestAnimationFrame(watchPlayhead); }
+    else vid.pause();
+    return;
+  }
+  playSpan(parseFloat($('w-start').value), parseFloat($('w-end').value));
+}
+
+function playSpan(s, e) {
   if (!(e > s)) return;
   playUntil = e;
   // Stopped on the wall clock rather than on currentTime.
@@ -540,12 +559,36 @@ function playSelection() {
   }
 }
 
+// Edits live in the form until saved, so moving off a clip silently threw
+// them away -- and the whole job here is nudging an edge by 20ms, which is
+// exactly the change too small to notice you have lost.
+function isDirty() {
+  return !!sel && ($('w-word').value !== sel.word
+                || $('w-start').value !== fmt(sel.start_time)
+                || $('w-end').value !== fmt(sel.end_time));
+}
+
+function markDirty() {
+  const d = isDirty();
+  for (const id of ['save', 'save2']) $(id).textContent = d ? 'save •' : 'save';
+}
+
+function mayLeave() {
+  return !isDirty()
+      || confirm(`Unsaved changes to “${sel.word}”. Discard them?`);
+}
+
 function watchPlayhead() {
   drawWave();                              // keep the green playhead moving
-  if (playUntil === null) return;
   if (vid.paused) { playUntil = null; return; }
-  if (vid.currentTime >= playUntil) {
+  if (playUntil !== null && vid.currentTime >= playUntil) {
     vid.pause(); playUntil = null; clearTimeout(stopTimer); return;
+  }
+  // Playing freely, the playhead walks off the right of the window. Follow
+  // it, or the waveform stops being about what you are hearing.
+  if (!sel && env && vid.currentTime > env.end - 0.15) {
+    clearTimeout(wave._followTimer);
+    wave._followTimer = setTimeout(loadEnvelope, 60);
   }
   requestAnimationFrame(watchPlayhead);
 }
@@ -573,6 +616,7 @@ $('del').onclick = async () => {
     await api(`/clip/${sel.id}?kind=${sel.kind || 'word'}`, { method: 'DELETE' });
     clips = clips.filter(c => !(c.id === sel.id && c.kind === sel.kind));
     sel = null;
+    markDirty();
     $('editor').style.display = 'none'; $('nosel').style.display = '';
     renderWords(); drawWave();
     say('deleted', 'ok');
@@ -607,7 +651,9 @@ $('play2').onclick = playSelection;
 $('save2').onclick = () => $('save').click();
 
 function deselect() {
+  if (!mayLeave()) return;
   sel = null;
+  markDirty();
   $('editor').style.display = 'none';
   $('nosel').style.display = '';
   renderWords();
@@ -619,7 +665,16 @@ $('deselect').onclick = deselect;
 // refetch it -- otherwise scrubbing moves the playhead off the picture.
 vid.addEventListener('seeked', () => { if (!sel) loadEnvelope(); });
 
-$('source').onchange = () => selectSource(parseInt($('source').value, 10));
+$('source').onchange = () => {
+  if (!mayLeave()) { $('source').value = sourceId; return; }
+  sel = null;                      // the guard already ran; don't ask twice
+  selectSource(parseInt($('source').value, 10));
+};
+
+// The last line of defence: a reload or a closed tab.
+window.addEventListener('beforeunload', ev => {
+  if (isDirty()) { ev.preventDefault(); ev.returnValue = ''; }
+});
 
 document.addEventListener('keydown', ev => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(ev.target.tagName)) return;
