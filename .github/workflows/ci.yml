@@ -48,6 +48,12 @@ jobs:
         # does not fail -- it succeeds against the wrong corpus.
         run: python tests/test_corpus_select.py
 
+      - name: Splice editor
+        # The editor writes recipes the generator then obeys, so a recipe that
+        # is accepted but cannot be realised is a fault nobody sees until a
+        # sentence comes out wrong days later.
+        run: python tests/test_splice_editor.py
+
       - name: Splice modes
         # Guessed pronunciations and phoneme substitutions only run outside
         # strict mode, so a mistake here is invisible until someone turns the

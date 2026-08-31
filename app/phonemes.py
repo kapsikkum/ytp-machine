@@ -963,7 +963,12 @@ def find_phoneme_splice(
 
     # Hand-tuned recipe?  Build the unit list directly from it when every
     # group can be sourced; otherwise fall through to the DP.
-    recipe = _RECIPES.get(target_word.lower())
+    #
+    # A recipe saved from the splice editor wins over the built-in one: the
+    # built-ins were tuned against one corpus and one speaker, and whoever is
+    # editing has just listened to the alternatives in the corpus that is
+    # actually loaded.
+    recipe = user_recipe(target_word.lower()) or _RECIPES.get(target_word.lower())
     if recipe and [p for grp, _pref in recipe for p in grp] == target_phones:
         chosen = _chosen_from_recipe(recipe, index, penalty)
         if chosen is not None:
@@ -1454,6 +1459,17 @@ def _realise(
             seg["spliced_from"] = cword; seg["matched"] = matched
         segments.append(seg)
 
+    # What each unit was for, carried on the segment. The splice editor needs
+    # to say which sounds came from which word, and that is knowable here and
+    # nowhere afterwards -- a segment is otherwise just a clip and two times.
+    # `spliced_from` rather than the DP's own pick, because the fallbacks above
+    # may have sourced it from a different word entirely.
+    for seg, unit in zip(segments, chosen):
+        at, matched = unit[0], unit[1]
+        seg["unit"] = {"at": at, "phones": target_phones[at:at + matched],
+                       "from": seg.get("spliced_from", unit[2]),
+                       "clip_id": seg.get("id")}
+
     # Safety: never emit a degenerate (zero/negative/inaudible) span — it would
     # crash the FFmpeg trim.
     #
@@ -1495,3 +1511,155 @@ def _realise(
         segments[-1].pop("fade_out", None)           # and word end
 
     return segments
+
+
+# ── Splice editor support ─────────────────────────────────────────────────────
+#
+# The DP picks one plan and the generator plays it. That is the right default
+# and a bad way to fix a word that comes out wrong: you hear "bitch" as
+# big|catch, and the only lever is downvoting clips until something else wins,
+# which is guessing at a search you cannot see.
+#
+# These expose the same machinery for inspection -- what the target's phonemes
+# are, which words in this corpus could supply any given run of them, and what
+# a chosen combination actually sounds like -- and let the result be saved as a
+# recipe, in the same shape as the hand-tuned _RECIPES above.
+
+def canonical_phones(word: str, mode: str = "strict") -> list[str] | None:
+    """The phonemes a splice would be aiming at, after ZH->SH and friends."""
+    raw = word_to_phonemes(word)
+    if not raw and mode != "strict":
+        raw = guess_phonemes(word)
+    return [_EQUIV.get(p, p) for p in raw] if raw else None
+
+
+def phones_of(word: str) -> list[str] | None:
+    """What the splicer believes a *source* word contains."""
+    raw = word_to_phonemes(word.lower())
+    return [_EQUIV.get(p, p) for p in raw] if raw else None
+
+
+def group_sources(group: list[str], clips_by_word: dict[str, list[dict]],
+                  limit: int = 40) -> list[dict[str, Any]]:
+    """Every word in the corpus holding *group* as a run of phonemes.
+
+    Ranked the way the DP ranks them: fewest cuts first, then away from
+    cutting straight after a vowel (which smears the join), then by how much
+    material there is to choose from.
+    """
+    if not group:
+        return []
+    out = []
+    for word, clips in clips_by_word.items():
+        cph = phones_of(word)
+        if not cph:
+            continue
+        for pos in range(len(cph) - len(group) + 1):
+            if cph[pos:pos + len(group)] != group:
+                continue
+            front_cut = pos > 0
+            end_cut = pos + len(group) < len(cph)
+            out.append({
+                "word": word,
+                "pos": pos,
+                "phones": cph,
+                "clips": len(clips),
+                "cuts": (1 if front_cut else 0) + (1 if end_cut else 0),
+                "after_vowel": bool(end_cut and _is_vowel(cph[pos + len(group) - 1])),
+                "function_word": word.lower() in _FUNCTION_WORDS,
+                "longest": round(max(c["end_time"] - c["start_time"] for c in clips), 3),
+            })
+            break                      # one entry per word: its first match
+    out.sort(key=lambda r: (r["cuts"], r["after_vowel"], r["function_word"],
+                            -min(r["clips"], 20), -r["longest"]))
+    return out[:limit]
+
+
+def realise_groups(target_word: str, groups: list[dict[str, Any]],
+                   clips_by_word: dict[str, list[dict]],
+                   penalty: dict[int, int] | None = None,
+                   mode: str = "strict") -> list[dict[str, Any]] | None:
+    """Turn an explicit grouping into playable segments.
+
+    *groups* is what the editor holds: a list of {phones, from, clip_id},
+    where `from` names the source word and `clip_id` optionally pins one clip
+    of it. Anything the corpus cannot supply returns None rather than being
+    quietly substituted -- the point of the editor is that you get what you
+    asked for, or hear why not.
+    """
+    phones = canonical_phones(target_word, mode)
+    if not phones:
+        return None
+    if [p for g in groups for p in g.get("phones", [])] != phones:
+        return None
+
+    index = defaultdict(list)
+    for word, clips in clips_by_word.items():
+        cph = phones_of(word)
+        if not cph:
+            continue
+        for pos in range(len(cph)):
+            index[cph[pos]].append((word, cph, clips, pos))
+
+    chosen: list[tuple] = []
+    at = 0
+    for g in groups:
+        grp = list(g.get("phones") or [])
+        word = (g.get("from") or "").lower()
+        cph = phones_of(word) if word else None
+        if not cph:
+            return None
+        pos = g.get("pos")
+        if pos is None:
+            pos = _find_sub(cph, grp)
+        if pos is None or cph[pos:pos + len(grp)] != grp:
+            return None
+        pool = clips_by_word.get(word) or []
+        clip = None
+        if g.get("clip_id"):
+            clip = next((c for c in pool if c.get("id") == g["clip_id"]), None)
+        if clip is None:
+            clip = _best_clip(pool, word, penalty) if pool else None
+        if clip is None:
+            return None
+        chosen.append((at, len(grp), word, clip, pos, len(cph)))
+        at += len(grp)
+
+    return _realise(chosen, phones, index, clips_by_word, penalty)
+
+
+# ── Saved recipes ─────────────────────────────────────────────────────────────
+
+_user_recipes: dict[str, list] | None = None
+
+
+def _load_user_recipes() -> dict[str, list]:
+    """Recipes saved against the active corpus, in _RECIPES' own shape."""
+    import json
+
+    from app.database import get_db
+    out: dict[str, list] = {}
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT word, recipe FROM splice_recipes").fetchall()
+    except Exception:
+        return out                     # a corpus packed before the table existed
+    for r in rows:
+        try:
+            out[r["word"]] = [(list(g["phones"]), list(g.get("from") or []))
+                              for g in json.loads(r["recipe"])]
+        except Exception:
+            log.warning("unreadable splice recipe for %r", r["word"])
+    return out
+
+
+def user_recipe(word: str) -> list | None:
+    global _user_recipes
+    if _user_recipes is None:
+        _user_recipes = _load_user_recipes()
+    return _user_recipes.get(word.lower())
+
+
+def invalidate_recipes() -> None:
+    global _user_recipes
+    _user_recipes = None

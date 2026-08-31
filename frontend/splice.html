@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>splice editor · ytp machine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --yellow: #ffe500;
+    --green:  #00ff88;
+    --red:    #ff3c3c;
+    --blue:   #7dd3fc;
+    --dark:   #0d0d0d;
+    --panel:  #141414;
+    --border: #2a2a2a;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--dark); color: #e8e8e8;
+    font-family: 'Roboto Mono', monospace; font-size: 0.8rem;
+    min-height: 100vh; padding: 1rem;
+  }
+  a { color: var(--yellow); }
+  h1 { font-size: 0.95rem; color: var(--yellow); letter-spacing: 0.06em; }
+  header { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+           margin-bottom: 0.9rem; }
+  select, input, button {
+    font: inherit; background: var(--panel); color: #e8e8e8;
+    border: 1px solid var(--border); border-radius: 4px; padding: 0.3rem 0.5rem;
+  }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #4a4a4a; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.primary { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
+  button.danger  { color: var(--red); border-color: #5a0000; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1rem; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem; }
+  .panel h2 { font-size: 0.75rem; color: #777; letter-spacing: 0.08em;
+              text-transform: uppercase; margin-bottom: 0.6rem; font-weight: 400; }
+  .row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem;
+         flex-wrap: wrap; }
+  .meta { color: #777; line-height: 1.7; }
+  .meta b { color: #e8e8e8; font-weight: 400; }
+  .hint { color: #666; font-size: 0.7rem; margin-top: 0.4rem; line-height: 1.5; }
+  #status { margin-top: 0.6rem; min-height: 1.2em; }
+  #status.err { color: var(--red); }
+  #status.ok  { color: var(--green); }
+  video { width: 100%; max-height: 30vh; background: #000; border-radius: 4px;
+          display: block; margin-top: 0.5rem; }
+
+  /* The word as sounds, with the cuts drawn between them. The whole business
+     of this page is where those cuts go, so they are the thing you click. */
+  #phones { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0;
+            margin: 0.3rem 0 0.8rem; }
+  .ph { background: #1b1b1b; border: 1px solid var(--border); border-radius: 3px;
+        padding: 0.3rem 0.5rem; font-weight: 700; letter-spacing: 0.04em; }
+  .ph.vowel { color: var(--blue); }
+  .cut {
+    width: 1.4rem; border: none; background: none; color: #3a3a3a;
+    font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0;
+  }
+  .cut:hover { color: #777; }
+  .cut.on { color: var(--yellow); }
+
+  .group { border: 1px solid var(--border); border-radius: 5px;
+           padding: 0.5rem; margin-bottom: 0.5rem; background: #101010; }
+  .group.bad { border-color: #5a0000; }
+  .group .g-phones { color: var(--yellow); font-weight: 700; margin-bottom: 0.4rem; }
+  .group select { max-width: 100%; }
+  .group .why { color: #666; font-size: 0.7rem; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.72rem; }
+  td, th { padding: 0.2rem 0.35rem; text-align: left; border-bottom: 1px solid #1e1e1e; }
+  th { color: #777; font-weight: 400; }
+  .saved { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.3rem; }
+  .saved b { color: var(--yellow); font-weight: 400; }
+  .saved span { color: #777; flex: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SPLICE EDITOR</h1>
+  <select id="corpus" title="Which voice to edit. This is the app-wide
+selection: the generator will serve this corpus too."></select>
+  <a href="/editor.html">corpus editor →</a>
+  <a href="/">← generator</a>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="panel">
+      <div class="row">
+        <input id="word" placeholder="a word to build" style="flex:1" autofocus>
+        <select id="mode" title="strict uses only known pronunciations; loose
+allows near-enough phonemes; desperate will skip a sound it cannot find">
+          <option value="strict">strict</option>
+          <option value="loose">loose</option>
+          <option value="desperate">desperate</option>
+        </select>
+        <button id="look" class="primary">look up</button>
+      </div>
+      <div id="summary" class="meta">Type a word. You get the sounds it needs,
+        what the splicer currently does with it, and every word in the corpus
+        that could supply each piece.</div>
+      <div id="phones"></div>
+      <div class="hint">Click the gaps between sounds to move the cuts. Each
+        piece is then taken from one word, whole or trimmed.</div>
+    </div>
+
+    <div class="panel" id="groups-panel" style="display:none">
+      <h2>Pieces</h2>
+      <div id="groups"></div>
+      <div class="row">
+        <button id="preview" class="primary">▶ hear it</button>
+        <button id="save">save as the recipe for this word</button>
+        <button id="clear" class="danger">forget the recipe</button>
+      </div>
+      <video id="vid" controls style="display:none"></video>
+      <div id="status"></div>
+      <div class="hint">
+        Saving writes the pieces down against this corpus, and every future
+        generation of the word uses them instead of searching. The search is
+        good at most words and blind to the ones it gets wrong, which is what
+        this is for.
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>What the splicer does now</h2>
+      <div id="current" class="meta">—</div>
+      <div class="row" style="margin-top:0.5rem">
+        <button id="use-plan" disabled>load it into the pieces</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Saved recipes</h2>
+      <div id="saved" class="meta">—</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let phones = [];            // the sounds the target word needs
+let cuts = new Set();       // indices where one piece ends and the next starts
+let picks = {};             // group key -> {source, clip_id}
+let sources = {};           // group key -> candidate list, as fetched
+let word = '';
+
+const VOWELS = new Set(['AA','AE','AH','AO','AW','AY','EH','ER','EY','IH','IY',
+                        'OW','OY','UH','UW']);
+const say = (msg, kind) => { const s = $('status'); s.textContent = msg; s.className = kind || ''; };
+
+async function api(path, opts) {
+  const r = await fetch('/api/edit' + path, { cache: 'no-store', ...(opts || {}) });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
+  return body;
+}
+
+// ── corpora ────────────────────────────────────────────────────────────────
+async function loadCorpora() {
+  const r = await fetch('/api/corpora');
+  if (!r.ok) return;
+  const d = await r.json();
+  const sel = $('corpus');
+  sel.innerHTML = '';
+  for (const c of d.corpora) {
+    const o = document.createElement('option');
+    o.value = c.slug;
+    o.textContent = c.error ? `${c.name} (unreadable)` : `${c.name} — ${(c.clips || 0).toLocaleString()} clips`;
+    o.disabled = !!c.error;
+    if (c.slug === d.active) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+$('corpus').onchange = async () => {
+  const slug = $('corpus').value;
+  $('corpus').disabled = true;
+  try {
+    const r = await fetch('/api/corpus', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+    if (!r.ok) throw new Error('could not switch corpus');
+    // Recipes and clips both belong to the corpus, so everything on the page
+    // is now about the wrong one.
+    picks = {}; sources = {};
+    await loadSaved();
+    if (word) await look();
+    say(`editing ${slug}`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+  finally { $('corpus').disabled = false; }
+};
+
+// ── the word ───────────────────────────────────────────────────────────────
+async function look() {
+  const w = $('word').value.trim();
+  if (!w) return;
+  say('');
+  try {
+    const d = await api(`/splice/${encodeURIComponent(w)}?mode=${$('mode').value}`);
+    word = d.word;
+    phones = d.phones || [];
+    picks = {}; sources = {};
+    renderSummary(d);
+    renderCurrent(d);
+    // A saved recipe is the grouping to start from -- you came here to change
+    // it, not to retype it. Otherwise start from the splicer's own plan, and
+    // only then from one piece per sound.
+    if (d.recipe) {
+      loadGroups(d.recipe.map(g => ({ phones: g.phones, from: (g.from || [])[0] })));
+    } else if (d.plan) {
+      loadGroups(d.plan);
+    } else {
+      cuts = new Set(phones.map((_p, i) => i).slice(1));
+      await renderAll();
+    }
+  } catch (e) { say(String(e.message), 'err'); }
+}
+
+function renderSummary(d) {
+  const bits = [];
+  if (!d.phones) {
+    bits.push(`<b>${d.word}</b> has no known pronunciation, so it cannot be `
+            + `spliced at all. Give it one in the pronunciation dictionary first.`);
+  } else {
+    bits.push(`<b>${d.word}</b> needs <b>${d.phones.length}</b> sounds.`);
+    if (d.exact_total) {
+      bits.push(`The corpus already has <b>${d.exact_total}</b> clip(s) of it `
+              + `said outright, so nothing here will be used unless those are `
+              + `deleted — the splicer only builds words it does not have.`);
+    }
+    if (!d.known) bits.push('Its pronunciation is a guess, not a dictionary entry.');
+    if (d.recipe) bits.push('It has a <b>saved recipe</b>, loaded below.');
+  }
+  $('summary').innerHTML = bits.join(' ');
+}
+
+function renderCurrent(d) {
+  if (!d.plan) {
+    $('current').textContent = d.phones
+      ? 'Nothing in this corpus can build it.'
+      : '—';
+    $('use-plan').disabled = true;
+    return;
+  }
+  $('current').innerHTML = d.plan.map(u =>
+    `<div><b>${(u.phones || []).join('-')}</b> from <b>${u.from}</b>`
+    + ` <span style="color:#666">${u.subword ? 'trimmed' : 'whole'},`
+    + ` ${Math.round((u.end_time - u.start_time) * 1000)}ms</span></div>`).join('');
+  $('use-plan').disabled = false;
+  $('use-plan').onclick = () => loadGroups(d.plan);
+}
+
+// ── grouping ───────────────────────────────────────────────────────────────
+// A grouping is the phoneme list plus a set of cut positions. Held that way
+// rather than as a list of groups so that moving one cut cannot leave the
+// pieces spelling something other than the word.
+function loadGroups(units) {
+  cuts = new Set();
+  let at = 0;
+  picks = {};
+  for (const u of units) {
+    const n = (u.phones || []).length;
+    if (at > 0) cuts.add(at);
+    const key = `${at}:${at + n}`;
+    if (u.from) picks[key] = { source: u.from, clip_id: u.clip_id || null };
+    at += n;
+  }
+  renderAll();
+}
+
+function groups() {
+  const edges = [0, ...[...cuts].sort((a, b) => a - b), phones.length];
+  const out = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    if (edges[i + 1] <= edges[i]) continue;
+    out.push({ a: edges[i], b: edges[i + 1],
+               phones: phones.slice(edges[i], edges[i + 1]) });
+  }
+  return out;
+}
+
+function renderPhones() {
+  const box = $('phones');
+  box.innerHTML = '';
+  phones.forEach((p, i) => {
+    if (i > 0) {
+      const c = document.createElement('button');
+      c.className = 'cut' + (cuts.has(i) ? ' on' : '');
+      c.textContent = cuts.has(i) ? '│' : '·';
+      c.title = cuts.has(i) ? 'joined here — click to keep them together'
+                            : 'click to cut here';
+      c.onclick = () => {
+        cuts.has(i) ? cuts.delete(i) : cuts.add(i);
+        renderAll();
+      };
+      box.appendChild(c);
+    }
+    const el = document.createElement('span');
+    el.className = 'ph' + (VOWELS.has(p.replace(/\d+$/, '')) ? ' vowel' : '');
+    el.textContent = p;
+    box.appendChild(el);
+  });
+}
+
+async function renderAll() {
+  renderPhones();
+  $('groups-panel').style.display = phones.length ? '' : 'none';
+  const gs = groups();
+  const box = $('groups');
+  box.innerHTML = '';
+  for (const g of gs) {
+    const key = `${g.a}:${g.b}`;
+    const card = document.createElement('div');
+    card.className = 'group';
+    card.innerHTML = `<div class="g-phones">${g.phones.join('-')}</div>`
+                   + `<div class="why meta">looking…</div>`;
+    box.appendChild(card);
+    // Fetched per group rather than all at once: a group's candidates depend
+    // only on its own sounds, so a moved cut re-asks for one piece, not all.
+    fetchSources(key, g, card);
+  }
+}
+
+async function fetchSources(key, g, card) {
+  try {
+    if (!sources[key]) {
+      const d = await api('/splice-sources?phones=' + encodeURIComponent(g.phones.join(',')));
+      sources[key] = d.sources;
+    }
+    renderGroup(key, g, card);
+  } catch (e) {
+    card.querySelector('.why').textContent = String(e.message);
+  }
+}
+
+function renderGroup(key, g, card) {
+  const list = sources[key] || [];
+  card.className = 'group' + (list.length ? '' : ' bad');
+  card.innerHTML = `<div class="g-phones">${g.phones.join('-')}</div>`;
+  if (!list.length) {
+    card.insertAdjacentHTML('beforeend',
+      '<div class="why">Nothing in this corpus makes these sounds together. '
+      + 'Cut them apart, or the word cannot be built this way.</div>');
+    return;
+  }
+
+  const pick = picks[key] || (picks[key] = { source: list[0].word, clip_id: null });
+  if (!list.some(s => s.word === pick.source)) pick.source = list[0].word;
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  const sel = document.createElement('select');
+  sel.style.flex = '1';
+  for (const s of list) {
+    const o = document.createElement('option');
+    o.value = s.word;
+    const cut = s.cuts === 0 ? 'whole word'
+              : s.cuts === 1 ? 'one cut' : 'two cuts';
+    o.textContent = `${s.word} — ${cut}, ${s.clips} clip${s.clips === 1 ? '' : 's'}`
+                  + (s.after_vowel ? ', cuts after a vowel' : '');
+    if (s.word === pick.source) o.selected = true;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => {
+    pick.source = sel.value; pick.clip_id = null;
+    renderGroup(key, g, card);
+  };
+  row.appendChild(sel);
+
+  const clips = document.createElement('select');
+  const chosen = list.find(s => s.word === pick.source);
+  const any = document.createElement('option');
+  any.value = '';
+  any.textContent = 'any clip';
+  clips.appendChild(any);
+  for (const c of (chosen ? chosen.clip_list : [])) {
+    const o = document.createElement('option');
+    o.value = c.id;
+    const bad = Object.values(c.ratings || {}).some(v => v < 0);
+    o.textContent = `#${c.id} · ${Math.round(c.duration * 1000)}ms${bad ? ' · downvoted' : ''}`;
+    if (pick.clip_id === c.id) o.selected = true;
+    clips.appendChild(o);
+  }
+  clips.onchange = () => { pick.clip_id = clips.value ? parseInt(clips.value, 10) : null; };
+  row.appendChild(clips);
+  card.appendChild(row);
+
+  const s = chosen;
+  card.insertAdjacentHTML('beforeend',
+    `<div class="why">${s.word} is <b>${s.phones.join('-')}</b>; this takes `
+    + `${s.cuts === 0 ? 'all of it' : 'the ' + g.phones.join('-') + ' out of it'}. `
+    + `${s.clips} clip${s.clips === 1 ? '' : 's'} to choose from, longest `
+    + `${Math.round(s.longest * 1000)}ms.</div>`);
+}
+
+// ── hearing it, and writing it down ────────────────────────────────────────
+function plan() {
+  return {
+    mode: $('mode').value,
+    groups: groups().map(g => {
+      const p = picks[`${g.a}:${g.b}`] || {};
+      return { phones: g.phones, source: p.source || null, clip_id: p.clip_id || null };
+    }),
+  };
+}
+
+$('preview').onclick = async () => {
+  if (!word) return;
+  $('preview').disabled = true;
+  say('cutting…');
+  try {
+    const out = await api(`/splice/${encodeURIComponent(word)}/preview`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan()),
+    });
+    const v = $('vid');
+    v.style.display = '';
+    v.src = out.url;
+    v.play();
+    say(out.units.map(u => `${u.phones.join('-')} from ${u.from} `
+                         + `(${Math.round(u.duration * 1000)}ms)`).join('  +  '), 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+  finally { $('preview').disabled = false; }
+};
+
+$('save').onclick = async () => {
+  if (!word) return;
+  try {
+    await api(`/splice/${encodeURIComponent(word)}/recipe`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan()),
+    });
+    say(`saved — “${word}” will be built this way from now on`, 'ok');
+    loadSaved();
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+$('clear').onclick = async () => {
+  if (!word) return;
+  try {
+    await api(`/splice/${encodeURIComponent(word)}/recipe`, { method: 'DELETE' });
+    say(`“${word}” is back to being searched for`, 'ok');
+    loadSaved();
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+async function loadSaved() {
+  try {
+    const d = await api('/recipes');
+    const box = $('saved');
+    if (!d.recipes.length) {
+      box.textContent = 'None yet. Every word is searched for.';
+      return;
+    }
+    box.innerHTML = '';
+    for (const r of d.recipes) {
+      const el = document.createElement('div');
+      el.className = 'saved';
+      const b = document.createElement('b');
+      b.textContent = r.word;
+      const s = document.createElement('span');
+      s.textContent = r.groups.map(g => `${g.phones.join('-')}<${(g.from || [])[0]}`).join('  ');
+      const open = document.createElement('button');
+      open.textContent = 'open';
+      open.style.padding = '0.05rem 0.35rem';
+      open.onclick = () => { $('word').value = r.word; look(); };
+      el.append(b, s, open);
+      box.appendChild(el);
+    }
+  } catch (e) { /* an old corpus without the table */ }
+}
+
+$('look').onclick = look;
+$('word').addEventListener('keydown', ev => { if (ev.key === 'Enter') look(); });
+$('mode').onchange = () => { if (word) look(); };
+
+loadCorpora();
+loadSaved();
+</script>
+</body>
+</html>

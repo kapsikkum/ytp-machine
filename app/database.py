@@ -236,6 +236,17 @@ def init_db() -> None:
                 PRIMARY KEY (word, clip_id)
             );
 
+            -- How to build one word out of others, saved from the splice
+            -- editor. The same shape as the hand-tuned recipes in phonemes.py
+            -- and consulted before them: those were tuned against one speaker,
+            -- and this one belongs to the corpus it sits in. JSON, because it
+            -- is a list of (phonemes, preferred sources) and reading it back
+            -- as rows would mean three tables to express one sentence.
+            CREATE TABLE IF NOT EXISTS splice_recipes (
+                word   TEXT PRIMARY KEY,
+                recipe TEXT NOT NULL
+            );
+
             -- Per-corpus settings. In the database rather than the environment
             -- because they belong to the corpus, not to the server: how hard
             -- to push a splice depends on how much material there is, and a

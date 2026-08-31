@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -234,7 +235,6 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
     if edit.word is not None:
         # Stored exactly as the ingest stores them, or the corpus ends up with
         # two spellings of the same word and lookups find only one.
-        import re
         word = re.sub(r"[^\w]", "", edit.word).lower()
         if not word:
             raise HTTPException(status_code=400, detail="word cannot be empty")
@@ -281,7 +281,6 @@ def set_rating(clip_id: int, rating: Rating):
     Only word clips have them. Noises are never spliced into a word.
     """
     init_db()
-    import re
     word = re.sub(r"[^\w]", "", rating.word).lower()
     if not word:
         raise HTTPException(status_code=400, detail="a rating needs a word")
@@ -340,7 +339,6 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
     """
     init_db()
     table = _table(kind)
-    import re
     word = re.sub(r"[^\w]", "", clip.word).lower()
     if not word:
         raise HTTPException(status_code=400, detail="word cannot be empty")
@@ -362,3 +360,221 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
              clip.start_time, clip.end_time)
     return {"id": new_id, "word": word, "kind": kind,
             "start_time": clip.start_time, "end_time": clip.end_time}
+
+
+# ── Splice editor ──────────────────────────────────────────────────────────
+#
+# A word the splicer builds wrongly is hard to fix from the generator: you
+# hear the fault, and the only lever is downvoting clips until the search
+# lands somewhere else. This is the search made visible -- the sounds being
+# aimed at, what could supply each of them, and what any given combination
+# sounds like -- and a way to write the answer down.
+
+
+class SpliceGroup(BaseModel):
+    phones: list[str]
+    source: str | None = None          # which word supplies them
+    clip_id: int | None = None         # ... and optionally which clip of it
+
+
+class SplicePlan(BaseModel):
+    groups: list[SpliceGroup]
+    mode: str = "strict"
+
+
+def _cbw() -> dict:
+    """The generator's own clip index, built if it isn't already."""
+    import app.generate as g
+    g._ensure_cache()
+    return g._clips_by_word_cache or {}
+
+
+def _clip_brief(c: dict, ratings: dict) -> dict:
+    return {"id": c.get("id"), "source_id": c.get("source_id"),
+            "start_time": round(c["start_time"], 3),
+            "end_time": round(c["end_time"], 3),
+            "duration": round(c["end_time"] - c["start_time"], 3),
+            "ratings": ratings.get(c.get("id"), {})}
+
+
+def _all_ratings() -> dict[int, dict[str, int]]:
+    out: dict[int, dict[str, int]] = {}
+    try:
+        with get_db() as conn:
+            for r in conn.execute("SELECT word, clip_id, score FROM splice_ratings"):
+                out.setdefault(r["clip_id"], {})[r["word"]] = r["score"]
+    except Exception:
+        pass
+    return out
+
+
+@router.get("/splice/{word}")
+def splice_word(word: str, mode: str = "strict"):
+    """What the splicer would do with *word*, and what it had to choose from."""
+    init_db()
+    import app.generate as g
+    from app import phonemes as ph
+
+    word = re.sub(r"[^\w]", "", word).lower()
+    if not word:
+        raise HTTPException(status_code=400, detail="need a word")
+
+    cbw = _cbw()
+    ratings = _all_ratings()
+    phones = ph.canonical_phones(word, mode)
+    exact = [_clip_brief(c, ratings) for c in cbw.get(word, [])[:40]]
+
+    plan = None
+    if phones:
+        segs = ph.find_phoneme_splice(word, cbw, g._penalty_for(word), mode)
+        if segs:
+            plan = [dict(s.get("unit") or {},
+                         start_time=round(s["start_time"], 3),
+                         end_time=round(s["end_time"], 3),
+                         subword=bool(s.get("subword")))
+                    for s in segs]
+
+    saved = ph.user_recipe(word)
+    return {
+        "word": word,
+        "phones": phones,
+        "known": ph.word_to_phonemes(word) is not None,
+        "exact": exact,
+        "exact_total": len(cbw.get(word, [])),
+        "plan": plan,
+        "recipe": ([{"phones": list(grp), "from": list(pref)}
+                    for grp, pref in saved] if saved else None),
+        "mode": mode,
+    }
+
+
+@router.get("/splice-sources")
+def splice_sources(phones: str, limit: int = 30):
+    """Which words could supply this run of sounds, best first.
+
+    Takes the phonemes rather than a word and a span so the caller can ask
+    about a grouping that does not exist yet -- which is the whole business of
+    the editor: trying a different split.
+    """
+    init_db()
+    from app import phonemes as ph
+    # Stress digits stripped: CMU writes IH1, the corpus index does not, and a
+    # phoneme typed straight off a dictionary would otherwise match nothing at
+    # all while looking perfectly correct.
+    group = [re.sub(r"\d+$", "", p)
+             for p in re.split(r"[\s,]+", phones.upper()) if p]
+    if not group:
+        raise HTTPException(status_code=400, detail="need phonemes")
+    cbw = _cbw()
+    ratings = _all_ratings()
+    out = []
+    for cand in ph.group_sources(group, cbw, limit):
+        pool = sorted(cbw.get(cand["word"], []),
+                      key=lambda c: -(c["end_time"] - c["start_time"]))
+        out.append(dict(cand, clip_list=[_clip_brief(c, ratings) for c in pool[:12]]))
+    return {"phones": group, "sources": out}
+
+
+@router.post("/splice/{word}/preview")
+def splice_preview(word: str, plan: SplicePlan):
+    """Render one chosen grouping, so it can be judged by ear."""
+    init_db()
+    import app.generate as g
+    from app import phonemes as ph
+
+    word = re.sub(r"[^\w]", "", word).lower()
+    groups = [{"phones": [p.upper() for p in gr.phones],
+               "from": gr.source, "clip_id": gr.clip_id} for gr in plan.groups]
+    segs = ph.realise_groups(word, groups, _cbw(), g._penalty_for(word), plan.mode)
+    if not segs:
+        raise HTTPException(
+            status_code=400,
+            detail="that combination cannot be cut from this corpus -- check "
+                   "each group's source actually contains those sounds")
+
+    import uuid
+    os.makedirs("output", exist_ok=True)
+    name = f"splice_{uuid.uuid4().hex[:10]}.mp4"
+    try:
+        g._build_video(segs, os.path.join("output", name))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"could not render: {exc}")
+    log.info("SPLICE  preview %r from %s", word,
+             " + ".join(s.get("spliced_from", "?") for s in segs))
+    return {"url": f"/output/{name}",
+            "units": [{"from": s.get("spliced_from"), "clip_id": s.get("id"),
+                       "phones": (s.get("unit") or {}).get("phones", []),
+                       "duration": round(s["end_time"] - s["start_time"], 3)}
+                      for s in segs]}
+
+
+@router.put("/splice/{word}/recipe")
+def save_recipe(word: str, plan: SplicePlan):
+    """Write a grouping down, so every future generation uses it."""
+    init_db()
+    import json
+
+    from app import phonemes as ph
+    word = re.sub(r"[^\w]", "", word).lower()
+    phones = ph.canonical_phones(word, plan.mode)
+    flat = [p.upper() for gr in plan.groups for p in gr.phones]
+    if not phones:
+        raise HTTPException(status_code=400,
+                            detail=f"no pronunciation known for {word!r}")
+    if flat != phones:
+        # Saving a recipe that does not spell the word would leave a rule that
+        # can never fire -- _chosen_from_recipe checks the same thing before
+        # using one -- and it would fail silently, at generation time.
+        raise HTTPException(
+            status_code=400,
+            detail=f"the groups spell {' '.join(flat)}, but {word} is "
+                   f"{' '.join(phones)}")
+    if any(not gr.source for gr in plan.groups):
+        raise HTTPException(status_code=400,
+                            detail="every group needs a source word")
+
+    body = json.dumps([{"phones": [p.upper() for p in gr.phones],
+                        "from": [gr.source]} for gr in plan.groups])
+    with get_db() as conn:
+        conn.execute("INSERT INTO splice_recipes (word, recipe) VALUES (?,?) "
+                     "ON CONFLICT(word) DO UPDATE SET recipe=?",
+                     (word, body, body))
+    ph.invalidate_recipes()
+    _invalidate()
+    log.info("RECIPE  %s = %s", word,
+             " | ".join(f"{'-'.join(gr.phones)}<{gr.source}" for gr in plan.groups))
+    return {"word": word, "saved": True}
+
+
+@router.delete("/splice/{word}/recipe")
+def delete_recipe(word: str):
+    """Back to whatever the search decides."""
+    init_db()
+    from app import phonemes as ph
+    word = re.sub(r"[^\w]", "", word).lower()
+    with get_db() as conn:
+        conn.execute("DELETE FROM splice_recipes WHERE word=?", (word,))
+    ph.invalidate_recipes()
+    _invalidate()
+    log.info("RECIPE  %s cleared", word)
+    return {"word": word, "saved": False}
+
+
+@router.get("/recipes")
+def recipes():
+    """Everything written down for this corpus."""
+    init_db()
+    import json
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT word, recipe FROM splice_recipes ORDER BY word").fetchall()
+    except Exception:
+        return {"recipes": []}
+    out = []
+    for r in rows:
+        try:
+            out.append({"word": r["word"], "groups": json.loads(r["recipe"])})
+        except Exception:
+            pass
+    return {"recipes": out}
