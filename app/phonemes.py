@@ -1593,14 +1593,6 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
     if [p for g in groups for p in g.get("phones", [])] != phones:
         return None
 
-    index = defaultdict(list)
-    for word, clips in clips_by_word.items():
-        cph = phones_of(word)
-        if not cph:
-            continue
-        for pos in range(len(cph)):
-            index[cph[pos]].append((word, cph, clips, pos))
-
     chosen: list[tuple] = []
     pools: dict[str, list[dict]] = {}      # pin name -> the one clip it means
     at = 0
@@ -1630,7 +1622,13 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
         chosen.append((at, len(grp), name, clip, pos, len(cph)))
         at += len(grp)
 
-    return _unpin(_realise(chosen, phones, index,
+    # An empty index, deliberately -- the same reason realise_piece uses one.
+    # _realise's fallback searches *other* words when a chosen one will not cut
+    # cleanly, which is right mid-sentence and wrong here: you picked "calls"
+    # and clip #15875, and quietly being handed the Z out of "includes"
+    # instead makes the editor look like it ignored you. Without the index it
+    # falls back to the chosen word whole, which the preview reports.
+    return _unpin(_realise(chosen, phones, defaultdict(list),
                            {**clips_by_word, **pools}, penalty))
 
 

@@ -246,6 +246,14 @@ def persist(
     """Insert source + word clips into DB; return number of words stored."""
     from app.database import relativize_path
     source_file = relativize_path(source_file)   # store portable relative paths
+    # relativize_path assumes the file is in the corpus's downloads/, because
+    # that is where every path it is given is supposed to end up. Say so if it
+    # is not: a corpus that cannot find its own video is worth hearing about
+    # now, not on the first generation that tries to use it.
+    from app.database import resolve_path
+    if not os.path.exists(resolve_path(source_file)):
+        print(f"  WARNING: stored as {source_file}, which does not exist. "
+              f"The corpus will not be able to cut clips from it.")
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO sources (video_id, source_file, title, url) VALUES (?, ?, ?, ?)",
@@ -309,14 +317,23 @@ def ingest(
         video_id = os.path.splitext(os.path.basename(source_file))[0]
         title = video_id
         url = None
+        # Into the corpus, always -- not only when normalising.
+        #
+        # persist() stores every path as downloads/<name> relative to the
+        # corpus, so a file left where the user pointed at it is recorded at a
+        # path nothing will ever find. Nothing notices at ingest time either:
+        # transcription reads the original, and the corpus only turns out to
+        # be broken later, when something tries to cut a clip out of it.
+        #
+        # (Copying is also what keeps normalise_video from rewriting the
+        # user's own file in place.)
+        import shutil
+        copy = os.path.join(download_dir, f"{video_id}.mp4")
+        if os.path.abspath(copy) != source_file:
+            shutil.copy2(source_file, copy)
+        source_file = os.path.abspath(copy)
         if normalise:
-            # Into the corpus first. normalise_video rewrites in place, and in
-            # place here would mean overwriting the file the user pointed at.
-            import shutil
-            copy = os.path.join(download_dir, f"{video_id}.mp4")
-            if os.path.abspath(copy) != source_file:
-                shutil.copy2(source_file, copy)
-            source_file = normalise_video(os.path.abspath(copy))
+            source_file = normalise_video(source_file)
 
     print(f"Source file : {source_file}")
 
