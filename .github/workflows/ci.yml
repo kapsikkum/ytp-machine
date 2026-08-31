@@ -48,6 +48,13 @@ jobs:
         # does not fail -- it succeeds against the wrong corpus.
         run: python tests/test_corpus_select.py
 
+      - name: Extraction window
+        # What span of audio each clip is pulled from. It decides what every
+        # clip sounds like and used to be checkable only by rendering a video
+        # and listening -- which is how a tail that ran into the next word
+        # survived until somebody heard "mother like".
+        run: python tests/test_extract_window.py
+
       - name: Splice editor
         # The editor writes recipes the generator then obeys, so a recipe that
         # is accepted but cannot be realised is a fault nobody sees until a
