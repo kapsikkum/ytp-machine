@@ -59,6 +59,33 @@ _SR = 16000
 _bundle: dict[str, Any] | None = None
 
 
+def shift_stored(raw: str | None, delta: float) -> str | None:
+    """Stored phoneme times moved by *delta* seconds, as JSON.
+
+    Times are kept relative to the clip's own start_time, so anything that
+    moves that start has to move them too -- otherwise every phoneme is out by
+    exactly the amount the boundary moved, which is the size of error the
+    alignment exists to remove.
+
+    Moving rather than discarding is not a convenience: the audio has not
+    changed, so the sounds are still where they were and only the point they
+    are measured from has shifted. Realigning would need the model, and the
+    machine that edits a corpus is often not the machine that built it.
+
+    Returns None when there is nothing to move or the stored value is
+    unreadable, which callers write back as "no times" -- the clip then infers
+    its cuts from the spelling, as it did before any of this.
+    """
+    if not raw:
+        return None
+    import json
+    try:
+        return json.dumps([[p, round(a + delta, 4), round(b + delta, 4)]
+                           for p, a, b in json.loads(raw)])
+    except Exception:
+        return None
+
+
 def available() -> bool:
     """Can this process align at all? False on the server, and that is fine."""
     try:

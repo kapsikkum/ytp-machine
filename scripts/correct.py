@@ -172,7 +172,11 @@ def plan_corrections(source_id: int, reference_text: str):
 def _apply(corrections: list[dict]) -> None:
     with get_db() as conn:
         for c in corrections:
-            conn.execute("UPDATE word_clips SET word=? WHERE id=?", (c["new"], c["id"]))
+            # The phoneme times describe the sounds of the *old* word, so
+            # they cannot survive a correction. Dropped rather than moved:
+            # there is nothing to move them to until the clip is realigned.
+            conn.execute("UPDATE word_clips SET word=?, phones=NULL WHERE id=?",
+                         (c["new"], c["id"]))
 
 
 def _run_one(source_id: int, reference: str, apply: bool, verbose: bool = True) -> int:

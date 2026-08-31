@@ -81,43 +81,35 @@ def _wav(path: str, start: float, dur: float):
     return torch.tensor([v / 32768.0 for v in a], dtype=torch.float32)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--all", action="store_true", help="every source")
-    ap.add_argument("--source-id", type=int, help="just this source")
-    ap.add_argument("--limit", type=int, help="stop after N clips")
-    ap.add_argument("--redo", action="store_true",
-                    help="realign clips that already have times")
-    from app.device import add_argument as _device_arg
-    _device_arg(ap)
-    args = ap.parse_args()
-    if not args.all and args.source_id is None:
-        ap.error("pass --all or --source-id")
+def align_corpus(source_id: int | None = None, limit: int | None = None,
+                 redo: bool = False, device: str | None = None) -> tuple[int, int, int]:
+    """Align every clip that needs it. Returns (aligned, skipped, failed).
 
+    Importable so an ingest can align the video it has just added without
+    shelling out, and so a corpus built in one pass and a video added later
+    end up in the same state.
+    """
     from app import phone_align
     if not phone_align.available():
-        print("Needs torch, torchaudio and transformers:\n"
-              "  pip install -r requirements.txt", file=sys.stderr)
-        return 1
+        print("  no aligner here (needs torch, torchaudio, transformers) — "
+              "sub-word cuts will be inferred from spelling", file=sys.stderr)
+        return (0, 0, 0)
 
     init_db()
-    print(f"corpus: {active()['slug']}")
-
-    where = "" if args.source_id is None else " AND source_id = ?"
-    params: tuple = () if args.source_id is None else (args.source_id,)
-    if not args.redo:
+    where = "" if source_id is None else " AND source_id = ?"
+    params: tuple = () if source_id is None else (source_id,)
+    if not redo:
         where += " AND (phones IS NULL OR phones = '')"
     with get_db() as conn:
         rows = [dict(r) for r in conn.execute(
             f"SELECT id, word, start_time, end_time, source_file FROM word_clips "
             f"WHERE end_time > start_time{where} ORDER BY source_id, start_time",
             params)]
-    if args.limit:
-        rows = rows[: args.limit]
+    if limit:
+        rows = rows[:limit]
     if not rows:
         print("nothing to align")
-        return 0
+        return (0, 0, 0)
 
     print(f"aligning {len(rows)} clip(s) — loading the model…", flush=True)
     started = time.time()
@@ -135,7 +127,7 @@ def main() -> int:
         if wav is None:
             failed += 1
             continue
-        got = phone_align.align(wav, phones, args.device)
+        got = phone_align.align(wav, phones, device)
         if not got:
             failed += 1
             continue
@@ -149,9 +141,8 @@ def main() -> int:
 
         if i % 50 == 0 or i == len(rows):
             rate = i / max(1e-6, time.time() - started)
-            left = (len(rows) - i) / rate
             print(f"  {i}/{len(rows)}  {rate:.1f} clips/s  "
-                  f"~{left / 60:.0f} min left", flush=True)
+                  f"~{(len(rows) - i) / rate / 60:.0f} min left", flush=True)
 
     try:
         from app.generate import invalidate_cache
@@ -159,8 +150,28 @@ def main() -> int:
     except Exception:
         pass
 
-    print(f"\naligned {done}, no pronunciation {skipped}, could not align {failed}"
-          f"  in {(time.time() - started) / 60:.1f} min")
+    print(f"  aligned {done}, no pronunciation {skipped}, could not align "
+          f"{failed}  in {(time.time() - started) / 60:.1f} min")
+    return (done, skipped, failed)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--all", action="store_true", help="every source")
+    ap.add_argument("--source-id", type=int, help="just this source")
+    ap.add_argument("--limit", type=int, help="stop after N clips")
+    ap.add_argument("--redo", action="store_true",
+                    help="realign clips that already have times")
+    from app.device import add_argument as _device_arg
+    _device_arg(ap)
+    args = ap.parse_args()
+    if not args.all and args.source_id is None:
+        ap.error("pass --all or --source-id")
+
+    init_db()
+    print(f"corpus: {active()['slug']}")
+    align_corpus(args.source_id, args.limit, args.redo, args.device)
     return 0
 
 

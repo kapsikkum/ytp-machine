@@ -295,6 +295,7 @@ def ingest(
     device: str | None = None,
     max_height: int | None = None,
     normalise: bool = False,
+    align: bool = True,
 ) -> None:
     init_db()
     download_dir = download_dir or _default_download_dir()
@@ -347,6 +348,27 @@ def ingest(
     except Exception:
         pass
 
+    # Measure where each phoneme of each new clip falls.
+    #
+    # Here rather than only in build_corpus.py, because adding a video to an
+    # existing corpus is the ordinary way this project grows, and a corpus
+    # where some clips know where their sounds are and others do not is worse
+    # than either: the ones that do not fall back to inferring cuts from the
+    # spelling, which is wrong for a third of words and says nothing about it.
+    #
+    # Skipped where there is no aligner (the server installs torch from the
+    # CPU wheel index and no transformers at all), and cheap when the clips
+    # are already done -- it only looks at the ones with no times.
+    if align:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from align_phones import align_corpus
+        with get_db() as conn:
+            row = conn.execute("SELECT id FROM sources WHERE video_id=?",
+                               (video_id,)).fetchone()
+        if row:
+            print("  Placing phonemes …")
+            align_corpus(source_id=row["id"], device=device)
+
     unique = sorted({w["word"] for w in words})
     sample = ", ".join(unique[:25]) + ("…" if len(unique) > 25 else "")
     print(f"  Stored {count} clips  ({len(unique)} unique words)")
@@ -385,6 +407,12 @@ def main() -> None:
              "corpus format unless you are keeping the originals.",
     )
     parser.add_argument(
+        "--no-align", dest="align", action="store_false",
+        help="Skip measuring where each phoneme falls. Sub-word splices then "
+             "infer it from the spelling, which disagrees with the phoneme "
+             "count for a third of words.",
+    )
+    parser.add_argument(
         "--normalise", "--normalize", action="store_true", dest="normalise",
         help=f"Re-encode to the corpus format ({CORPUS_WIDTH}x{CORPUS_HEIGHT} "
              f"{CORPUS_FPS}fps) after download. Much smaller bundles and "
@@ -395,7 +423,7 @@ def main() -> None:
     args = parser.parse_args()
 
     ingest(args.input, args.download_dir, args.model, args.cookies_from_browser,
-           args.device, args.max_height, args.normalise)
+           args.device, args.max_height, args.normalise, args.align)
     print("Done.")
 
 

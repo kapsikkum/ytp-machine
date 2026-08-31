@@ -201,6 +201,22 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                 conn.executemany(
                     "UPDATE word_clips SET start_time=?, end_time=? WHERE id=?", updates)
 
+                # This is the other thing that moves a start_time, and aligned
+                # phoneme times are measured from it. Run over an already
+                # aligned corpus without this and every sub-word cut is out by
+                # however far the boundary moved -- silently, because the
+                # times are still there and still look reasonable.
+                from app.phone_align import shift_stored
+                for (new_start, _e, cid), moved in zip(updates, shifts):
+                    if abs(moved) < 1e-9:
+                        continue
+                    row = conn.execute(
+                        "SELECT phones FROM word_clips WHERE id=?", (cid,)).fetchone()
+                    if row and row["phones"]:
+                        conn.execute(
+                            "UPDATE word_clips SET phones=? WHERE id=?",
+                            (shift_stored(row["phones"], -moved), cid))
+
         import statistics
         med = statistics.median(shifts) * 1000 if shifts else 0.0
         return (len(updates), len(words), med)

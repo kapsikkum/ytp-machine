@@ -309,13 +309,9 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
                 conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?",
                              (clip_id,))
             elif abs(shift) > 1e-9:
-                try:
-                    body = json.dumps([[p, round(a + shift, 4), round(b + shift, 4)]
-                                       for p, a, b in json.loads(row["phones"])])
-                except Exception:
-                    body = None
+                from app.phone_align import shift_stored
                 conn.execute("UPDATE word_clips SET phones=? WHERE id=?",
-                             (body, clip_id))
+                             (shift_stored(row["phones"], shift), clip_id))
 
         out = dict(conn.execute(f"SELECT id, word, start_time, end_time "
                                 f"FROM {table} WHERE id=?", (clip_id,)).fetchone(),
