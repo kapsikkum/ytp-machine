@@ -86,9 +86,8 @@ def _sweep_output() -> None:
             continue           # in use, or gone already: it will come round again
         removed += 1
         freed += st.st_size
-    if removed:
-        _app_logger.info("SWEEP   %d old output file(s), %.1f MB",
-                         removed, freed / 1e6)
+    _app_logger.info("SWEEP   %d file(s) kept, %d removed (%.1f MB)",
+                     len(names) - removed, removed, freed / 1e6)
 
 
 def _sweep_loop() -> None:

@@ -65,13 +65,26 @@ def _table(kind: str) -> str:
     return _TABLES[kind]
 
 
-def _invalidate() -> None:
-    """Drop the caches every edit invalidates."""
+def _invalidate(clip_id: int | None = None) -> None:
+    """Drop the caches this edit invalidates.
+
+    When the edit is to one clip, its forced alignment goes with it -- the
+    cached character times were measured from the boundaries that just moved,
+    and are wrong the moment they do. Only that clip's, though: re-aligning
+    costs a model pass each, so dropping every alignment on every 10ms nudge
+    would leave the next sentence to pay for it.
+    """
     try:
         from app.generate import invalidate_cache
-        invalidate_cache()
+        invalidate_cache(alignments=clip_id is None)
     except Exception:
         pass
+    if clip_id is not None:
+        try:
+            from app.forced_align import invalidate as invalidate_alignment
+            invalidate_alignment(clip_id)
+        except Exception:
+            pass
 
 
 def _source_path(source_id: int) -> str:
@@ -261,7 +274,7 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
         out = dict(conn.execute(f"SELECT id, word, start_time, end_time "
                                 f"FROM {table} WHERE id=?", (clip_id,)).fetchone(),
                    kind=kind)
-    _invalidate()
+    _invalidate(clip_id)
     log.info("EDIT    clip %s -> %s %.3f-%.3f", clip_id, out["word"],
              out["start_time"], out["end_time"])
     return out
@@ -301,7 +314,9 @@ def set_rating(clip_id: int, rating: Rating):
                 (word, clip_id, rating.score, rating.score))
         out = {r["word"]: r["score"] for r in conn.execute(
             "SELECT word, score FROM splice_ratings WHERE clip_id=?", (clip_id,))}
-    _invalidate()
+    # A rating changes which clip gets chosen, not where anything is cut, so
+    # the alignments stay: they cost a model pass each to rebuild.
+    _invalidate(clip_id)
     log.info("RATE    clip %s for %r = %s", clip_id, word, rating.score)
     return {"id": clip_id, "ratings": out}
 
@@ -323,7 +338,7 @@ def delete_clip(clip_id: int, kind: str = "word"):
             conn.execute("DELETE FROM splice_ratings WHERE clip_id=?", (clip_id,))
         except Exception:
             pass
-    _invalidate()
+    _invalidate(clip_id)
     log.info("DELETE  clip %s (%s)", clip_id, row["word"])
     return {"deleted": clip_id, "word": row["word"]}
 
@@ -610,8 +625,11 @@ def splice_piece(piece: Piece):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not render: {exc}")
     s = segs[0]
+    # _realise falls back to the whole word when a clip will not cut cleanly.
+    # Useful, and worth saying out loud: you asked to hear CH and you are
+    # hearing "catch", which sounds like the pin being ignored again.
     return {"url": f"/output/{name}", "from": s.get("spliced_from"),
-            "clip_id": s.get("id"),
+            "clip_id": s.get("id"), "cut": bool(s.get("_cut")),
             "duration": round(s["end_time"] - s["start_time"], 3)}
 
 @router.get("/clip/{clip_id}/locate")

@@ -208,7 +208,7 @@ def _get_clips_by_word() -> dict[str, list[dict[str, Any]]]:
     return _clips_by_word_cache  # type: ignore[return-value]
 
 
-def invalidate_cache() -> None:
+def invalidate_cache(alignments: bool = True) -> None:
     global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
     global _noise_by_word, _all_noises, _splice_scores
     _clips_by_word_cache = None
@@ -225,6 +225,22 @@ def invalidate_cache() -> None:
         invalidate_user_dict()
     except Exception:
         pass
+    try:
+        from app.phonemes import invalidate_recipes
+        invalidate_recipes()
+    except Exception:
+        pass
+    # Alignments are keyed on clip id, and ids mean different clips in
+    # different corpora. Editing one clip passes alignments=False and drops
+    # just that one instead: re-aligning is a model forward pass per clip, and
+    # throwing the lot away every time a boundary is nudged by 10ms would make
+    # the next sentence crawl.
+    if alignments:
+        try:
+            from app.forced_align import invalidate as invalidate_alignment
+            invalidate_alignment()
+        except Exception:
+            pass
 
 
 def _penalty_for(word: str) -> dict[int, int]:

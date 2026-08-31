@@ -77,6 +77,24 @@ check("CH sources", sorted(s["word"] for s in srcs), ["beach", "catch", "itch", 
 
 check("nothing supplies ZZ", ph.group_sources(["ZZ"], CBW), [])
 
+# ── pinning a clip means that clip ───────────────────────────────────────────
+# _realise is handed a clip and ignores it, taking the pool for that word and
+# choosing again. Two groups of the same word must still be able to name two
+# different takes -- "mama" out of two clips of "ma" is the whole point.
+# "bib" is B-IH-B, so it can be built entirely out of "bit" (B-IH-T) -- three
+# pieces, two of them naming different clips of the same word.
+pool = sorted(CBW["bit"], key=lambda c: c["id"])
+a, b = pool[0]["id"], pool[1]["id"]
+three = [{"phones": ["B"], "from": "bit", "clip_id": a},
+         {"phones": ["IH"], "from": "bit", "clip_id": b},
+         {"phones": ["B"], "from": "bit", "clip_id": a}]
+segs = ph.realise_groups("bib", three, CBW) or []
+check("pinned clips are the clips used", [s.get("id") for s in segs], [a, b, a])
+check("and the pin name does not leak", [s.get("spliced_from") for s in segs],
+      ["bit"] * 3)
+check("nor into the unit", [(s.get("unit") or {}).get("from") for s in segs],
+      ["bit"] * 3)
+
 # ── the endpoint ───────────────────────────────────────────────────────────
 if ed is None:
     print()

@@ -288,12 +288,20 @@ async function loadSources() {
   // ?clip=N opens straight at one clip, wherever it lives. The id is all the
   // generator has, so the source is looked up rather than passed in -- a link
   // carrying both would go stale the moment a corpus was rebuilt.
-  const want = parseInt(new URLSearchParams(location.search).get('clip'), 10);
+  const params = new URLSearchParams(location.search);
+  const want = parseInt(params.get('clip'), 10);
   if (want) {
     try {
       const at = await api(`/clip/${want}/locate`);
+      const expected = (params.get('word') || '').toLowerCase();
+      if (expected && at.word !== expected) {
+        // Ids restart at 1 in every corpus, so a link followed after switching
+        // corpus lands on a real clip of the wrong word and looks fine.
+        say(`clip ${want} here is “${at.word}”, not “${expected}” — `
+          + `this link came from a different corpus`, 'err');
+      }
       $('source').value = at.source_id;
-      return selectSource(at.source_id, want);
+      return selectSource(at.source_id, { id: at.id, kind: at.kind });
     } catch (e) { say(`clip ${want}: ${e.message}`, 'err'); }
   }
   if (d.sources.length) selectSource(d.sources[0].id);
@@ -312,7 +320,10 @@ async function selectSource(id, focusClip) {
   // Arrived from a link -- the generator sends you here at the clip you
   // clicked, which in a 12,000-word transcript is the difference between
   // fixing a word and hunting for it.
-  const want = focusClip && clips.find(c => c.id === focusClip);
+  // Matched on kind as well: word and noise ids are separate sequences, so
+  // clip 7 exists twice and only one of them is the one you clicked.
+  const want = focusClip && clips.find(c => c.id === focusClip.id
+                                         && c.kind === focusClip.kind);
   if (want) {
     select(want);
     const chip = $('words').children[clips.indexOf(want)];

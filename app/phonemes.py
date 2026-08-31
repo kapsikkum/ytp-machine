@@ -1602,7 +1602,7 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
             index[cph[pos]].append((word, cph, clips, pos))
 
     chosen: list[tuple] = []
-    pins: dict[str, int] = {}     # first pin wins: one pool per word to narrow
+    pools: dict[str, list[dict]] = {}      # pin name -> the one clip it means
     at = 0
     for g in groups:
         grp = list(g.get("phones") or [])
@@ -1623,12 +1623,15 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
             clip = _best_clip(pool, word, penalty) if pool else None
         if clip is None:
             return None
-        chosen.append((at, len(grp), word, clip, pos, len(cph)))
+        name = word
         if g.get("clip_id") and clip.get("id") == g["clip_id"]:
-            pins.setdefault(word, g["clip_id"])
+            name = _pin_name(word, clip["id"])
+            pools[name] = [clip]
+        chosen.append((at, len(grp), name, clip, pos, len(cph)))
         at += len(grp)
 
-    return _realise(chosen, phones, index, _pinned(clips_by_word, pins), penalty)
+    return _unpin(_realise(chosen, phones, index,
+                           {**clips_by_word, **pools}, penalty))
 
 
 # ── Saved recipes ─────────────────────────────────────────────────────────────
@@ -1667,28 +1670,35 @@ def invalidate_recipes() -> None:
     global _user_recipes
     _user_recipes = None
 
-def _pinned(clips_by_word: dict[str, list[dict]],
-            pins: dict[str, int]) -> dict[str, list[dict]]:
-    """*clips_by_word* with the pinned words narrowed to the pinned clip.
+# A pinned unit is given a private name -- "catch#11265" -- mapping to just
+# that one clip.
+#
+# _realise does not use the clip it is handed: for ordinary units it takes the
+# pool for that word, sorts it by how audible each clip is, and uses the first
+# that cuts cleanly. Right for generation, where the DP picks a word well and
+# a clip arbitrarily; wrong for an editor, where picking a clip and hearing no
+# difference is the whole complaint. Narrowing the pool is the only way to say
+# "this one" in a language _realise reads.
+#
+# Per unit rather than per word, because "mama" is two pieces of "ma" and the
+# entire reason to pin them is that you want two different takes.
+_PIN = "#"
 
-    _realise does not use the clip it is handed: for ordinary units it takes
-    the pool for that word, sorts it by how audible each clip is, and uses the
-    first that cuts cleanly. That is right for generation -- the DP chooses a
-    word well and a clip arbitrarily -- and wrong for an editor, where picking
-    a specific clip and hearing no difference is the whole complaint.
 
-    Narrowing the pool says the same thing in the only language _realise
-    reads. If the pinned clip will not cut, it still falls back to other
-    words, and the caller can see that in what comes back.
-    """
-    if not pins:
-        return clips_by_word
-    out = dict(clips_by_word)
-    for word, clip_id in pins.items():
-        one = [c for c in out.get(word, []) if c.get("id") == clip_id]
-        if one:
-            out[word] = one
-    return out
+def _pin_name(word: str, clip_id: int) -> str:
+    return f"{word}{_PIN}{clip_id}"
+
+
+def _unpin(segments: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    """Put the real word back on anything that went out under a pin name."""
+    for seg in segments or []:
+        src = seg.get("spliced_from") or ""
+        if _PIN in src:
+            seg["spliced_from"] = src.split(_PIN, 1)[0]
+        unit = seg.get("unit")
+        if unit and _PIN in (unit.get("from") or ""):
+            unit["from"] = unit["from"].split(_PIN, 1)[0]
+    return segments
 
 
 def realise_piece(phones: list[str], source: str,
@@ -1718,3 +1728,17 @@ def realise_piece(phones: list[str], source: str,
     clip = pool[0] if clip_id else (_best_clip(pool, src, penalty) or pool[0])
     return _realise([(0, len(grp), src, clip, pos, len(cph))],
                     grp, defaultdict(list), {src: pool}, penalty)
+
+
+def realise_word(word: str, clips_by_word: dict[str, list[dict]],
+                 clip_id: int | None = None) -> list[dict[str, Any]] | None:
+    """A whole clip of *word*, untouched. For hearing one as it was said."""
+    pool = clips_by_word.get(word.lower()) or []
+    if clip_id:
+        pool = [c for c in pool if c.get("id") == clip_id]
+    if not pool:
+        return None
+    seg = dict(pool[0])
+    seg["spliced_from"] = word.lower()
+    seg["subword"] = seg["_cut"] = False
+    return [seg]

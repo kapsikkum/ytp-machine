@@ -739,7 +739,8 @@
       const label = document.createElement(first ? 'a' : 'span');
       label.textContent = t.word;
       if (first) {
-        label.href = `/editor.html?clip=${first}`;
+        label.href = `/editor.html?clip=${first}`
+                   + `&word=${encodeURIComponent(t.word)}`;
         label.target = '_blank';
         label.rel = 'noopener';
         label.className = 'open';

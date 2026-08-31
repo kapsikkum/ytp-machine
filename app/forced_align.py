@@ -69,6 +69,29 @@ def _load_wav_mono16k(path: str):
 _char_cache: dict[int, list[tuple[str, float, float]] | None] = {}
 
 
+def invalidate(clip_id: int | None = None) -> None:
+    """Forget an alignment, or all of them.
+
+    The cache is keyed on clip id and holds times relative to the clip's own
+    start_time, so it is only true for the clip as it was when aligned. Two
+    ways it goes wrong:
+
+      - a clip is edited. Moving a boundary in the corpus editor changes both
+        the window aligned and the origin the times are measured from, so
+        every sub-word cut out of that clip afterwards lands somewhere else
+        than it says. The word still comes out; it is just cut in the wrong
+        place, until the process restarts.
+
+      - the corpus is switched. Ids start again at 1 in each corpus, so clip 5
+        of the new one inherits the alignment of clip 5 of the old -- a
+        different word, in a different video.
+    """
+    if clip_id is None:
+        _char_cache.clear()
+    else:
+        _char_cache.pop(clip_id, None)
+
+
 def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     """Return [(char, start_s, end_s), …] for *clip*'s word, times relative to
     the clip's own start_time.  None if alignment fails."""

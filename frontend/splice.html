@@ -461,7 +461,9 @@ async function playPiece(phones, source, clipId, btn) {
     v.src = out.url;
     v.play();
     say(`${phones.join('-')} from ${out.from} #${out.clip_id} — `
-      + `${Math.round(out.duration * 1000)}ms`, 'ok');
+      + `${Math.round(out.duration * 1000)}ms`
+      + (out.cut ? '' : ' — could not cut it, so this is the whole word'),
+      out.cut ? 'ok' : 'err');
   } catch (e) {
     say(String(e.message), 'err');
   } finally {
@@ -481,8 +483,19 @@ function plan() {
   };
 }
 
+// Sources are fetched per group, so for a moment after a cut moves there is
+// a group with nothing chosen. Saying so beats the render failing with
+// "check each group's source", which reads like the choice was wrong rather
+// than not yet made.
+function unready() {
+  return groups().find(g => !(picks[`${g.a}:${g.b}`] || {}).source);
+}
+
 $('preview').onclick = async () => {
   if (!word) return;
+  const missing = unready();
+  if (missing) return say(`still looking up what can supply `
+                        + `${missing.phones.join('-')}`, 'err');
   $('preview').disabled = true;
   say('cutting…');
   try {
@@ -502,6 +515,8 @@ $('preview').onclick = async () => {
 
 $('save').onclick = async () => {
   if (!word) return;
+  const missing = unready();
+  if (missing) return say(`${missing.phones.join('-')} has no source yet`, 'err');
   try {
     await api(`/splice/${encodeURIComponent(word)}/recipe`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
