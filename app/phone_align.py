@@ -70,8 +70,13 @@ def available() -> bool:
     return True
 
 
-def _load() -> dict[str, Any]:
-    """The model, its vocabulary, and the ARPAbet→id table. Loaded once."""
+def _load(device: str | None = None) -> dict[str, Any]:
+    """The model, its vocabulary, and the ARPAbet→id table. Loaded once.
+
+    A pass over a whole corpus is one forward per clip, which is the sort of
+    work a GPU finishes in minutes and a CPU in the best part of an hour, so
+    it honours --device / MRS_DEVICE like every other model in the project.
+    """
     global _bundle
     if _bundle is not None:
         return _bundle
@@ -85,8 +90,11 @@ def _load() -> dict[str, Any]:
     # The bundled tokenizer imports phonemizer (and wants an espeak binary)
     # only to turn text into phones, which is the direction we are not going.
     # Reading the model's output needs nothing but its vocabulary.
+    from app.device import resolve
+    dev = resolve(device)
+
     fe = Wav2Vec2FeatureExtractor.from_pretrained(MODEL)
-    model = AutoModelForCTC.from_pretrained(MODEL).eval()
+    model = AutoModelForCTC.from_pretrained(MODEL).eval().to(dev)
     vocab = json.load(io.open(hf_hub_download(MODEL, "vocab.json"),
                               encoding="utf-8"))
 
@@ -102,12 +110,14 @@ def _load() -> dict[str, Any]:
     if missing:
         log.warning("no model symbol for %s", ", ".join(missing))
 
-    _bundle = {"fe": fe, "model": model, "ids": ids,
+    log.info("phoneme aligner on %s", dev)
+    _bundle = {"fe": fe, "model": model, "ids": ids, "device": dev,
                "blank": vocab.get("<pad>", 0)}
     return _bundle
 
 
-def align(wav, phones: list[str]) -> list[tuple[str, float, float]] | None:
+def align(wav, phones: list[str],
+          device: str | None = None) -> list[tuple[str, float, float]] | None:
     """Place *phones* in *wav* (1-D float32 at 16kHz). Times in seconds.
 
     Returns one (phone, start, end) per phoneme, or None if the audio is too
@@ -118,7 +128,7 @@ def align(wav, phones: list[str]) -> list[tuple[str, float, float]] | None:
 
     if not phones:
         return None
-    b = _load()
+    b = _load(device)
     try:
         targets = [b["ids"][p] for p in phones]
     except KeyError as exc:
@@ -132,14 +142,15 @@ def align(wav, phones: list[str]) -> list[tuple[str, float, float]] | None:
     if wav.numel() < _STRIDE * (len(targets) + 2):
         return None
 
+    dev = b["device"]
     with torch.inference_mode():
-        logits = b["model"](
-            b["fe"](wav, sampling_rate=_SR, return_tensors="pt").input_values
-        ).logits
+        values = b["fe"](wav, sampling_rate=_SR,
+                         return_tensors="pt").input_values.to(dev)
+        logits = b["model"](values).logits
         logp = torch.log_softmax(logits, dim=-1)
         try:
             spans, _scores = F.forced_align(
-                logp, torch.tensor([targets], dtype=torch.int32),
+                logp, torch.tensor([targets], dtype=torch.int32, device=dev),
                 blank=b["blank"])
         except Exception as exc:
             log.warning("forced alignment failed: %s", exc)
@@ -153,7 +164,7 @@ def align(wav, phones: list[str]) -> list[tuple[str, float, float]] | None:
     # What a spike does say is where the phoneme *begins*. Each one therefore
     # runs to the start of the next, and the last runs to the end of the
     # audio, which is the ordinary way to read a CTC alignment as segments.
-    per_frame = spans[0].tolist()
+    per_frame = spans[0].cpu().tolist()
     sec = _STRIDE / _SR
     starts: list[int] = []
     i = 0

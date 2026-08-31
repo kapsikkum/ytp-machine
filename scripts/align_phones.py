@@ -89,6 +89,8 @@ def main() -> int:
     ap.add_argument("--limit", type=int, help="stop after N clips")
     ap.add_argument("--redo", action="store_true",
                     help="realign clips that already have times")
+    from app.device import add_argument as _device_arg
+    _device_arg(ap)
     args = ap.parse_args()
     if not args.all and args.source_id is None:
         ap.error("pass --all or --source-id")
@@ -133,7 +135,7 @@ def main() -> int:
         if wav is None:
             failed += 1
             continue
-        got = phone_align.align(wav, phones)
+        got = phone_align.align(wav, phones, args.device)
         if not got:
             failed += 1
             continue

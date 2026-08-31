@@ -141,6 +141,34 @@ for label, bad in [
         print(f"ok  {label}: {getattr(exc, 'status_code', '')} "
               f"{str(getattr(exc, 'detail', exc))[:60]}")
 
+# ── an edit must not leave the phoneme times describing the old clip ───────
+# They are stored relative to the clip's own start_time, so moving the start
+# moves every one of them -- by exactly the size of error the alignment exists
+# to remove. The sounds have not moved, so they are shifted, not thrown away.
+import json as _json
+
+with db.get_db() as c:
+    c.execute("INSERT INTO word_clips (id, source_id, word, start_time, end_time,"
+              " source_file, phones) VALUES (77,1,'time',5.0,5.4,'v.mp4',?)",
+              (_json.dumps([["T", 0.0, 0.1], ["AY", 0.1, 0.3], ["M", 0.3, 0.4]]),))
+
+
+def phones_of_77():
+    with db.get_db() as c:
+        raw = c.execute("SELECT phones FROM word_clips WHERE id=77").fetchone()[0]
+    return _json.loads(raw) if raw else None
+
+
+ed.edit_clip(77, ed.ClipEdit(start_time=5.05))          # trimmed 50ms off the front
+check("times follow the start backwards", phones_of_77(),
+      [["T", -0.05, 0.05], ["AY", 0.05, 0.25], ["M", 0.25, 0.35]])
+
+ed.edit_clip(77, ed.ClipEdit(end_time=5.5))             # the end does not move them
+check("the end alone changes nothing", phones_of_77()[0], ["T", -0.05, 0.05])
+
+ed.edit_clip(77, ed.ClipEdit(word="thyme"))             # a different word entirely
+check("a new word drops them", phones_of_77(), None)
+
 check("delete", ed.delete_recipe("bitch")["saved"], False)
 check("gone", ph.user_recipe("bitch"), None)
 

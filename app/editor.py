@@ -20,6 +20,7 @@ to see all of it in one file.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -130,11 +131,15 @@ def source_clips(source_id: int):
         src = conn.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
         if not src:
             raise HTTPException(status_code=404, detail=f"no source {source_id}")
+        # `aligned` rather than the times themselves: a corpus of 9,000
+        # clips would otherwise send a phoneme table per clip to the browser
+        # to answer a yes/no question.
         rows = [dict(r, kind="word") for r in conn.execute(
-            "SELECT id, word, start_time, end_time FROM word_clips "
-            "WHERE source_id=? ORDER BY start_time", (source_id,))]
+            "SELECT id, word, start_time, end_time, "
+            "       (phones IS NOT NULL AND phones != '') AS aligned "
+            "FROM word_clips WHERE source_id=? ORDER BY start_time", (source_id,))]
         try:
-            rows += [dict(r, kind="noise") for r in conn.execute(
+            rows += [dict(r, kind="noise", aligned=1) for r in conn.execute(
                 "SELECT id, word, start_time, end_time FROM noise_clips "
                 "WHERE source_id=? ORDER BY start_time", (source_id,))]
             rows.sort(key=lambda c: c["start_time"])
@@ -157,6 +162,7 @@ def source_clips(source_id: int):
     for c in rows:
         c["ratings"] = ratings.get(c["id"], {}) if c["kind"] == "word" else {}
 
+    corpus_aligned = any(c.get("aligned") for c in rows if c["kind"] == "word")
     words = [c for c in rows if c["kind"] == "word"]
     for i, c in enumerate(rows):
         dur = c["end_time"] - c["start_time"]
@@ -174,6 +180,10 @@ def source_clips(source_id: int):
             flags.append("very long")
         if any(v < 0 for v in c["ratings"].values()):
             flags.append("downvoted")
+        # Only worth saying in a corpus that has been aligned at all --
+        # otherwise it is true of every clip and says nothing.
+        if corpus_aligned and not c.get("aligned"):
+            flags.append("not aligned")
         c["flags"] = flags
     return {"source": dict(src), "clips": rows}
 
@@ -277,6 +287,36 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
                                 detail="a clip must be at least 20ms long")
         conn.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id=?",
                      (*params, clip_id))
+
+        # Aligned phoneme times are stored relative to the clip's own
+        # start_time, so an edit invalidates them -- and moving the start by
+        # 20ms would otherwise leave every phoneme 20ms out, which is the size
+        # of the errors this whole mechanism exists to remove.
+        #
+        # They are moved rather than dropped. Nothing about the recording
+        # changed: the sounds are still exactly where they were, and only the
+        # point they are measured from has moved. Realigning would need the
+        # model, which is far larger than this server.
+        #
+        # A different word is not the same case. The times describe a sequence
+        # of phonemes that is no longer this word's, so they go, and the clip
+        # falls back to inferring cuts from the spelling until the next
+        # alignment pass -- which is what it did before any of this existed.
+        if kind == "word" and row["phones"]:
+            renamed = edit.word is not None and word != row["word"]
+            shift = row["start_time"] - new_start
+            if renamed:
+                conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?",
+                             (clip_id,))
+            elif abs(shift) > 1e-9:
+                try:
+                    body = json.dumps([[p, round(a + shift, 4), round(b + shift, 4)]
+                                       for p, a, b in json.loads(row["phones"])])
+                except Exception:
+                    body = None
+                conn.execute("UPDATE word_clips SET phones=? WHERE id=?",
+                             (body, clip_id))
+
         out = dict(conn.execute(f"SELECT id, word, start_time, end_time "
                                 f"FROM {table} WHERE id=?", (clip_id,)).fetchone(),
                    kind=kind)
