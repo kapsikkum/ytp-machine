@@ -1602,6 +1602,7 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
             index[cph[pos]].append((word, cph, clips, pos))
 
     chosen: list[tuple] = []
+    pins: dict[str, int] = {}     # first pin wins: one pool per word to narrow
     at = 0
     for g in groups:
         grp = list(g.get("phones") or [])
@@ -1623,9 +1624,11 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
         if clip is None:
             return None
         chosen.append((at, len(grp), word, clip, pos, len(cph)))
+        if g.get("clip_id") and clip.get("id") == g["clip_id"]:
+            pins.setdefault(word, g["clip_id"])
         at += len(grp)
 
-    return _realise(chosen, phones, index, clips_by_word, penalty)
+    return _realise(chosen, phones, index, _pinned(clips_by_word, pins), penalty)
 
 
 # ── Saved recipes ─────────────────────────────────────────────────────────────
@@ -1663,3 +1666,55 @@ def user_recipe(word: str) -> list | None:
 def invalidate_recipes() -> None:
     global _user_recipes
     _user_recipes = None
+
+def _pinned(clips_by_word: dict[str, list[dict]],
+            pins: dict[str, int]) -> dict[str, list[dict]]:
+    """*clips_by_word* with the pinned words narrowed to the pinned clip.
+
+    _realise does not use the clip it is handed: for ordinary units it takes
+    the pool for that word, sorts it by how audible each clip is, and uses the
+    first that cuts cleanly. That is right for generation -- the DP chooses a
+    word well and a clip arbitrarily -- and wrong for an editor, where picking
+    a specific clip and hearing no difference is the whole complaint.
+
+    Narrowing the pool says the same thing in the only language _realise
+    reads. If the pinned clip will not cut, it still falls back to other
+    words, and the caller can see that in what comes back.
+    """
+    if not pins:
+        return clips_by_word
+    out = dict(clips_by_word)
+    for word, clip_id in pins.items():
+        one = [c for c in out.get(word, []) if c.get("id") == clip_id]
+        if one:
+            out[word] = one
+    return out
+
+
+def realise_piece(phones: list[str], source: str,
+                  clips_by_word: dict[str, list[dict]],
+                  clip_id: int | None = None,
+                  penalty: dict[int, int] | None = None) -> list[dict[str, Any]] | None:
+    """One piece on its own, so a candidate clip can be heard before it is used.
+
+    Deliberately given an empty index: _realise's fallback searches *other*
+    words when a cut will not come out, which is helpful mid-splice and
+    useless here -- you asked what this clip sounds like, so the answer is
+    this clip or nothing.
+    """
+    grp = [p.upper() for p in phones]
+    src = (source or "").lower()
+    cph = phones_of(src)
+    if not cph or not grp:
+        return None
+    pos = _find_sub(cph, grp)
+    if pos is None:
+        return None
+    pool = clips_by_word.get(src) or []
+    if clip_id:
+        pool = [c for c in pool if c.get("id") == clip_id] or pool
+    if not pool:
+        return None
+    clip = pool[0] if clip_id else (_best_clip(pool, src, penalty) or pool[0])
+    return _realise([(0, len(grp), src, clip, pos, len(cph))],
+                    grp, defaultdict(list), {src: pool}, penalty)

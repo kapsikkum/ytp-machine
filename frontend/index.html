@@ -405,6 +405,13 @@
        for so much as the nearest one the corpus can manage. */
     .word-tag.spliced.approx { border-style: dashed; border-color: #8a6a00; }
 
+    /* Underlined only on hover: every word carrying a link would read as a
+       page of links rather than a sentence. */
+    .word-tag .open { color: inherit; text-decoration: none; cursor: pointer; }
+    .word-tag .open:hover { text-decoration: underline; }
+    .word-tag .plan { opacity: 0.55; margin-left: 0.15rem; }
+    .word-tag .plan:hover { opacity: 1; text-decoration: none; }
+
     .word-tag .vote {
       margin-left: 0.3rem;
       padding: 0;
@@ -725,9 +732,35 @@
       tag.className = 'word-tag ' + cls + (approx ? ' approx' : '');
       tag.title = approx ? APPROX_TITLE : TITLES[cls];
 
-      const label = document.createElement('span');
+      // The word itself opens the clip it came from. Hearing a bad edge and
+      // then having to find that word by hand in the corpus editor was the
+      // whole reason bad edges stayed unfixed.
+      const first = Array.isArray(t.clips) ? t.clips[0] : null;
+      const label = document.createElement(first ? 'a' : 'span');
       label.textContent = t.word;
+      if (first) {
+        label.href = `/editor.html?clip=${first}`;
+        label.target = '_blank';
+        label.rel = 'noopener';
+        label.className = 'open';
+        label.title = cls === 'spliced'
+          ? 'open the first piece of this splice in the corpus editor'
+          : 'open this clip in the corpus editor';
+      }
       tag.appendChild(label);
+
+      // A spliced word is made of several clips, so the clip link only ever
+      // reaches its first piece. The splice editor is where the whole plan is.
+      if (cls === 'spliced' || approx) {
+        const plan = document.createElement('a');
+        plan.href = `/splice.html?word=${encodeURIComponent(t.word)}`;
+        plan.target = '_blank';
+        plan.rel = 'noopener';
+        plan.className = 'open plan';
+        plan.textContent = '⑂';
+        plan.title = 'see how this word is built, and change it';
+        tag.appendChild(plan);
+      }
 
       // Any word that came from a clip can be rated, not just phoneme splices:
       // a plain found clip can be just as bad a take, and rating it down used

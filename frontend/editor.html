@@ -285,10 +285,21 @@ async function loadSources() {
     o.textContent = `${s.id}. ${(s.title || s.video_id).slice(0, 46)} (${s.clips})`;
     $('source').appendChild(o);
   }
+  // ?clip=N opens straight at one clip, wherever it lives. The id is all the
+  // generator has, so the source is looked up rather than passed in -- a link
+  // carrying both would go stale the moment a corpus was rebuilt.
+  const want = parseInt(new URLSearchParams(location.search).get('clip'), 10);
+  if (want) {
+    try {
+      const at = await api(`/clip/${want}/locate`);
+      $('source').value = at.source_id;
+      return selectSource(at.source_id, want);
+    } catch (e) { say(`clip ${want}: ${e.message}`, 'err'); }
+  }
   if (d.sources.length) selectSource(d.sources[0].id);
 }
 
-async function selectSource(id) {
+async function selectSource(id, focusClip) {
   cancelPlayback();
   sourceId = id; sel = null; env = null;
   const d = await api('/source/' + id);
@@ -298,6 +309,16 @@ async function selectSource(id) {
   renderWords();
   $('editor').style.display = 'none';
   $('nosel').style.display = '';
+  // Arrived from a link -- the generator sends you here at the clip you
+  // clicked, which in a 12,000-word transcript is the difference between
+  // fixing a word and hunting for it.
+  const want = focusClip && clips.find(c => c.id === focusClip);
+  if (want) {
+    select(want);
+    const chip = $('words').children[clips.indexOf(want)];
+    if (chip) chip.scrollIntoView({ block: 'center' });
+    return;
+  }
   // Nothing is selected yet, so the waveform follows the video -- but only if
   // something asks for it. Without this the canvas sits empty until the first
   // word is clicked, which reads as broken rather than as idle.

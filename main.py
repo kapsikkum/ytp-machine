@@ -1,5 +1,8 @@
-import os
 import logging
+import os
+import stat
+import threading
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -50,6 +53,61 @@ app.include_router(router, prefix="/api")
 # rather than folded into it.
 from app.editor import router as editor_router  # noqa: E402
 app.include_router(editor_router, prefix="/api/edit")
+
+# ── Housekeeping ──────────────────────────────────────────────────────────────
+# Every generation and every preview leaves an mp4 in output/, and nothing ever
+# read them twice. Left alone that is a disk filling up with videos nobody will
+# watch again -- the editor makes it faster, because auditioning twelve clips
+# of one word writes twelve files in a minute.
+#
+# Previews go sooner than generations: a preview is listened to once, while a
+# generated video is a link somebody may still have open.
+_KEEP_HOURS = {"splice_": 24, "piece_": 24}
+_KEEP_DEFAULT_HOURS = 24 * 7
+
+
+def _sweep_output() -> None:
+    now = time.time()
+    removed = freed = 0
+    try:
+        names = os.listdir("output")
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join("output", name)
+        keep = next((h for p, h in _KEEP_HOURS.items() if name.startswith(p)),
+                    _KEEP_DEFAULT_HOURS)
+        try:
+            st = os.stat(path)
+            if not stat.S_ISREG(st.st_mode) or now - st.st_mtime < keep * 3600:
+                continue
+            os.remove(path)
+        except OSError:
+            continue           # in use, or gone already: it will come round again
+        removed += 1
+        freed += st.st_size
+    if removed:
+        _app_logger.info("SWEEP   %d old output file(s), %.1f MB",
+                         removed, freed / 1e6)
+
+
+def _sweep_loop() -> None:
+    """Once at startup, then daily.
+
+    A plain daemon thread rather than a startup event: it needs no event loop,
+    it cannot hold a shutdown open, and there is nothing here worth the
+    ceremony of a lifespan handler.
+    """
+    while True:
+        try:
+            _sweep_output()
+        except Exception:
+            _app_logger.exception("output sweep failed")
+        time.sleep(24 * 3600)
+
+
+threading.Thread(target=_sweep_loop, daemon=True, name="output-sweep").start()
+
 
 # Serve generated videos
 app.mount("/output", StaticFiles(directory="output"), name="output")

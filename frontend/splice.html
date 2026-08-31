@@ -80,6 +80,20 @@
   th { color: #777; font-weight: 400; }
   .saved { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.3rem; }
   .saved b { color: var(--yellow); font-weight: 400; }
+
+  /* Clips as a list rather than a dropdown: the point is to hear each one,
+     and a <select> can only be read. */
+  .clips { max-height: 9.5rem; overflow-y: auto; border: 1px solid #1e1e1e;
+           border-radius: 4px; margin-top: 0.4rem; }
+  .clip { display: flex; gap: 0.4rem; align-items: center; padding: 0.15rem 0.3rem;
+          cursor: pointer; font-size: 0.72rem; }
+  .clip:hover { background: #191919; }
+  .clip.on { background: #241f00; color: var(--yellow); }
+  .clip .id { flex: 1; }
+  .clip .dur { color: #777; }
+  .clip.down .id { color: #ff9a9a; }
+  .clip button { padding: 0 0.3rem; font-size: 0.7rem; line-height: 1.4; }
+  .clip.playing button { border-color: var(--green); color: var(--green); }
   .saved span { color: #777; flex: 1; }
 </style>
 </head>
@@ -111,7 +125,8 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
         that could supply each piece.</div>
       <div id="phones"></div>
       <div class="hint">Click the gaps between sounds to move the cuts. Each
-        piece is then taken from one word, whole or trimmed.</div>
+        piece is then taken from one word, whole or trimmed — and every
+        candidate clip can be heard before you choose it.</div>
     </div>
 
     <div class="panel" id="groups-panel" style="display:none">
@@ -381,23 +396,41 @@ function renderGroup(key, g, card) {
   };
   row.appendChild(sel);
 
-  const clips = document.createElement('select');
-  const chosen = list.find(s => s.word === pick.source);
-  const any = document.createElement('option');
-  any.value = '';
-  any.textContent = 'any clip';
-  clips.appendChild(any);
-  for (const c of (chosen ? chosen.clip_list : [])) {
-    const o = document.createElement('option');
-    o.value = c.id;
-    const bad = Object.values(c.ratings || {}).some(v => v < 0);
-    o.textContent = `#${c.id} · ${Math.round(c.duration * 1000)}ms${bad ? ' · downvoted' : ''}`;
-    if (pick.clip_id === c.id) o.selected = true;
-    clips.appendChild(o);
-  }
-  clips.onchange = () => { pick.clip_id = clips.value ? parseInt(clips.value, 10) : null; };
-  row.appendChild(clips);
+  const hear = document.createElement('button');
+  hear.textContent = '▶';
+  hear.title = 'hear this piece, from whichever clip is chosen';
+  hear.onclick = () => playPiece(g.phones, pick.source, pick.clip_id, hear);
+  row.appendChild(hear);
   card.appendChild(row);
+
+  // Every clip of the chosen word, each one playable. Choosing between twelve
+  // clips of "catch" by their length in milliseconds is not choosing.
+  const chosen = list.find(s => s.word === pick.source);
+  const clips = document.createElement('div');
+  clips.className = 'clips';
+  const rows = [{ id: null, duration: null }, ...(chosen ? chosen.clip_list : [])];
+  for (const c of rows) {
+    const el = document.createElement('div');
+    el.className = 'clip' + (pick.clip_id === c.id ? ' on' : '')
+                 + (Object.values(c.ratings || {}).some(v => v < 0) ? ' down' : '');
+    const id = document.createElement('span');
+    id.className = 'id';
+    id.textContent = c.id === null ? 'any clip — let the splicer choose' : '#' + c.id;
+    const dur = document.createElement('span');
+    dur.className = 'dur';
+    dur.textContent = c.duration === null ? '' : Math.round(c.duration * 1000) + 'ms';
+    const play = document.createElement('button');
+    play.textContent = '▶';
+    play.title = 'hear this clip cut to these sounds';
+    play.onclick = ev => {
+      ev.stopPropagation();          // auditioning is not choosing
+      playPiece(g.phones, pick.source, c.id, play);
+    };
+    el.append(id, dur, play);
+    el.onclick = () => { pick.clip_id = c.id; renderGroup(key, g, card); };
+    clips.appendChild(el);
+  }
+  card.appendChild(clips);
 
   const s = chosen;
   card.insertAdjacentHTML('beforeend',
@@ -405,6 +438,36 @@ function renderGroup(key, g, card) {
     + `${s.cuts === 0 ? 'all of it' : 'the ' + g.phones.join('-') + ' out of it'}. `
     + `${s.clips} clip${s.clips === 1 ? '' : 's'} to choose from, longest `
     + `${Math.round(s.longest * 1000)}ms.</div>`);
+}
+
+// One piece on its own. Rendered server-side like everything else, because
+// a piece is a cut out of the middle of a word and the browser has no idea
+// where the sounds are.
+let auditioning = null;
+
+async function playPiece(phones, source, clipId, btn) {
+  if (!source) return;
+  if (auditioning) auditioning.parentElement.classList.remove('playing');
+  auditioning = btn;
+  btn.parentElement.classList.add('playing');
+  say('cutting…');
+  try {
+    const out = await api('/splice-piece', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phones, source, clip_id: clipId || null }),
+    });
+    const v = $('vid');
+    v.style.display = '';
+    v.src = out.url;
+    v.play();
+    say(`${phones.join('-')} from ${out.from} #${out.clip_id} — `
+      + `${Math.round(out.duration * 1000)}ms`, 'ok');
+  } catch (e) {
+    say(String(e.message), 'err');
+  } finally {
+    btn.parentElement.classList.remove('playing');
+    if (auditioning === btn) auditioning = null;
+  }
 }
 
 // ── hearing it, and writing it down ────────────────────────────────────────
@@ -490,6 +553,10 @@ $('mode').onchange = () => { if (word) look(); };
 
 loadCorpora();
 loadSaved();
+
+// ?word=x, from the generator: the word you just heard come out wrong.
+const wanted = new URLSearchParams(location.search).get('word');
+if (wanted) { $('word').value = wanted; look(); }
 </script>
 </body>
 </html>

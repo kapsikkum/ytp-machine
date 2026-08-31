@@ -578,3 +578,56 @@ def recipes():
         except Exception:
             pass
     return {"recipes": out}
+
+class Piece(BaseModel):
+    phones: list[str]
+    source: str
+    clip_id: int | None = None
+
+
+@router.post("/splice-piece")
+def splice_piece(piece: Piece):
+    """Render one piece alone, for auditioning a clip.
+
+    Choosing between twelve clips of "catch" by rendering the whole word each
+    time is not choosing, it is guessing with an extra step.
+    """
+    init_db()
+    import app.generate as g
+    from app import phonemes as ph
+
+    segs = ph.realise_piece([p.upper() for p in piece.phones], piece.source,
+                            _cbw(), piece.clip_id)
+    if not segs:
+        raise HTTPException(status_code=400,
+                            detail=f"{piece.source!r} cannot supply those sounds")
+
+    import uuid
+    os.makedirs("output", exist_ok=True)
+    name = f"piece_{uuid.uuid4().hex[:10]}.mp4"
+    try:
+        g._build_video(segs, os.path.join("output", name))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"could not render: {exc}")
+    s = segs[0]
+    return {"url": f"/output/{name}", "from": s.get("spliced_from"),
+            "clip_id": s.get("id"),
+            "duration": round(s["end_time"] - s["start_time"], 3)}
+
+@router.get("/clip/{clip_id}/locate")
+def locate_clip(clip_id: int):
+    """Which source a clip belongs to, and where in it.
+
+    The generator knows a word came from clip 13478 and nothing else -- it
+    never had to care which video that is. Following the link the other way
+    needs exactly this one lookup.
+    """
+    init_db()
+    with get_db() as conn:
+        for kind, table in _TABLES.items():
+            row = conn.execute(
+                f"SELECT id, source_id, word, start_time, end_time "
+                f"FROM {table} WHERE id=?", (clip_id,)).fetchone()
+            if row:
+                return dict(row, kind=kind)
+    raise HTTPException(status_code=404, detail=f"no clip {clip_id}")
