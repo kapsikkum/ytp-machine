@@ -52,7 +52,13 @@ jobs:
         # The editor writes recipes the generator then obeys, so a recipe that
         # is accepted but cannot be realised is a fault nobody sees until a
         # sentence comes out wrong days later.
-        run: python tests/test_splice_editor.py
+        #
+        # The only step here that installs anything. The test skips its API
+        # half without FastAPI and would have gone quietly half-blind, which
+        # is worse than the ten seconds this costs.
+        run: |
+          pip install --quiet fastapi pydantic
+          python tests/test_splice_editor.py
 
       - name: Splice modes
         # Guessed pronunciations and phoneme substitutions only run outside
