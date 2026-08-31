@@ -95,6 +95,10 @@ check("and the pin name does not leak", [s.get("spliced_from") for s in segs],
 check("nor into the unit", [(s.get("unit") or {}).get("from") for s in segs],
       ["bit"] * 3)
 
+# _cut is a working flag _realise pops on the way out, so nothing outside may
+# read it -- doing so reported "could not cut" for every piece, cut or not.
+check("no private flags escape", [k for k in segs[0] if k == "_cut"], [])
+
 # ── the endpoint ───────────────────────────────────────────────────────────
 if ed is None:
     print()

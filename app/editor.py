@@ -404,6 +404,27 @@ def _cbw() -> dict:
     return g._clips_by_word_cache or {}
 
 
+def _fell_back(seg: dict, group: list[str], source: str) -> bool:
+    """Did this piece come out as the whole word instead of the cut asked for?
+
+    _realise falls back to a whole clip when alignment cannot cut one, which
+    is the right thing to do mid-sentence and a lie by omission here: you
+    asked to hear CH and you are hearing "catch", which looks exactly like the
+    pinned clip being ignored again.
+
+    Read from `subword` rather than `_cut`, which is a working flag _realise
+    pops before returning -- reading it gave False for every piece, cut or
+    not, and would have cried wolf on every audition.
+    """
+    from app import phonemes as ph
+    cph = ph.phones_of(source or "") or []
+    pos = ph._find_sub(cph, group)
+    if pos is None:
+        return False
+    needed = pos > 0 or pos + len(group) < len(cph)
+    return needed and not seg.get("subword")
+
+
 def _clip_brief(c: dict, ratings: dict) -> dict:
     return {"id": c.get("id"), "source_id": c.get("source_id"),
             "start_time": round(c["start_time"], 3),
@@ -519,6 +540,8 @@ def splice_preview(word: str, plan: SplicePlan):
     return {"url": f"/output/{name}",
             "units": [{"from": s.get("spliced_from"), "clip_id": s.get("id"),
                        "phones": (s.get("unit") or {}).get("phones", []),
+                       "fell_back": _fell_back(s, (s.get("unit") or {}).get("phones", []),
+                                               s.get("spliced_from")),
                        "duration": round(s["end_time"] - s["start_time"], 3)}
                       for s in segs]}
 
@@ -625,11 +648,10 @@ def splice_piece(piece: Piece):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not render: {exc}")
     s = segs[0]
-    # _realise falls back to the whole word when a clip will not cut cleanly.
-    # Useful, and worth saying out loud: you asked to hear CH and you are
-    # hearing "catch", which sounds like the pin being ignored again.
     return {"url": f"/output/{name}", "from": s.get("spliced_from"),
-            "clip_id": s.get("id"), "cut": bool(s.get("_cut")),
+            "clip_id": s.get("id"),
+            "fell_back": _fell_back(s, [p.upper() for p in piece.phones],
+                                    piece.source),
             "duration": round(s["end_time"] - s["start_time"], 3)}
 
 @router.get("/clip/{clip_id}/locate")

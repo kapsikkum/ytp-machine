@@ -462,8 +462,8 @@ async function playPiece(phones, source, clipId, btn) {
     v.play();
     say(`${phones.join('-')} from ${out.from} #${out.clip_id} — `
       + `${Math.round(out.duration * 1000)}ms`
-      + (out.cut ? '' : ' — could not cut it, so this is the whole word'),
-      out.cut ? 'ok' : 'err');
+      + (out.fell_back ? ' — could not cut it, so this is the whole word' : ''),
+      out.fell_back ? 'err' : 'ok');
   } catch (e) {
     say(String(e.message), 'err');
   } finally {
@@ -507,8 +507,12 @@ $('preview').onclick = async () => {
     v.style.display = '';
     v.src = out.url;
     v.play();
-    say(out.units.map(u => `${u.phones.join('-')} from ${u.from} `
-                         + `(${Math.round(u.duration * 1000)}ms)`).join('  +  '), 'ok');
+    // A piece that could not be cut is the whole word, which is the one
+    // outcome you will not spot by ear in a word you have never heard said.
+    say(out.units.map(u => `${u.phones.join('-')} from ${u.from}`
+                         + (u.fell_back ? ' (WHOLE WORD)' : '')
+                         + ` (${Math.round(u.duration * 1000)}ms)`).join('  +  '),
+        out.units.some(u => u.fell_back) ? 'err' : 'ok');
   } catch (e) { say(String(e.message), 'err'); }
   finally { $('preview').disabled = false; }
 };
