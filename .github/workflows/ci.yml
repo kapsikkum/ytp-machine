@@ -55,6 +55,12 @@ jobs:
         # survived until somebody heard "mother like".
         run: python tests/test_extract_window.py
 
+      - name: Phoneme cuts
+        # Turning stored phoneme times into a sub-word cut. The times come
+        # from a model at build time; this is the arithmetic that uses them,
+        # and it runs on a bare interpreter.
+        run: python tests/test_phone_cuts.py
+
       - name: Splice editor
         # The editor writes recipes the generator then obeys, so a recipe that
         # is accepted but cannot be realised is a fault nobody sees until a

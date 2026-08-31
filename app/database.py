@@ -267,6 +267,15 @@ def init_db() -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(word_clips)")}
         if "edited" not in cols:
             conn.execute("ALTER TABLE word_clips ADD COLUMN edited INTEGER DEFAULT 0")
+        # Where each phoneme of this clip actually falls, as JSON
+        # [[phone, start, end], ...] in seconds from the clip's start_time.
+        #
+        # Written at corpus build time by scripts/align_phones.py, because the
+        # model that produces it is larger than the whole server container.
+        # Empty for a corpus built before it existed, and the splicer falls
+        # back to guessing from the spelling, which is what it always did.
+        if "phones" not in cols:
+            conn.execute("ALTER TABLE word_clips ADD COLUMN phones TEXT")
 
         # Normalise any Windows separators left by an ingest run on Windows.
         # resolve_path() copes with them on the way out, but a database full of

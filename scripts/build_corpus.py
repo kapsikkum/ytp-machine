@@ -17,7 +17,7 @@ each child is the honest way to point the work at a named corpus.
 
 Everything is resumable. Videos already in the corpus are skipped, so a run
 interrupted at video 25 of 40 picks up where it stopped, and finished stages
-can be left out with --skip-ingest / --skip-refine / --skip-pack.
+can be left out with --skip-ingest / --skip-refine / --skip-align / --skip-pack.
 
 Not included: correct.py (needs a real transcript to compare against) and
 find_noises.py (curated by hand, per speaker). Neither can be driven from a
@@ -201,6 +201,9 @@ def main() -> int:
                          "(chrome, firefox, edge, …)")
     ap.add_argument("--skip-ingest", action="store_true", help="Already ingested")
     ap.add_argument("--skip-refine", action="store_true", help="Leave boundaries alone")
+    ap.add_argument("--skip-align", action="store_true",
+                    help="Do not measure where each phoneme falls (sub-word "
+                         "splices then guess it from the spelling)")
     ap.add_argument("--skip-pack", action="store_true", help="Stop before the bundle")
     from app.device import add_argument as _device_arg
     _device_arg(ap)
@@ -263,7 +266,7 @@ def main() -> int:
             argv += ["--cookies-from-browser", args.cookies_from_browser]
         if args.device:
             argv += ["--device", args.device]
-        _run("1/3  Download and transcribe", argv, env)
+        _run("1/4  Download and transcribe", argv, env)
 
     if not args.skip_refine:
         # Whisper's boundaries run early and wander by 100-350ms, which is
@@ -272,7 +275,19 @@ def main() -> int:
         argv = ["scripts/refine_boundaries.py", "--all", "--apply"]
         if args.device:
             argv += ["--device", args.device]
-        _run("2/3  Sharpen word boundaries", argv, env)
+        _run("2/4  Sharpen word boundaries", argv, env)
+
+    if not args.skip_align:
+        # Where each phoneme actually falls, so a sub-word splice can cut on a
+        # sound rather than on a letter. Without it the splicer infers the
+        # boundary from the spelling, which disagrees with the phoneme count
+        # for a third of words and lands early when it is wrong.
+        #
+        # The slow stage after transcription: a model pass per clip. It is
+        # also the one that cannot run on the server, whose container is
+        # smaller than the model.
+        _run("3/4  Measure where each phoneme falls",
+             ["scripts/align_phones.py", "--all"], env)
 
     if not args.skip_ingest or not args.skip_refine:
         # Start the corpus's dictionary before packing, so the bundle carries
@@ -286,7 +301,7 @@ def main() -> int:
               "--show", "12"], env)
 
     if not args.skip_pack:
-        _run("3/3  Pack the bundle",
+        _run("4/4  Pack the bundle",
              ["scripts/corpus.py", "pack", "--corpus", slug, "--out", out], env)
 
     print(f"\n{'=' * 64}\nBuilt '{slug}' in {(time.time() - started) / 60:.0f} min.")

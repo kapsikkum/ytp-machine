@@ -162,6 +162,28 @@ def _align(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
             pass
 
 
+def phone_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
+    """This clip's aligned phoneme boundaries, or None if it has none.
+
+    Stored per clip by the build, in seconds from the clip's own start_time --
+    the same frame of reference char_times uses, so the two are
+    interchangeable to a caller.
+    """
+    raw = clip.get("phones")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        import json
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None
+    try:
+        return [(p, float(a), float(b)) for p, a, b in raw]
+    except Exception:
+        return None
+
+
 # ── Grapheme grouping (≈ one group per phoneme) ──────────────────────────────
 # Common multi-letter graphemes that map to a single phoneme, so we can map a
 # phoneme count onto a character index for cutting.
@@ -206,6 +228,12 @@ def cut_start_before_phonemes(clip: dict[str, Any], skip: int) -> float | None:
     begins after skipping its first *skip* phonemes — i.e. cut the front off so
     we can take a suffix like the "at" inside "fat".  None if alignment fails.
     """
+    # Aligned phonemes if the corpus has them: then this is simply where that
+    # phoneme starts, with nothing to infer.
+    pt = phone_times(clip)
+    if pt:
+        return pt[0][1] if skip <= 0 else pt[min(skip, len(pt) - 1)][1]
+
     ct = char_times(clip)
     if not ct:
         return None
@@ -231,6 +259,21 @@ def cut_end_after_phonemes(clip: dict[str, Any], k: int,
     middle of a long diphthong (the 'I' in "pie" lands at 0.25s), so cutting at
     the next char would drag the whole vowel in ("rape" → "raypie").
     """
+    pt = phone_times(clip)
+    if pt:
+        # The end of the k-th phoneme, as aligned. None of the compensation
+        # below applies: it exists because a phoneme index had to be guessed
+        # onto a letter, and a letter boundary is not a sound boundary.
+        end = pt[min(k, len(pt)) - 1][2] if k > 0 else pt[0][1]
+        if not last_is_vowel and k > 0:
+            # A stop still wants its burst: alignment marks the closure, and
+            # the release is the part you can hear.
+            start = pt[k - 1][1]
+            end = max(end, start + 0.055)
+            if k < len(pt):
+                end = min(end, pt[k][2])      # never past the next phoneme
+        return end
+
     ct = char_times(clip)
     if not ct:
         return None
