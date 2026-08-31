@@ -32,9 +32,7 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
-import wave
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -55,30 +53,41 @@ from app.phonemes import word_to_phonemes                       # noqa: E402
 _PAD = 0.06
 
 
-def _wav(path: str, start: float, dur: float):
-    import torch
-    tmp = os.path.join(tempfile.gettempdir(), f"_pa_{os.getpid()}.wav")
+_SR = 16000
+
+
+def _decode(path: str):
+    """The whole source as 16kHz mono samples, in one pass.
+
+    Per clip this used to be its own ffmpeg: a process spawned, a container
+    parsed and a temp file written to lift 300ms of audio. At 6.7 clips a
+    second that was most of the cost -- the GPU was idle waiting for it, and a
+    165,000-clip corpus would have taken most of a day.
+
+    A source is a few tens of MB of samples, so it is decoded once and sliced
+    in memory. Nothing else about the alignment changes.
+    """
     try:
-        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
-                            "-t", f"{dur:.4f}", "-i", path,
-                            "-ac", "1", "-ar", "16000", tmp],
+        r = subprocess.run(["ffmpeg", "-v", "error", "-i", path,
+                            "-ac", "1", "-ar", str(_SR), "-f", "s16le", "-"],
                            capture_output=True)
-        if r.returncode != 0 or not os.path.exists(tmp):
+        if r.returncode != 0 or not r.stdout:
             return None
-        with wave.open(tmp, "rb") as w:
-            raw = w.readframes(w.getnframes())
     except Exception:
         return None
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
     a = array.array("h")
-    a.frombytes(raw[: len(raw) // 2 * 2])
-    if not a:
+    a.frombytes(r.stdout[: len(r.stdout) // 2 * 2])
+    return a or None
+
+
+def _slice(samples, start: float, dur: float):
+    """One clip's audio out of a decoded source, as a float tensor."""
+    import torch
+    a = max(0, int(start * _SR))
+    b = min(len(samples), a + int(dur * _SR))
+    if b - a < 2:
         return None
-    return torch.tensor([v / 32768.0 for v in a], dtype=torch.float32)
+    return torch.frombuffer(samples[a:b], dtype=torch.int16).float() / 32768.0
 
 
 def align_corpus(source_id: int | None = None, limit: int | None = None,
@@ -114,16 +123,25 @@ def align_corpus(source_id: int | None = None, limit: int | None = None,
     print(f"aligning {len(rows)} clip(s) — loading the model…", flush=True)
     started = time.time()
     done = skipped = failed = 0
+    loaded_from: str | None = None
+    samples = None
 
     for i, clip in enumerate(rows, start=1):
         phones = word_to_phonemes(clip["word"])
         if not phones:
             skipped += 1
             continue
+        # The rows come out ordered by source, so each video is decoded once
+        # and then sliced, and only one is held at a time.
+        if clip["source_file"] != loaded_from:
+            samples = _decode(resolve_path(clip["source_file"]))
+            loaded_from = clip["source_file"]
+        if samples is None:
+            failed += 1
+            continue
         pad = min(_PAD, clip["start_time"])
-        wav = _wav(resolve_path(clip["source_file"]),
-                   clip["start_time"] - pad,
-                   (clip["end_time"] - clip["start_time"]) + pad + _PAD)
+        wav = _slice(samples, clip["start_time"] - pad,
+                     (clip["end_time"] - clip["start_time"]) + pad + _PAD)
         if wav is None:
             failed += 1
             continue
