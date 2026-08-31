@@ -259,6 +259,15 @@ def init_db() -> None:
             );
         """)
 
+        # Added after the fact, so every corpus built before it gets it here
+        # rather than needing a rebuild. `edited` marks a clip whose boundaries
+        # were set by hand: the encoder nurses a word's tail outwards to catch
+        # the decay of a sonorant, which is right for a machine-placed edge and
+        # wrong for one somebody chose while looking at the waveform.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(word_clips)")}
+        if "edited" not in cols:
+            conn.execute("ALTER TABLE word_clips ADD COLUMN edited INTEGER DEFAULT 0")
+
         # Normalise any Windows separators left by an ingest run on Windows.
         # resolve_path() copes with them on the way out, but a database full of
         # backslashes is only portable because of that fallback -- fixing the

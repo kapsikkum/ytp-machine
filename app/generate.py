@@ -1052,6 +1052,75 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -
                 pass
 
 
+def extract_window(seg: dict[str, Any], pad_end: float = _PAD_END) -> tuple[float, float]:
+    """The span of source audio to pull for *seg*: (start, end).
+
+    Pulled out of the encoder because it is the one calculation that decides
+    what a clip actually sounds like, and it was only ever exercised by
+    rendering a video and listening to it.
+
+    Three things are being balanced:
+
+      - a word wants a little air around it, or it starts and stops abruptly;
+      - it must never reach into a neighbouring word, or you hear that word;
+      - and it must never come out shorter than the clip it came from, which
+        is a boundary somebody chose.
+
+    The last two used to be in the wrong order. A word ending in a sonorant --
+    ER, N, M, L, NG, R, which is a huge share of English -- gets its tail
+    extended to where the sound really stops, because those fade rather than
+    stop. That extension was applied *after* the clamp that keeps clear of the
+    next word, so it overrode it: "mother" in Tomato 1 ends at 33.122, "like"
+    starts at 33.182, and the tail ran to 33.282 -- a tenth of a second into
+    the following word. And the closer the next word, the more likely the
+    walk keeps going, so it failed hardest exactly where it mattered.
+
+    An edited clip is not extended at all. Its boundaries were set by hand,
+    against a waveform, and second-guessing them is how a fix in the editor
+    ends up sounding like it did nothing.
+    """
+    edited = bool(seg.get("edited"))
+    # An edited clip is taken exactly as stored, at both ends. The lead-in has
+    # the same fault the tail had: back up 50ms from a start somebody trimmed
+    # deliberately and you hand back the sound they trimmed off.
+    start = seg["start_time"] - (0.0 if edited else _PAD_START)
+    prev_end = seg.get("prev_end")
+    if prev_end is not None:
+        start = max(start, prev_end + _SAFETY)      # clear of the word before
+    start = max(0.0, min(start, seg["start_time"]))  # never start after the word
+
+    stored_end = seg["end_time"]
+    next_start = seg.get("next_start")
+    # A tight butt-join: a splice unit whose next_start is its own end. It was
+    # cut to a phoneme boundary and has to come out exactly as cut, including
+    # not being padded up to a minimum length -- the padding would be the next
+    # phoneme, which is the one it was cut away from.
+    butt = next_start is not None and next_start <= stored_end + 1e-3
+
+    # Where we would like to reach: into the trailing silence, and for a
+    # sonorant as far as the sound actually goes.
+    want = stored_end if edited else stored_end + pad_end
+    # `subword` alone: _realise pops its private _cut flag before returning, so
+    # by the time a segment reaches the encoder that is the only mark a cut
+    # unit still carries.
+    if not edited and not seg.get("subword") and _ends_in_sonorant(seg):
+        want = max(want, _sound_ends(seg["source_file"], seg["start_time"], stored_end))
+
+    # Where we must stop: clear of the next word -- but never before the end
+    # of the clip itself, which is what the stored boundary says the word is.
+    # A word whose next neighbour starts before it ends (overlapping stored
+    # times) therefore gets no extension at all rather than a negative one.
+    if next_start is not None:
+        gap = _BLEED_TAIL if seg.get("bleed_risk") else _TAIL_GAP
+        want = min(want, max(stored_end, next_start - gap))
+
+    # Never shorter than the clip itself. The 50ms minimum is for whole words
+    # only: a butt-joined unit padded up to a length it was not cut to would
+    # drag the next phoneme in behind it.
+    floor = stored_end if (butt or edited) else max(stored_end, start + 0.05)
+    return start, max(want, floor)
+
+
 def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
                   final_tail: bool) -> None:
     """
@@ -1076,49 +1145,10 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     # ── Inputs  (precompute durations so we can use them in filter_complex) ──
     clip_durations: list[float] = []
     for idx, seg in enumerate(segments):
-        # Smart start: back up by PAD_START into the silence/gap before the word,
-        # but NEVER cross into the previous word's audio.
-        prev_end = seg.get("prev_end")
-        start = seg["start_time"] - _PAD_START
-        if prev_end is not None:
-            start = max(start, prev_end + _SAFETY)   # stay clear of previous word
-        start = max(0.0, start, seg["start_time"] - _PAD_START)
-        start = min(start, seg["start_time"])        # never start after the word
-        start = max(0.0, start)
-
-        # Smart tail: extend PAD_END into the trailing silence, but leave a clean
-        # gap before the next word so its (coarticulated) onset isn't caught —
-        # otherwise "i shove" picks up the start of the following "it".  If the
-        # stored end is itself within that gap of the next word, trim back to it.
-        # The final word of the output gets a more generous tail so its release
-        # (e.g. a word-final "s") isn't clipped.
+        # The final word of the output gets a more generous tail so its
+        # release (e.g. a word-final "s") isn't clipped.
         pad_end = _PAD_END_LAST if (final_tail and idx == len(segments) - 1) else _PAD_END
-        next_start = seg.get("next_start")
-        # A sub-word unit is clamped on purpose and must stay exactly as cut;
-        # only whole words get their tail nursed.
-        whole_word = not seg.get("subword") and not seg.get("_cut")
-        floor = seg["end_time"]
-        if whole_word and _ends_in_sonorant(seg):
-            floor = _sound_ends(seg["source_file"], seg["start_time"],
-                                seg["end_time"])
-
-        if next_start is not None and next_start <= seg["end_time"] + 1e-3:
-            # Tight butt-join (a clamped sub-word/interior splice unit): extract
-            # exactly to the unit end so the join is seamless and we don't shrink it.
-            tail_end = floor
-        elif next_start is not None:
-            # A real following word in the source: extend into the gap but stop
-            # well before its onset so its coarticulation isn't caught.
-            #
-            # Clamped to *at least* the word's own end. This used to be a plain
-            # min(), so whenever the next word began sooner than _TAIL_GAP --
-            # 20ms apart is ordinary in connected speech -- the clamp did not
-            # merely decline to extend the clip, it cut 30ms off the end of it.
-            tail_end = min(seg["end_time"] + pad_end,
-                           max(floor, next_start - _TAIL_GAP))
-            tail_end = max(tail_end, start + 0.05, floor)
-        else:
-            tail_end = max(seg["end_time"] + pad_end, floor)
+        start, tail_end = extract_window(seg, pad_end)
 
         duration = tail_end - start
         clip_durations.append(duration)

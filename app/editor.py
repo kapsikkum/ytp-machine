@@ -252,10 +252,16 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
         if not word:
             raise HTTPException(status_code=400, detail="word cannot be empty")
         sets.append("word=?"); params.append(word)
+    moved = edit.start_time is not None or edit.end_time is not None
     if edit.start_time is not None:
         sets.append("start_time=?"); params.append(round(edit.start_time, 4))
     if edit.end_time is not None:
         sets.append("end_time=?"); params.append(round(edit.end_time, 4))
+    if moved and kind == "word":
+        # Marked as chosen rather than found, so the encoder stops nursing the
+        # tail outwards past it. Only word clips: noises are already extracted
+        # exactly as stored.
+        sets.append("edited=1")
     if not sets:
         raise HTTPException(status_code=400, detail="nothing to change")
 
@@ -364,9 +370,15 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
                            (source_id,)).fetchone()
         if not src:
             raise HTTPException(status_code=404, detail=f"no source {source_id}")
+        # A clip added here was dragged out against the waveform, so its edges
+        # are chosen and the encoder should leave them alone -- same as an
+        # edited one. Only word_clips has the column; noises are extracted
+        # exactly as stored anyway.
+        extra = ", edited" if kind == "word" else ""
+        vals = ",1" if kind == "word" else ""
         cur = conn.execute(
-            f"INSERT INTO {table} (source_id, word, start_time, end_time, source_file) "
-            f"VALUES (?,?,?,?,?)",
+            f"INSERT INTO {table} (source_id, word, start_time, end_time, source_file{extra}) "
+            f"VALUES (?,?,?,?,?{vals})",
             (source_id, word, round(clip.start_time, 4), round(clip.end_time, 4),
              src["source_file"]))
         new_id = cur.lastrowid
