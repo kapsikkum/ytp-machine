@@ -410,18 +410,20 @@
 
     /* Underlined only on hover: every word carrying a link would read as a
        page of links rather than a sentence. */
+    /* Beside GENERATE rather than adrift in the middle of the footer: it is
+       an option for what that button does, and space-between had put the whole
+       width of the form between them. */
+    #form-actions { display: flex; align-items: center; gap: 0.9rem; }
     #subs-toggle {
       display: flex; align-items: center; gap: 0.35rem;
       color: #777; font-size: 0.8rem; cursor: pointer; user-select: none;
-      margin-right: 0.6rem;
+      white-space: nowrap;
     }
     #subs-toggle:hover { color: #aaa; }
     #subs-toggle input { accent-color: var(--yellow); cursor: pointer; }
 
     .word-tag .open { color: inherit; text-decoration: none; cursor: pointer; }
     .word-tag .open:hover { text-decoration: underline; }
-    .word-tag .plan { opacity: 0.55; margin-left: 0.15rem; }
-    .word-tag .plan:hover { opacity: 1; text-decoration: none; }
 
     .word-tag .vote {
       margin-left: 0.3rem;
@@ -582,12 +584,14 @@ time or say nothing at all.">pieces:
     <div id="word-check"></div>
     <div id="form-footer">
       <div id="input-meter"></div>
-      <label id="subs-toggle" title="Burn the words onto the picture as it
+      <div id="form-actions">
+        <label id="subs-toggle" title="Burn the words onto the picture as it
 plays. Each clip is one word, so the caption is on screen for exactly as long
 as the word is heard.">
-        <input type="checkbox" id="subtitles"> subtitles
-      </label>
-      <button type="submit" id="submit-btn">GENERATE</button>
+          <input type="checkbox" id="subtitles"> subtitles
+        </label>
+        <button type="submit" id="submit-btn">GENERATE</button>
+      </div>
     </div>
   </form>
 
@@ -790,36 +794,33 @@ as the word is heard.">
       tag.className = 'word-tag ' + cls + (approx ? ' approx' : '');
       tag.title = approx ? APPROX_TITLE : TITLES[cls];
 
-      // The word itself opens the clip it came from. Hearing a bad edge and
-      // then having to find that word by hand in the corpus editor was the
-      // whole reason bad edges stayed unfixed.
+      // The word itself is the link, and where it goes depends on what the
+      // word is. A spliced word is made of several clips, so a link to one of
+      // them reaches a piece rather than the problem -- its plan lives in the
+      // splice editor. Anything that came from a single clip opens that clip.
+      //
+      // One link, and nothing beside it. The marker used to be a small fork
+      // glyph, which Roboto Mono does not have: every spliced word in a
+      // sentence therefore carried a character borrowed from whatever font
+      // did, at the wrong width and weight.
       const first = Array.isArray(t.clips) ? t.clips[0] : null;
-      const label = document.createElement(first ? 'a' : 'span');
+      const toPlan = (cls === 'spliced' || approx);
+      const href = toPlan
+        ? `/splice.html?word=${encodeURIComponent(t.word)}`
+        : (first ? `/editor.html?clip=${first}`
+                 + `&word=${encodeURIComponent(t.word)}` : null);
+      const label = document.createElement(href ? 'a' : 'span');
       label.textContent = t.word;
-      if (first) {
-        label.href = `/editor.html?clip=${first}`
-                   + `&word=${encodeURIComponent(t.word)}`;
+      if (href) {
+        label.href = href;
         label.target = '_blank';
         label.rel = 'noopener';
         label.className = 'open';
-        label.title = cls === 'spliced'
-          ? 'open the first piece of this splice in the corpus editor'
+        label.title = toPlan
+          ? 'see how this word is built, and change it'
           : 'open this clip in the corpus editor';
       }
       tag.appendChild(label);
-
-      // A spliced word is made of several clips, so the clip link only ever
-      // reaches its first piece. The splice editor is where the whole plan is.
-      if (cls === 'spliced' || approx) {
-        const plan = document.createElement('a');
-        plan.href = `/splice.html?word=${encodeURIComponent(t.word)}`;
-        plan.target = '_blank';
-        plan.rel = 'noopener';
-        plan.className = 'open plan';
-        plan.textContent = '⑂';
-        plan.title = 'see how this word is built, and change it';
-        tag.appendChild(plan);
-      }
 
       // Any word that came from a clip can be rated, not just phoneme splices:
       // a plain found clip can be just as bad a take, and rating it down used
