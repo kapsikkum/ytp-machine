@@ -502,6 +502,23 @@ def _expand_atom(atom: str) -> list[str]:
     if not atom:
         return suffix
 
+    # A possessive or a contraction is one word, not two.
+    #
+    # The ingest stores words with the punctuation stripped, so the corpus
+    # holds "rosens" and "dont" -- and the token is joined the same way here.
+    # Without this the letters-and-digits split further down took "rosen's"
+    # apart into "rosen" and "s", and the stray "s" was looked up as a word in
+    # its own right and said out loud. "dad's" escaped it only by accident:
+    # the corpus happens to contain "dads", so the joined form was recognised
+    # before the split could happen.
+    #
+    # Only the endings that really are suffixes. "y'know" is left alone
+    # because the half after the apostrophe is a word, and joining it would
+    # invent one nobody says.
+    m = re.fullmatch(r"([a-z]+)'(s|re|ve|ll|d|t|m)", atom)
+    if m:
+        atom = m.group(1) + m.group(2)
+
     # Thousands separators, before anything treats the comma as a boundary:
     # "1,500" split into "1" and "500" and said "one five hundred".
     if re.fullmatch(r"\d{1,3}(?:,\d{3})+", atom):

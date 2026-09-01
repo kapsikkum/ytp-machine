@@ -28,6 +28,20 @@ CASES: list[tuple[str, list[str]]] = [
     # Letters and digits run together. Left whole these match nothing and have
     # no pronunciation to splice from either, so they could only ever go
     # missing -- which is what "i30" did.
+    # A possessive or a contraction is one word. The ingest stores words with
+    # the punctuation stripped, so the corpus holds "rosens" and "dont", and a
+    # token has to be joined the same way to find them. Splitting them left a
+    # bare "s" that was looked up as a word and said out loud.
+    ("rosen's",       ["rosens"]),
+    ("dad's",         ["dads"]),
+    ("dads'",         ["dads"]),
+    ("don't",         ["dont"]),
+    ("they're",       ["theyre"]),
+    ("i've",          ["ive"]),
+    # Not a suffix: the half after the apostrophe is a word of its own, and
+    # joining would invent one nobody says.
+    ("y'know",        ["y", "know"]),
+
     ("i30",           ["i", "thirty"]),
     ("v8",            ["v", "eight"]),
     ("mk2",           ["mark", "two"]),
