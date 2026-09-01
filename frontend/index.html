@@ -73,8 +73,38 @@
        lines with the label orphaned from its number. */
     #stats-bar .stat { color: #4a4a4a; white-space: nowrap; }
     #corpus-wrap,
-    #units-wrap { margin-left: 0.8rem; }
-    #units-wrap input { width: 3.4rem; }
+    /* Dressed like the select beside it. A bare number input arrives wearing
+       the operating system's clothes -- a white box with black text, which on
+       this page reads as a hole punched in it -- and its label wrapped onto
+       its own line because the label was not a flex row. */
+    #units-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      white-space: nowrap;
+    }
+    #units-input {
+      font: inherit;
+      font-size: 0.75rem;
+      color: var(--yellow);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.3rem 0.4rem;
+      width: 3.2rem;
+      text-align: center;
+    }
+    #units-input:hover { border-color: #3d3d3d; }
+    #units-input:focus { outline: none; border-color: var(--yellow); }
+    /* The spinner is another piece of system furniture, and the field is
+       three characters wide. */
+    #units-input::-webkit-inner-spin-button,
+    #units-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+    #units-input { -moz-appearance: textfield; }
+
+    /* The row wraps on a narrow window; without this the two controls sit on
+       different baselines when it does. */
+    #splice-wrap { flex-wrap: wrap; row-gap: 0.4rem; }
 
     #splice-wrap {
       display: flex;
