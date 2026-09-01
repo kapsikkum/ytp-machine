@@ -1009,22 +1009,46 @@ def subtitle_font() -> str | None:
     return None
 
 
-def _drawtext(text: str, font: str) -> str:
+# The frame is 480 wide and a caption wants a margin, so this is the room a
+# word has. DejaVu Sans Bold averages a bit over half its point size per
+# character, which is close enough to decide when to shrink.
+_CAP_WIDTH = 440
+_CAP_SIZE = 26
+_CAP_MIN = 12
+
+
+def _cap_size(text: str) -> int:
+    """Point size for *text*, shrunk if it would run off the frame."""
+    if not text:
+        return _CAP_SIZE
+    fits = int(_CAP_WIDTH / (0.58 * len(text)))
+    return max(_CAP_MIN, min(_CAP_SIZE, fits))
+
+
+def _drawtext(text: str, font: str, window: tuple[float, float] | None = None) -> str:
     """A drawtext filter for one word, styled to be read over anything.
 
     White on a black outline rather than a box: a box on a 480x270 frame
     covers a third of the picture, and the picture is the joke.
 
+    *window* limits it to part of the clip, which is what makes a run read
+    word by word instead of as a wall of text.
+
     expansion=none because the corpus can contain a literal % or {} and
     drawtext would otherwise try to expand it -- a word should be drawn, not
     evaluated.
     """
+    size = _cap_size(text)
     for ch in ("\\", "'", ":"):
         text = text.replace(ch, "\\" + ch)
     font = font.replace("\\", "/").replace(":", "\\:")
-    return (f"drawtext=fontfile='{font}':text='{text}':expansion=none"
-            ":fontcolor=white:fontsize=26:borderw=3:bordercolor=black"
-            ":x=(w-tw)/2:y=h-th-12")
+    f = (f"drawtext=fontfile='{font}':text='{text}':expansion=none"
+         f":fontcolor=white:fontsize={size}:borderw=3:bordercolor=black"
+         ":x=(w-tw)/2:y=h-th-12")
+    if window:
+        # Quoted: the value has commas in it, and the chain is comma-joined.
+        f += f":enable='between(t,{window[0]:.3f},{window[1]:.3f})'"
+    return f
 
 
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
@@ -1184,11 +1208,13 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
 
     # ── Inputs  (precompute durations so we can use them in filter_complex) ──
     clip_durations: list[float] = []
+    clip_starts: list[float] = []      # where in the source each extract began
     for idx, seg in enumerate(segments):
         # The final word of the output gets a more generous tail so its
         # release (e.g. a word-final "s") isn't clipped.
         pad_end = _PAD_END_LAST if (final_tail and idx == len(segments) - 1) else _PAD_END
         start, tail_end = extract_window(seg, pad_end)
+        clip_starts.append(start)
 
         duration = tail_end - start
         clip_durations.append(duration)
@@ -1235,8 +1261,27 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # clip, so a segment already *is* its word for exactly its duration.
         # A caption is one more filter on a clip that is being encoded anyway,
         # rather than a second pass over the finished video.
-        if subtitles and seg.get("subtitle") and font:
-            vfilters.append(_drawtext(seg["subtitle"], font))
+        if subtitles and font:
+            timed = seg.get("subtitle_words")
+            if timed:
+                # A run is one clip covering several words, and the corpus
+                # knows where each of them falls inside it -- so each word
+                # appears as it is said rather than the whole phrase sitting
+                # there at once, which on a 480-wide frame ran off both edges.
+                #
+                # Times are relative to where this extract began, not to the
+                # source, and the first and last are stretched to the ends of
+                # the clip so the caption does not blink off during the
+                # padding either side.
+                base = clip_starts[i]
+                for k, (w, a, b) in enumerate(timed):
+                    lo = 0.0 if k == 0 else max(0.0, a - base)
+                    hi = dur if k == len(timed) - 1 else max(lo, b - base)
+                    if rev:                       # played backwards, so read backwards
+                        lo, hi = max(0.0, dur - hi), max(0.0, dur - lo)
+                    vfilters.append(_drawtext(w, font, (lo, hi)))
+            elif seg.get("subtitle"):
+                vfilters.append(_drawtext(seg["subtitle"], font))
         vfilters.append("setpts=PTS-STARTPTS")
         parts.append(f"[{i}:v]" + ",".join(vfilters) + f"[v{i}]")
 
@@ -1395,9 +1440,14 @@ def generate_video(text: str, progress=None,
                     break
             if cap >= 2:
                 merged = _merged_run_clip(src, s, s + cap - 1)
-                # One clip covering several words, so the caption is the
-                # phrase -- it is on screen for exactly as long as the run.
-                merged["subtitle"] = " ".join(words[i:i + cap])
+                # One clip, several words, and each word's own span inside it
+                # -- so the caption can follow the speech instead of dumping
+                # the whole phrase on screen at once.
+                _rseq = _ordered_by_source[src]        # type: ignore[index]
+                merged["subtitle_words"] = [
+                    [words[i + k], _rseq[s + k]["start_time"], _rseq[s + k]["end_time"]]
+                    for k in range(cap)
+                ]
                 segments.append(merged)
                 found.extend(words[i:i + cap])
                 runs.append(merged["word"])
