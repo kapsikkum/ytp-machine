@@ -510,7 +510,9 @@ def splice_word(word: str, mode: str = "strict"):
 
     plan = None
     if phones:
-        segs = ph.find_phoneme_splice(word, cbw, g._penalty_for(word), mode)
+        from app.database import max_units
+        segs = ph.find_phoneme_splice(word, cbw, g._penalty_for(word), mode,
+                                      max_units())
         if segs:
             plan = [dict(s.get("unit") or {},
                          start_time=round(s["start_time"], 3),

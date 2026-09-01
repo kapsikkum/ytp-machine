@@ -6,7 +6,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import jobs
-from app.database import (SPLICE_MODES, active, get_db, init_db, list_corpora,
+from app.database import (max_units as _max_units_setting,
+                          SPLICE_MODES, active, get_db, init_db, list_corpora,
                           set_active, set_setting, splice_mode)
 from app.generate import generate_video
 
@@ -24,6 +25,10 @@ class GenerateRequest(BaseModel):
 
 class SpliceModeRequest(BaseModel):
     mode: str
+
+
+class MaxUnitsRequest(BaseModel):
+    units: int
 
 
 class CorpusRequest(BaseModel):
@@ -179,6 +184,7 @@ def _corpus_totals() -> dict:
             "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
             "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
             "splice_mode": splice_mode(),
+            "max_units": _max_units_setting(),
         }
 
 
@@ -225,6 +231,37 @@ def put_splice_mode(req: SpliceModeRequest):
     # Only the plan changes, not the clips, so the cache stays valid.
     log.info("SPLICE  mode set to %s for %s", mode, active()["slug"])
     return {"mode": mode, "corpus": active()["slug"]}
+
+
+@router.get("/max-units")
+def get_max_units():
+    """How many pieces a spliced word may be built from."""
+    from app.database import (DEFAULT_MAX_UNITS, MAX_MAX_UNITS, MIN_MAX_UNITS,
+                              max_units)
+    return {"units": max_units(), "default": DEFAULT_MAX_UNITS,
+            "min": MIN_MAX_UNITS, "max": MAX_MAX_UNITS}
+
+
+@router.post("/max-units")
+def put_max_units(req: MaxUnitsRequest):
+    """Set it, for the active corpus.
+
+    Raising it lets a small corpus build words it otherwise reports missing --
+    a thirty-word corpus has to take a phoneme at a time -- at the cost of a
+    join per piece, which is where a splice sounds like one. Stored beside the
+    splice mode, in the corpus, so it travels with it.
+    """
+    from app.database import MAX_MAX_UNITS, MIN_MAX_UNITS
+    if not MIN_MAX_UNITS <= req.units <= MAX_MAX_UNITS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"units must be between {MIN_MAX_UNITS} and {MAX_MAX_UNITS}, "
+                   f"got {req.units}")
+    set_setting("max_units", str(req.units))
+    # The plan changes, not the clips, so the clip cache stays valid -- but the
+    # generator caches nothing about splices, so there is nothing else to drop.
+    log.info("SPLICE  max units set to %s for %s", req.units, active()["slug"])
+    return {"units": req.units, "corpus": active()["slug"]}
 
 
 @router.post("/corpus")

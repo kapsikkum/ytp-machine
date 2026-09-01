@@ -897,6 +897,7 @@ def find_phoneme_splice(
     clips_by_word: dict[str, list[dict[str, Any]]],
     penalty: dict[int, int] | None = None,
     mode: str = "strict",
+    max_units: int | None = None,
 ) -> list[dict[str, Any]] | None:
     """
     Cover *target_word*'s phonemes with the fewest source units and return a list
@@ -972,7 +973,8 @@ def find_phoneme_splice(
     if recipe and [p for grp, _pref in recipe for p in grp] == target_phones:
         chosen = _chosen_from_recipe(recipe, index, penalty)
         if chosen is not None:
-            return _realise(chosen, target_phones, index, clips_by_word, penalty)
+            return _realise(chosen, target_phones, index, clips_by_word, penalty,
+                            max_units)
 
     INF = float("inf")
     dp: list[float]           = [INF] * (n + 1)
@@ -1086,7 +1088,7 @@ def find_phoneme_splice(
     chosen.reverse()
     if not chosen:
         return None
-    segs = _realise(chosen, target_phones, index, clips_by_word, penalty)
+    segs = _realise(chosen, target_phones, index, clips_by_word, penalty, max_units)
     if segs and approximate:
         # Marked so the caller can say this one was approximated rather than
         # let it pass as a clean splice.
@@ -1297,11 +1299,12 @@ def _realise(
     index,
     clips_by_word: dict[str, list[dict[str, Any]]],
     penalty: dict[int, int] | None = None,
+    max_units: int | None = None,
 ) -> list[dict[str, Any]] | None:
     """Build playable segment dicts from a `chosen` unit list
     (tstart, matched, word, clip, pos, total) — shared by the DP and recipe
     paths."""
-    if len(chosen) > _MAX_UNITS:
+    if len(chosen) > (_MAX_UNITS if max_units is None else max_units):
         return None
 
     from app.forced_align import cut_end_after_phonemes, cut_start_before_phonemes
@@ -1628,8 +1631,11 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
     # and clip #15875, and quietly being handed the Z out of "includes"
     # instead makes the editor look like it ignored you. Without the index it
     # falls back to the chosen word whole, which the preview reports.
+    # No cap: this is a grouping somebody chose piece by piece in the editor,
+    # and refusing to build it because it has nine pieces would be answering a
+    # question they did not ask.
     return _unpin(_realise(chosen, phones, defaultdict(list),
-                           {**clips_by_word, **pools}, penalty))
+                           {**clips_by_word, **pools}, penalty, len(chosen)))
 
 
 # ── Saved recipes ─────────────────────────────────────────────────────────────
@@ -1725,7 +1731,7 @@ def realise_piece(phones: list[str], source: str,
         return None
     clip = pool[0] if clip_id else (_best_clip(pool, src, penalty) or pool[0])
     return _realise([(0, len(grp), src, clip, pos, len(cph))],
-                    grp, defaultdict(list), {src: pool}, penalty)
+                    grp, defaultdict(list), {src: pool}, penalty, 1)
 
 
 def realise_word(word: str, clips_by_word: dict[str, list[dict]],

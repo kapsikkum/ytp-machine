@@ -73,6 +73,9 @@
        lines with the label orphaned from its number. */
     #stats-bar .stat { color: #4a4a4a; white-space: nowrap; }
     #corpus-wrap,
+    #units-wrap { margin-left: 0.8rem; }
+    #units-wrap input { width: 3.4rem; }
+
     #splice-wrap {
       display: flex;
       align-items: center;
@@ -549,6 +552,12 @@
       <option value="loose">loose — near-enough sounds</option>
       <option value="desperate">desperate — say it regardless</option>
     </select>
+    <label id="units-wrap" title="How many pieces a word may be built from
+when the corpus has no recording of it. Every piece is a join, and a join is
+where a splice sounds like one -- but a small corpus has to take a sound at a
+time or say nothing at all.">pieces:
+      <input id="units-input" type="number" min="2" max="24" step="1">
+    </label>
   </div>
   <div id="stats-row">
     <div class="stat">clips in database: <span id="stat-clips">—</span></div>
@@ -666,6 +675,7 @@ as the word is heard.">
   // setting while the server used the new one's.
   const spliceWrap   = document.getElementById('splice-wrap');
   const spliceSelect = document.getElementById('splice-select');
+  const unitsInput   = document.getElementById('units-input');
 
   async function loadSpliceMode() {
     try {
@@ -693,7 +703,41 @@ as the word is heard.">
     }
   });
 
+  // How many pieces a spliced word may be built from. Beside the effort
+  // setting because it is the same question asked twice: how far to go for a
+  // word the corpus cannot say. Thirty clips of Morshu cannot spare eight.
+  async function loadMaxUnits() {
+    try {
+      const r = await fetch('/api/max-units');
+      if (!r.ok) return;
+      const d = await r.json();
+      unitsInput.min = d.min;
+      unitsInput.max = d.max;
+      unitsInput.value = d.units;
+      unitsInput.title = `${d.min}-${d.max}, normally ${d.default}`;
+    } catch { /* ignore */ }
+  }
+
+  unitsInput.addEventListener('change', async () => {
+    const units = parseInt(unitsInput.value, 10);
+    if (!Number.isFinite(units)) return loadMaxUnits();
+    unitsInput.disabled = true;
+    try {
+      const r = await fetch('/api/max-units', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ units }),
+      });
+      if (!r.ok) throw new Error('could not set it');
+    } catch {
+      await loadMaxUnits();         // put it back where it really is
+    } finally {
+      unitsInput.disabled = false;
+    }
+  });
+
   loadSpliceMode();
+  loadMaxUnits();
 
   corpusSelect.addEventListener('change', async () => {
     const slug = corpusSelect.value;

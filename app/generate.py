@@ -1378,8 +1378,11 @@ def generate_video(text: str, progress=None,
     segments: list[dict] = []
 
     from app.phonemes import find_phoneme_splice
-    from app.database import splice_mode
+    from app.database import max_units, splice_mode
     mode = splice_mode()
+    # Read once, not per word: it is the corpus's answer to how badly it wants
+    # to say something it has no recording of.
+    units_cap = max_units()
     i = 0
     n = len(words)
     while i < n:
@@ -1489,7 +1492,8 @@ def generate_video(text: str, progress=None,
                 log.info("  FOUND    %-14s  %.3f->%.3f  (%s)",
                          word, clip["start_time"], clip["end_time"], fname)
             else:
-                segs = find_phoneme_splice(word, cbw, _penalty_for(word), mode)
+                segs = find_phoneme_splice(word, cbw, _penalty_for(word), mode,
+                                           units_cap)
                 if segs:
                     spliced.append(word)
                     clip_ids = sorted({int(s["id"]) for s in segs if s.get("id") is not None})

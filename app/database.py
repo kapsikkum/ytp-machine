@@ -329,3 +329,29 @@ def splice_mode() -> str:
     """The active corpus's splice mode, validated."""
     mode = (get_setting("splice_mode") or DEFAULT_SPLICE_MODE).lower()
     return mode if mode in SPLICE_MODES else DEFAULT_SPLICE_MODE
+
+
+# How many pieces a spliced word may be built from.
+#
+# Every piece is a join, and a join is where a splice sounds like a splice, so
+# a small corpus and a large one want different answers. Eight is plenty when
+# there are thousands of words to cut from -- most words come out in three or
+# four. A corpus of thirty words has to take a phoneme at a time or say
+# nothing at all: "displacement" is ten sounds, and capping it at eight
+# reports the word missing rather than building it badly, which for Morshu is
+# the wrong trade.
+#
+# Per corpus, and in the settings table, so it travels in the bundle with the
+# corpus it belongs to.
+DEFAULT_MAX_UNITS = 8
+MIN_MAX_UNITS = 2
+MAX_MAX_UNITS = 24
+
+
+def max_units() -> int:
+    """The active corpus's splice-piece limit, validated."""
+    try:
+        n = int(get_setting("max_units") or DEFAULT_MAX_UNITS)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_UNITS
+    return max(MIN_MAX_UNITS, min(MAX_MAX_UNITS, n))
