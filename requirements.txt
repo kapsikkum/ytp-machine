@@ -7,6 +7,16 @@ openai-whisper>=20231117
 stable-ts>=2.17.0
 sqlalchemy>=2.0.0
 python-multipart>=0.0.9
+# The phoneme aligner, which measures where each sound in a clip falls so a
+# sub-word splice cuts on a boundary rather than on a guess from the spelling.
+# torch is already here by way of whisper; these are what read the model.
+#
+# The server needs them so the corpus editor can align a video in place. Until
+# it had them, adding a word by hand meant packing the corpus, carrying it to
+# a machine with the model and carrying it back.
+transformers>=4.40.0
+huggingface_hub>=0.23.0
+
 # Corpus bundles. `corpus.py pack` writes .tar.zst by default, and the
 # container installs any bundle dropped in packs/ on start -- without this it
 # could produce an archive format it could not read back, which is exactly
