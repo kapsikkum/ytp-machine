@@ -919,6 +919,10 @@ _CMD_BUDGET = 24000
 # of a sentence a question of how many batches rather than whether it works.
 _MAX_INPUTS_PER_CALL = 20
 
+# The output frame rate. Every clip's picture is resampled to it, which
+# quantises the picture's length -- see the audio trim in _encode_chunk.
+_FPS = 25
+
 
 def _trim(stderr: str, limit: int = 2000) -> str:
     """Keep the beginning and the end of ffmpeg's complaint.
@@ -1248,7 +1252,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # rather than being flipped to the front.
         rev = bool(seg.get("reverse"))
 
-        vfilters = ["scale=480:270:force_original_aspect_ratio=disable", "fps=25", "setsar=1"]
+        vfilters = [f"scale=480:270:force_original_aspect_ratio=disable",
+                    f"fps={_FPS}", "setsar=1"]
         if rev:
             vfilters.append("reverse")
         if pause > 0:
@@ -1297,6 +1302,22 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             afilters.append(f"afade=t=out:st={fo_start:.4f}:d={fo:.4f}")
         if pause > 0:
             afilters.append(f"apad=pad_dur={pause:.4f}")
+        # The audio is made exactly as long as the video, which is not the
+        # same as being as long as the source span.
+        #
+        # fps=25 quantises each clip's picture to whole frames while its sound
+        # keeps its real length, so every segment ends with the two a few
+        # milliseconds apart. concat joins the video streams and the audio
+        # streams separately, so those differences add up: measured over a
+        # 71-segment sentence the offset wandered to 84ms -- two frames, and
+        # audible -- while ending at -44ms, which is why the ends of a long
+        # video look fine and the middle does not.
+        #
+        # apad then atrim pins the sound to the picture's own length, so the
+        # walk cannot start.
+        quantised = round(dur * _FPS) / _FPS
+        afilters.append("apad")
+        afilters.append(f"atrim=end={quantised:.4f}")
         afilters.append("asetpts=PTS-STARTPTS")
         parts.append(f"[{i}:a]" + ",".join(afilters) + f"[a{i}]")
 
@@ -1320,6 +1341,17 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         "-c:a", "aac",
         "-ar", "44100",
         "-ac", "2",
+        # Both streams end together.
+        #
+        # AAC encodes in frames of 1024 samples -- 23ms at 44.1kHz -- so the
+        # encoded audio finishes a frame or two short of the video however
+        # exactly the filters lined them up. On its own that is inaudible. It
+        # stops being inaudible when a long sentence is encoded in chunks and
+        # the chunks are joined with a stream copy, because each chunk's
+        # shortfall is added to the last: measured over 90 words in four
+        # chunks, the sound ended up 240ms behind the picture, drifting
+        # further the longer the video ran.
+        "-shortest",
         "-movflags", "+faststart",
         out_path,
     ]
