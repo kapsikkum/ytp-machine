@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import threading
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -182,10 +183,129 @@ def source_clips(source_id: int):
             flags.append("downvoted")
         # Only worth saying in a corpus that has been aligned at all --
         # otherwise it is true of every clip and says nothing.
-        if corpus_aligned and not c.get("aligned"):
-            flags.append("not aligned")
+        if corpus_aligned and not c.get("aligned") and c["kind"] == "word":
+            # Which of the two it is decides what to do about it: run the
+            # alignment, or teach the corpus how the word is said.
+            from app.phonemes import word_to_phonemes
+            flags.append("not aligned" if word_to_phonemes(c["word"])
+                         else "no pronunciation")
         c["flags"] = flags
     return {"source": dict(src), "clips": rows}
+
+
+# One alignment run at a time, and what it is doing, so the editor can show
+# progress rather than a button that goes quiet for a minute.
+#
+# A dict rather than a job queue: there is one of these, it is per source, and
+# app/jobs.py exists for generation, which has to survive a queue of requests
+# from a browser. This does not.
+_align_state: dict[str, Any] = {"running": False, "source_id": None,
+                                "done": 0, "total": 0, "result": None,
+                                "error": None}
+_align_lock = threading.Lock()
+
+
+def _align_ready() -> tuple[bool, str]:
+    """Can this process align, and if not, why not?
+
+    The server cannot: the model needs about 1.8GB resident and the container
+    is capped at 3.2GB with the app already holding 1.3GB of it. Measured
+    rather than assumed, and the same regardless of clip length -- torch keeps
+    its allocator arena, so a 300ms clip costs what a 1.5s one does.
+    """
+    try:
+        from app import phone_align
+    except Exception as exc:
+        return False, f"the aligner is not installed here ({exc})"
+    if not phone_align.available():
+        return False, ("this machine has no aligner -- it needs torch, "
+                       "torchaudio and transformers. Align on the machine "
+                       "that builds corpora and put the bundle back.")
+    return True, ""
+
+
+@router.get("/source/{source_id}/align")
+def align_status(source_id: int):
+    """What alignment would do here, and what it is doing now.
+
+    Two different reasons a clip has no phoneme times, and they want
+    different things done about them:
+
+      - nobody has run the alignment over it yet. The button fixes that.
+      - the dictionary has no pronunciation for the word, so there is no
+        sequence to place and never will be until somebody supplies one.
+        Michael Rosen says "scheddle", "nibblin" and "dyou", and CMU has
+        heard of none of them.
+
+    Counting the second kind as work to be done gives a button that says
+    "align 24 clips", changes nothing when pressed, and still says 24.
+    """
+    init_db()
+    from app.phonemes import word_to_phonemes
+    ready, why = _align_ready()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT word, count(*) AS n FROM word_clips WHERE source_id=? "
+            "AND (phones IS NULL OR phones = '') GROUP BY word", (source_id,))
+        pending = 0
+        unknown: list[str] = []
+        unknown_clips = 0
+        for r in rows:
+            if word_to_phonemes(r["word"]):
+                pending += r["n"]
+            else:
+                unknown_clips += r["n"]
+                unknown.append(r["word"])
+    st = dict(_align_state)
+    return {"available": ready, "reason": why, "pending": pending,
+            "no_pronunciation": unknown_clips,
+            "unknown_words": sorted(unknown)[:20],
+            "running": st["running"] and st["source_id"] == source_id,
+            "done": st["done"], "total": st["total"],
+            "result": st["result"], "error": st["error"]}
+
+
+@router.post("/source/{source_id}/align")
+def align_source(source_id: int, redo: bool = False):
+    """Measure where every phoneme falls, for this source's clips.
+
+    Wanted because a word added by hand has no phoneme times, and until it
+    does its sub-word cuts are inferred from the spelling -- which is what the
+    alignment was built to stop. Adding three words to a video should not mean
+    packing the corpus, moving it to another machine and moving it back.
+    """
+    init_db()
+    ready, why = _align_ready()
+    if not ready:
+        raise HTTPException(status_code=503, detail=why)
+
+    with _align_lock:
+        if _align_state["running"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"already aligning source {_align_state['source_id']}")
+        _align_state.update(running=True, source_id=source_id, done=0,
+                            total=0, result=None, error=None)
+
+    def work() -> None:
+        try:
+            import sys
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "scripts"))
+            from align_phones import align_corpus
+            done, skipped, failed = align_corpus(source_id=source_id, redo=redo)
+            _align_state["result"] = {"aligned": done, "no_pronunciation": skipped,
+                                      "failed": failed}
+            log.info("ALIGN   source %s: %d aligned, %d without a pronunciation, "
+                     "%d failed", source_id, done, skipped, failed)
+        except Exception as exc:                       # noqa: BLE001
+            _align_state["error"] = str(exc)
+            log.exception("alignment of source %s failed", source_id)
+        finally:
+            _align_state["running"] = False
+
+    threading.Thread(target=work, daemon=True, name="align-source").start()
+    return {"started": True, "source_id": source_id}
 
 
 @router.get("/source/{source_id}/video")

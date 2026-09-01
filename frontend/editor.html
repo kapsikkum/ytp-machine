@@ -71,6 +71,13 @@
   .w.sel  { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 700; }
   .w.flag { border-color: #6a4a00; color: #ffbe4d; }
   .w.down { border-color: #6e1f1f; color: #ff9a9a; }
+  /* A clip nobody has measured the sounds of: its sub-word cuts are inferred
+     from the spelling until somebody presses the button. */
+  .w.unaligned { border-style: dashed; border-color: #4a4a4a; }
+  /* Not the same fault: this one needs a pronunciation, not a button. */
+  .w.nopron { border-style: dashed; border-color: #6a4a00; color: #ffbe4d; }
+  #align { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
+  #align.busy { color: var(--green); border-color: #0a5a30; }
   #ratings .r { display: flex; gap: 0.4rem; align-items: center;
     margin-bottom: 0.3rem; font-size: 0.75rem; }
   #ratings .r b { flex: 1; font-weight: 500; }
@@ -99,6 +106,7 @@
 selection: the generator will serve this corpus too."></select>
   <select id="source"></select>
   <span class="muted" id="counts"></span>
+  <button id="align" style="display:none"></button>
   <a href="/splice.html" style="margin-left:auto">splice editor →</a>
   <a href="/">← generator</a>
 </header>
@@ -322,6 +330,9 @@ async function selectSource(id, focusClip) {
   // fixing a word and hunting for it.
   // Matched on kind as well: word and noise ids are separate sequences, so
   // clip 7 exists twice and only one of them is the one you clicked.
+  refreshAlign();
+  // Matched on kind as well: word and noise ids are separate sequences, so
+  // clip 7 exists twice and only one of them is the one you clicked.
   const want = focusClip && clips.find(c => c.id === focusClip.id
                                          && c.kind === focusClip.kind);
   if (want) {
@@ -335,6 +346,81 @@ async function selectSource(id, focusClip) {
   // word is clicked, which reads as broken rather than as idle.
   loadEnvelope();
 }
+
+// ── measuring where the phonemes are ───────────────────────────────────────
+// A word added by hand has no phoneme times, so its sub-word cuts fall back
+// to being inferred from the spelling -- which is the thing the alignment was
+// built to stop. Adding three words to a video should not mean packing the
+// corpus, carrying it to another machine and carrying it back.
+//
+// The model is far too big for the server, so this only works where it is
+// installed. Where it is not, the button says so rather than disappearing:
+// knowing the clips are unaligned is worth something on its own.
+let alignTimer = null;
+
+async function refreshAlign() {
+  const btn = $('align');
+  if (!sourceId) { btn.style.display = 'none'; return; }
+  let st;
+  try { st = await api(`/source/${sourceId}/align`); }
+  catch { btn.style.display = 'none'; return; }
+
+  btn.style.display = '';
+  btn.classList.toggle('busy', !!st.running);
+
+  if (st.running) {
+    btn.textContent = 'measuring phonemes…';
+    btn.disabled = true;
+    clearTimeout(alignTimer);
+    alignTimer = setTimeout(refreshAlign, 1500);
+    return;
+  }
+
+  if (st.result) {                       // just finished: show it, then reload
+    const r = st.result;
+    say(`aligned ${r.aligned}`
+      + (r.no_pronunciation ? `, ${r.no_pronunciation} with no pronunciation` : '')
+      + (r.failed ? `, ${r.failed} could not be measured` : ''), 'ok');
+  }
+  if (st.error) say(`alignment failed: ${st.error}`, 'err');
+
+  // A clip with no times is either waiting for this button or waiting for a
+  // pronunciation, and only the first is work this can do. Counting the
+  // second would give a button that says "align 24 clips", changes nothing,
+  // and still says 24.
+  const stuck = st.no_pronunciation;
+  btn.disabled = !st.available || !st.pending;
+  if (!st.available) {
+    btn.textContent = 'cannot align here';
+    btn.title = st.reason;
+  } else if (st.pending) {
+    btn.textContent = `align ${st.pending} clip${st.pending === 1 ? '' : 's'}`;
+    btn.title = 'Measure where each phoneme falls, for every clip of this '
+              + 'video that has no times yet.';
+  } else if (stuck) {
+    btn.textContent = `${stuck} clip${stuck === 1 ? '' : 's'} need a pronunciation`;
+    btn.title = 'The dictionary has never heard of '
+              + st.unknown_words.join(', ')
+              + '. Add them to the corpus pronunciation list and this can '
+              + 'place their sounds.';
+  } else {
+    btn.textContent = 'all clips aligned';
+    btn.title = 'Every clip of this video has measured phoneme times.';
+  }
+}
+
+$('align').onclick = async () => {
+  if (!sourceId) return;
+  $('align').disabled = true;
+  try {
+    await api(`/source/${sourceId}/align`, { method: 'POST' });
+    say('measuring phonemes…');
+    refreshAlign();
+  } catch (e) {
+    say(String(e.message), 'err');
+    refreshAlign();
+  }
+};
 
 // ── transcript ─────────────────────────────────────────────────────────────
 // A clip's ratings, and a way out of them. Shown as they are stored -- one
@@ -394,6 +480,8 @@ function renderWords() {
   for (const c of clips) {
     const b = document.createElement('span');
     b.className = 'w' + (c.kind === 'noise' ? ' noise' : '')
+                + (c.flags.includes('not aligned') ? ' unaligned' : '')
+                + (c.flags.includes('no pronunciation') ? ' nopron' : '')
                 + (c.flags.includes('downvoted') ? ' down' : '')
                 + (c.flags.length ? ' flag' : '')
                 + (sel && sel.id === c.id && sel.kind === c.kind ? ' sel' : '');
