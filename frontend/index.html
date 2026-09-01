@@ -407,6 +407,14 @@
 
     /* Underlined only on hover: every word carrying a link would read as a
        page of links rather than a sentence. */
+    #subs-toggle {
+      display: flex; align-items: center; gap: 0.35rem;
+      color: #777; font-size: 0.8rem; cursor: pointer; user-select: none;
+      margin-right: 0.6rem;
+    }
+    #subs-toggle:hover { color: #aaa; }
+    #subs-toggle input { accent-color: var(--yellow); cursor: pointer; }
+
     .word-tag .open { color: inherit; text-decoration: none; cursor: pointer; }
     .word-tag .open:hover { text-decoration: underline; }
     .word-tag .plan { opacity: 0.55; margin-left: 0.15rem; }
@@ -565,6 +573,11 @@
     <div id="word-check"></div>
     <div id="form-footer">
       <div id="input-meter"></div>
+      <label id="subs-toggle" title="Burn the words onto the picture as it
+plays. Each clip is one word, so the caption is on screen for exactly as long
+as the word is heard.">
+        <input type="checkbox" id="subtitles"> subtitles
+      </label>
       <button type="submit" id="submit-btn">GENERATE</button>
     </div>
   </form>
@@ -603,6 +616,7 @@
   const textInput  = document.getElementById('text-input');
   const submitBtn  = document.getElementById('submit-btn');
   const statusEl   = document.getElementById('status');
+  const subsEl     = document.getElementById('subtitles');
   const wordRes    = document.getElementById('word-results');
   const legendEl   = document.getElementById('legend');
   const videoBox   = document.getElementById('video-container');
@@ -845,7 +859,7 @@
       const res = await fetchJson('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, subtitles: subsEl.checked }),
       });
       if (res.error) { setStatus(`Error: ${res.error}`, true); return; }
       if (!res.ok) {

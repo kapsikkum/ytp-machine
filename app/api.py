@@ -16,6 +16,10 @@ log = logging.getLogger(__name__)
 
 class GenerateRequest(BaseModel):
     text: str
+    # Burned into the picture rather than written to a sidecar file: the
+    # output of this thing is shared as a video, and a .vtt nobody carries
+    # with it is a caption nobody sees.
+    subtitles: bool = False
 
 
 class SpliceModeRequest(BaseModel):
@@ -52,7 +56,7 @@ def generate(req: GenerateRequest, wait: bool = False):
         log.info("GENERATE (sync)  %r", text)
         t0 = time.perf_counter()
         try:
-            result = generate_video(text)
+            result = generate_video(text, subtitles=req.subtitles)
         except RuntimeError as exc:
             detail = str(exc)
             crowded = "temporarily unavailable" in detail or "Too many open files" in detail
@@ -79,7 +83,7 @@ def generate(req: GenerateRequest, wait: bool = False):
             })
         return result
 
-    job = jobs.submit(text)
+    job = jobs.submit(text, subtitles=req.subtitles)
     log.info("QUEUE  %s  %r", job.id, text[:80])
     body = job.as_dict()
     body["position"] = jobs.position(job.id)

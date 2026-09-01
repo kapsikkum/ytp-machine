@@ -989,7 +989,46 @@ def _ends_in_sonorant(seg: dict[str, Any]) -> bool:
     return bool(phones) and phones[-1] in _FINAL_SONORANTS
 
 
-def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -> None:
+# Where to find a bold font, in order of preference. The container has
+# DejaVu; a Windows workstation building or testing locally has Arial.
+_SUB_FONTS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+)
+
+
+@lru_cache(maxsize=1)
+def subtitle_font() -> str | None:
+    """A font ffmpeg can draw with, or None if the box has none."""
+    for p in _SUB_FONTS:
+        if os.path.exists(p):
+            return p
+    log.warning("no font found for subtitles; captions will be skipped")
+    return None
+
+
+def _drawtext(text: str, font: str) -> str:
+    """A drawtext filter for one word, styled to be read over anything.
+
+    White on a black outline rather than a box: a box on a 480x270 frame
+    covers a third of the picture, and the picture is the joke.
+
+    expansion=none because the corpus can contain a literal % or {} and
+    drawtext would otherwise try to expand it -- a word should be drawn, not
+    evaluated.
+    """
+    for ch in ("\\", "'", ":"):
+        text = text.replace(ch, "\\" + ch)
+    font = font.replace("\\", "/").replace(":", "\\:")
+    return (f"drawtext=fontfile='{font}':text='{text}':expansion=none"
+            ":fontcolor=white:fontsize=26:borderw=3:bordercolor=black"
+            ":x=(w-tw)/2:y=h-th-12")
+
+
+def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
+                 subtitles: bool = False) -> None:
     """Encode *segments* to *out_path* in batches, then join them.
 
     Split on two limits: the command-line length, and the number of inputs one
@@ -1018,7 +1057,7 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -
 
     if len(chunks) == 1:
         _say("encoding", 0, 1)
-        _encode_chunk(segments, out_path, final_tail=True)
+        _encode_chunk(segments, out_path, final_tail=True, subtitles=subtitles)
         _say("encoding", 1, 1)
         return
 
@@ -1028,7 +1067,8 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None) -
         for ci, chunk in enumerate(chunks):
             _say("encoding", ci, len(chunks))
             part = f"{out_path}.part{ci}.mp4"
-            _encode_chunk(chunk, part, final_tail=(ci == len(chunks) - 1))
+            _encode_chunk(chunk, part, final_tail=(ci == len(chunks) - 1),
+                          subtitles=subtitles)
             part_paths.append(part)
         _say("joining", len(chunks), len(chunks))
 
@@ -1122,7 +1162,7 @@ def extract_window(seg: dict[str, Any], pad_end: float = _PAD_END) -> tuple[floa
 
 
 def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
-                  final_tail: bool) -> None:
+                  final_tail: bool, subtitles: bool = False) -> None:
     """
     One FFmpeg call for one chunk of segments.
 
@@ -1164,6 +1204,7 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     # Sub-word phoneme units of the same word carry fade_in/fade_out = 0 at their
     # internal joins so the word plays as one continuous unit, not a stutter of
     # blips; only the outer edges of each word fade.
+    font = subtitle_font() if subtitles else None
     parts: list[str] = []
     for i, seg in enumerate(segments):
         dur = clip_durations[i]
@@ -1186,6 +1227,16 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             vfilters.append("reverse")
         if pause > 0:
             vfilters.append(f"tpad=stop_mode=clone:stop_duration={pause:.4f}")
+        # After the pause padding, so a held frame keeps the word on screen,
+        # and after any reversal -- the text is the same on every frame, so it
+        # reads forwards either way.
+        #
+        # No timeline arithmetic anywhere: the video is built one word per
+        # clip, so a segment already *is* its word for exactly its duration.
+        # A caption is one more filter on a clip that is being encoded anyway,
+        # rather than a second pass over the finished video.
+        if subtitles and seg.get("subtitle") and font:
+            vfilters.append(_drawtext(seg["subtitle"], font))
         vfilters.append("setpts=PTS-STARTPTS")
         parts.append(f"[{i}:v]" + ",".join(vfilters) + f"[v{i}]")
 
@@ -1246,7 +1297,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
 
 # ── Main generation ───────────────────────────────────────────────────────────
 
-def generate_video(text: str, progress=None) -> dict[str, Any]:
+def generate_video(text: str, progress=None,
+                   subtitles: bool = False) -> dict[str, Any]:
     """Turn *text* into a video.
 
     `progress`, if given, is called as progress(stage, done, total) at points
@@ -1303,7 +1355,10 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
             word = words[i]
             found.append(word)
             tokens.append({"word": word, "status": "found"})
-            segments.append(nz)
+            # Copied, like every other segment. A noise carries no caption:
+            # a spew is not a word, and writing "*spew*" across the picture
+            # explains a joke that did not need it.
+            segments.append(dict(nz))
             log.info("  NOISE    %-14s  (%s)", word,
                      nz["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1])
             if is_rev[i]:
@@ -1340,6 +1395,9 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                     break
             if cap >= 2:
                 merged = _merged_run_clip(src, s, s + cap - 1)
+                # One clip covering several words, so the caption is the
+                # phrase -- it is on screen for exactly as long as the run.
+                merged["subtitle"] = " ".join(words[i:i + cap])
                 segments.append(merged)
                 found.extend(words[i:i + cap])
                 runs.append(merged["word"])
@@ -1370,6 +1428,12 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                     "word": word, "status": "found",
                     "clips": ([int(clip["id"])] if clip.get("id") is not None else []),
                 })
+                # A copy, because this is the cache's own dict and segments
+                # get written to -- `reverse` for a ~word~, and the caption
+                # below. Appending it directly meant reversing a word once
+                # left that clip reversed for every later generation in the
+                # same process, silently and for as long as the process ran.
+                clip = dict(clip, subtitle=word)
                 segments.append(clip)
                 fname = clip["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
                 log.info("  FOUND    %-14s  %.3f->%.3f  (%s)",
@@ -1386,6 +1450,11 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
                     approx = any(s.get("approx") for s in segs)
                     tokens.append({"word": word, "status": "spliced",
                                    "clips": clip_ids, **({"approx": True} if approx else {})})
+                    # Every unit of a splice carries the word being built, not
+                    # the word it was cut from, so the caption stays put while
+                    # the pieces play rather than flickering through them.
+                    for unit in segs:
+                        unit["subtitle"] = word
                     segments.extend(segs)
                     log.info("  %-8s %-14s  -> %s", "APPROX" if approx else "SPLICE",
                              word, "+".join(s["word"] for s in segs))
@@ -1423,7 +1492,7 @@ def generate_video(text: str, progress=None) -> dict[str, Any]:
     final_path = os.path.join("output", f"{run_id}.mp4")
 
     _say("resolving", n, n)
-    _build_video(segments, final_path, progress=progress)
+    _build_video(segments, final_path, progress=progress, subtitles=subtitles)
 
     return {
         "found":     found,

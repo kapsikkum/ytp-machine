@@ -44,6 +44,7 @@ _TTL_SECONDS = 30 * 60
 class Job:
     id: str
     text: str
+    subtitles: bool = False         # burn the words onto the picture
     status: str = "queued"          # queued | running | done | error
     stage: str = "waiting"          # loading | resolving | encoding | joining
     done: int = 0
@@ -115,7 +116,8 @@ def _run(job: Job) -> None:
     job.status = "running"
     job.started = time.time()
     try:
-        job.result = generate_video(job.text, progress=progress)
+        job.result = generate_video(job.text, progress=progress,
+                                    subtitles=job.subtitles)
         job.status = "done"
         job.stage = "finished"
     except RuntimeError as exc:
@@ -173,9 +175,9 @@ def _ensure_worker() -> None:
         _worker.start()
 
 
-def submit(text: str) -> Job:
+def submit(text: str, subtitles: bool = False) -> Job:
     _ensure_worker()
-    job = Job(id=uuid.uuid4().hex[:12], text=text)
+    job = Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles)
     with _lock:
         _jobs[job.id] = job
         _order.append(job.id)
