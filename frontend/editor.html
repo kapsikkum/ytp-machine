@@ -36,7 +36,7 @@
   button { cursor: pointer; }
   button:hover:not(:disabled) { border-color: #4a4a4a; }
   button:disabled { opacity: 0.4; cursor: default; }
-  button.primary { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
+  button.primary, #pack-export { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
   button.danger  { color: var(--red); border-color: #5a0000; }
 
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1rem; align-items: start; }
@@ -78,6 +78,24 @@
   .w.nopron { border-style: dashed; border-color: #6a4a00; color: #ffbe4d; }
   #align { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
   #align.busy { color: var(--green); border-color: #0a5a30; }
+
+  /* A native <details> rather than JS-toggled div: no state to keep in sync,
+     and Escape/click-outside-to-close come for free. */
+  #pack { position: relative; font-size: 0.7rem; }
+  #pack summary { cursor: pointer; list-style: none; padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border); border-radius: 4px; color: #e8e8e8; }
+  #pack summary::-webkit-details-marker { display: none; }
+  #pack summary:hover { border-color: #4a4a4a; }
+  #pack[open] summary { border-color: var(--yellow); color: var(--yellow); }
+  #pack .body { position: absolute; top: calc(100% + 0.3rem); left: 0;
+    width: 17rem; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.7rem; z-index: 30; }
+  #pack .body .row label { width: auto; }
+  #pack-export { display: block; text-align: center; text-decoration: none;
+    padding: 0.3rem 0.5rem; border-radius: 4px; }
+  #pack-status { min-height: 1.1em; }
+  #pack-status.err { color: var(--red); }
+  #pack-status.ok  { color: var(--green); }
   #ratings .r { display: flex; gap: 0.4rem; align-items: center;
     margin-bottom: 0.3rem; font-size: 0.75rem; }
   #ratings .r b { flex: 1; font-weight: 500; }
@@ -107,6 +125,26 @@ selection: the generator will serve this corpus too."></select>
   <select id="source"></select>
   <span class="muted" id="counts"></span>
   <button id="align" style="display:none"></button>
+  <details id="pack">
+    <summary>corpus pack ▾</summary>
+    <div class="body">
+      <a id="pack-export" href="#" class="primary" download>↓ export current corpus</a>
+      <div class="hint" style="margin:0.4rem 0 0.7rem">
+        A .tar.zst of the database, videos, transcripts and pronunciation
+        list — move it to another machine, or keep it as a backup.
+      </div>
+      <div class="row"><input id="pack-name" placeholder="new corpus name"></div>
+      <div class="row"><input type="file" id="pack-file" accept=".zst,.gz,.tar,.tgz" style="flex:1"></div>
+      <div class="row">
+        <label style="display:flex;gap:0.35rem;align-items:center">
+          <input type="checkbox" id="pack-force" style="flex:none;width:auto">
+          overwrite if it exists
+        </label>
+      </div>
+      <div class="row"><button id="pack-import" class="primary" style="flex:1">↑ import as new corpus</button></div>
+      <div id="pack-status"></div>
+    </div>
+  </details>
   <a href="/splice.html" style="margin-left:auto">splice editor →</a>
   <a href="/">← generator</a>
 </header>
@@ -285,6 +323,7 @@ $('corpus').onchange = async () => {
 async function loadSources() {
   const d = await api('/sources');
   corpusSlug = d.corpus;
+  updatePackExport();
   await loadCorpora(d.corpus);
   $('source').innerHTML = '';
   for (const s of d.sources) {
@@ -419,6 +458,49 @@ $('align').onclick = async () => {
   } catch (e) {
     say(String(e.message), 'err');
     refreshAlign();
+  }
+};
+
+// ── corpus pack ────────────────────────────────────────────────────────────
+// Export downloads whatever corpus is currently active -- a plain navigation
+// rather than a fetch, so the browser's own download handling does the work
+// and a multi-hundred-MB corpus never sits in a JS blob. Import posts to the
+// same install path scripts/corpus.py uses from a terminal, so a bundle made
+// either way works either way back.
+function updatePackExport() {
+  $('pack-export').href = '/api/corpus/export?slug=' + encodeURIComponent(corpusSlug);
+}
+
+function packStatus(msg, kind) {
+  const s = $('pack-status');
+  s.textContent = msg;
+  s.className = kind || '';
+}
+
+$('pack-import').onclick = async () => {
+  const name = $('pack-name').value.trim();
+  const file = $('pack-file').files[0];
+  if (!name) return packStatus('name it first', 'err');
+  if (!file) return packStatus('choose a bundle file first', 'err');
+
+  const fd = new FormData();
+  fd.append('name', name);
+  fd.append('bundle', file);
+  fd.append('force', $('pack-force').checked ? 'true' : 'false');
+
+  $('pack-import').disabled = true;
+  packStatus(`uploading ${(file.size / 1e6).toFixed(0)} MB…`);
+  try {
+    const r = await fetch('/api/corpus/import', { method: 'POST', body: fd });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
+    packStatus(`installed as ${body.slug} — pick it from the corpus list above`, 'ok');
+    $('pack-file').value = '';
+    await loadCorpora(corpusSlug);   // new corpus now appears in the dropdown
+  } catch (e) {
+    packStatus(String(e.message), 'err');
+  } finally {
+    $('pack-import').disabled = false;
   }
 };
 

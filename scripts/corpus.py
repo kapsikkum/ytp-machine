@@ -172,7 +172,17 @@ def _open_read(path: str):
 
         dctx = zstandard.ZstdDecompressor()
         raw = open(path, "rb")
-        return tarfile.open(fileobj=dctx.stream_reader(raw), mode="r|")
+        try:
+            return tarfile.open(fileobj=dctx.stream_reader(raw), mode="r|")
+        except BaseException:
+            # tarfile.open reads the first block before returning, so a
+            # corrupt or truncated frame raises here rather than handing back
+            # an object whose .close() would tidy up -- close it ourselves, or
+            # `raw` stays open. Harmless on Linux; on Windows it holds the file
+            # locked, so a caller's own cleanup (os.remove on a temp upload)
+            # fails right behind it.
+            raw.close()
+            raise
     return tarfile.open(path, "r:*")
 
 
@@ -227,17 +237,25 @@ def _check_paths(db: str) -> None:
               f"           They will not resolve anywhere but this machine.")
 
 
-def cmd_pack(args: argparse.Namespace) -> int:
-    root = _corpus_root(args.corpus)
-    out = args.out or os.path.join(
+def pack_bundle(slug: str | None = None, out: str | None = None) -> str:
+    """Build a bundle for corpus *slug* (default: whichever the app would
+    serve). Returns the path actually written -- which can differ from *out*
+    when zstandard is not installed and it fell back to gzip.
+
+    This is what both the CLI (`corpus.py pack`) and the editor's export
+    button call; kept as one function so a bug fixed for one is fixed for
+    both.
+    """
+    root = _corpus_root(slug)
+    out = out or os.path.join(
         PROJECT_ROOT, f"corpus-{date.today().isoformat()}.tar.zst"
     )
     print(f"packing {root}")
 
     present = [m for m in READABLE_MEMBERS if os.path.exists(os.path.join(root, m))]
     if not present:
-        print(f"nothing to pack: none of {MEMBERS} found under {root}", file=sys.stderr)
-        return 1
+        raise FileNotFoundError(
+            f"nothing to pack: none of {MEMBERS} found under {root}")
     missing = [m for m in MEMBERS if m not in present]
     if missing:
         print(f"  note: not present, skipping: {', '.join(missing)}")
@@ -274,9 +292,17 @@ def cmd_pack(args: argparse.Namespace) -> int:
     finally:
         finish()
 
-    size = os.path.getsize(out)
     print(f"packed {count} files -> {out}")
-    print(f"  size    {_human(size)}")
+    return out
+
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    try:
+        out = pack_bundle(args.corpus, args.out)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"  size    {_human(os.path.getsize(out))}")
     print(f"  sha256  {_sha256(out)}")
     return 0
 
@@ -332,33 +358,32 @@ def cmd_unpack(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    """Put a bundle in as a named corpus, alongside any already installed.
+def install_bundle(bundle: str, name: str, force: bool = False) -> dict:
+    """Extract *bundle* (a local file) as a new corpus called *name*,
+    alongside any already installed. Returns a manifest of what was written.
 
     This is what makes a second voice possible: each corpus is a directory of
     its own holding one database and the videos it indexes, so two of them
     never argue over a downloads/ filename.
+
+    Raises FileExistsError if the target already holds something and *force*
+    is not set, so a caller (CLI or API) can turn that into its own kind of
+    "already there" answer instead of this deciding what that looks like.
     """
     import sys as _sys
     _sys.path.insert(0, PROJECT_ROOT)
     from app.database import install_dir  # noqa: E402
 
-    target = install_dir(args.name)
-    if os.path.exists(target) and os.listdir(target) and not args.force:
-        print(f"{target} already exists and is not empty (pass --force)", file=sys.stderr)
-        return 1
-
-    src = args.bundle
-    tmp = None
-    if src.startswith(("http://", "https://")):
-        tmp = src = _fetch(src)
+    target = install_dir(name)
+    if os.path.exists(target) and os.listdir(target) and not force:
+        raise FileExistsError(target)
 
     # Whether this call is the one that created the directory, so that a
     # failure can undo exactly what it did and no more.
     created = not os.path.isdir(target)
     os.makedirs(target, exist_ok=True)
     try:
-        tar = _open_read(src)
+        tar = _open_read(bundle)
         try:
             if hasattr(tarfile, "data_filter"):
                 tar.extractall(target, filter="data")
@@ -375,17 +400,44 @@ def cmd_install(args: argparse.Namespace) -> int:
         if created:
             shutil.rmtree(target, ignore_errors=True)
         raise
+
+    manifest: dict = {"target": target, "slug": os.path.basename(target), "members": {}}
+    for m in MEMBERS:
+        pth = os.path.join(target, m)
+        if os.path.isdir(pth):
+            manifest["members"][m] = {
+                "files": sum(len(f) for _, _, f in os.walk(pth)),
+                "bytes": sum(os.path.getsize(os.path.join(dp, f))
+                             for dp, _, fs in os.walk(pth) for f in fs),
+            }
+        elif os.path.exists(pth):
+            manifest["members"][m] = {"bytes": os.path.getsize(pth)}
+    return manifest
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Put a bundle in as a named corpus, alongside any already installed."""
+    src = args.bundle
+    tmp = None
+    if src.startswith(("http://", "https://")):
+        tmp = src = _fetch(src)
+
+    try:
+        manifest = install_bundle(src, args.name, args.force)
+    except FileExistsError as exc:
+        print(f"{exc} already exists and is not empty (pass --force)", file=sys.stderr)
+        return 1
     finally:
         if tmp:
             os.unlink(tmp)
 
-    print(f"installed as {os.path.basename(target)} in {target}")
-    for m in MEMBERS:
-        pth = os.path.join(target, m)
-        if os.path.isdir(pth):
-            print(f"  {m:18} {sum(len(f) for _, _, f in os.walk(pth))} files")
-        elif os.path.exists(pth):
-            print(f"  {m:18} {_human(os.path.getsize(pth))}")
+    target = manifest["target"]
+    print(f"installed as {manifest['slug']} in {target}")
+    for m, info in manifest["members"].items():
+        if "files" in info:
+            print(f"  {m:18} {info['files']} files")
+        else:
+            print(f"  {m:18} {_human(info['bytes'])}")
     print("")
     print("Restart the app, or POST /api/corpus to switch to it.")
     return 0

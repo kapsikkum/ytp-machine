@@ -1,14 +1,17 @@
 import logging
+import os
+import tempfile
 import time
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from app import jobs
 from app.database import (max_units as _max_units_setting,
-                          SPLICE_MODES, active, get_db, init_db, list_corpora,
-                          set_active, set_setting, splice_mode)
+                          PROJECT_ROOT, SPLICE_MODES, active, get_db, init_db,
+                          list_corpora, set_active, set_setting, splice_mode)
 from app.generate import generate_video
 
 router = APIRouter()
@@ -210,6 +213,92 @@ def corpora():
     # open -- otherwise merely listing them would change which one is live.
     set_active(current["slug"])
     return {"corpora": out, "active": current["slug"]}
+
+
+def _corpus_pack():
+    """scripts/corpus.py, reached the way editor.py reaches align_phones --
+    it lives outside app/ because it is a standalone CLI too."""
+    import sys
+    scripts_dir = os.path.join(PROJECT_ROOT, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import corpus as corpus_pack
+    return corpus_pack
+
+
+@router.get("/corpus/export")
+def export_corpus(slug: str | None = None):
+    """Download a bundle of a corpus: database, videos, transcripts,
+    pronunciations. The same tarball `scripts/corpus.py pack` builds --
+    streamed back and deleted after, so exporting from the browser leaves
+    nothing extra sitting on the server.
+    """
+    target = slug or active()["slug"]
+    if not any(c["slug"] == target for c in list_corpora()):
+        raise HTTPException(status_code=404, detail=f"No corpus called {target!r}")
+
+    fd, tmp = tempfile.mkstemp(suffix=".tar.zst", prefix="export-")
+    os.close(fd)
+    os.remove(tmp)          # pack_bundle writes the file itself; this only reserved a name
+    try:
+        out = _corpus_pack().pack_bundle(target, tmp)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (Exception, SystemExit) as exc:                      # noqa: BLE001
+        # SystemExit too: _corpus_root() raises it for a corpus that vanished
+        # between the check above and here, and that must not kill the worker.
+        raise HTTPException(status_code=500, detail=f"pack failed: {exc}") from exc
+
+    log.info("EXPORT  %s -> %s (%s)", target, out,
+             f"{os.path.getsize(out) / 1e6:.1f} MB")
+    ext = ".tar.zst" if out.endswith(".zst") else ".tar.gz"
+    return FileResponse(out, filename=f"{target}-{time.strftime('%Y-%m-%d')}{ext}",
+                        media_type="application/octet-stream",
+                        background=BackgroundTask(os.remove, out))
+
+
+@router.post("/corpus/import")
+async def import_corpus(name: str = Form(...), bundle: UploadFile = File(...),
+                        force: bool = Form(False)):
+    """Install an uploaded bundle as a new corpus, alongside any already
+    installed. What `scripts/corpus.py install` does from a terminal, from
+    the browser instead -- the same round trip this project already leans on
+    to move a corpus between machines without losing hand edits.
+    """
+    slug_name = name.strip()
+    if not slug_name:
+        raise HTTPException(status_code=400, detail="name must not be empty")
+
+    fname = bundle.filename or ""
+    suffix = ".tar.zst" if fname.endswith(".zst") else \
+             ".tar.gz" if fname.endswith((".gz", ".tgz")) else ".tar"
+    fd, tmp = tempfile.mkstemp(suffix=suffix, prefix="import-")
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            while chunk := await bundle.read(1 << 20):
+                fh.write(chunk)
+                size += len(chunk)
+
+        try:
+            manifest = _corpus_pack().install_bundle(tmp, slug_name, force)
+        except FileExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"a corpus already lives at {exc} (tick overwrite to replace it)"
+            ) from exc
+        except Exception as exc:                                # noqa: BLE001
+            # Anything else here means the upload wasn't a readable bundle --
+            # not a tarfile, not zstd/gzip, or missing what pack always writes.
+            raise HTTPException(
+                status_code=400, detail=f"could not read that bundle: {exc}") from exc
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+    log.info("IMPORT  %s -> %s (%s uploaded)", fname, manifest["slug"],
+             f"{size / 1e6:.1f} MB")
+    return {"status": "ok", **manifest}
 
 
 @router.get("/splice-mode")
