@@ -113,7 +113,8 @@ def job_status(job_id: str):
     # A job that produced nothing usable is reported the same way the old
     # synchronous endpoint did, so the page can keep one code path for it.
     r = job.result
-    if job.status == "done" and r is not None and not r["found"] and not r["spliced"]:
+    if (job.kind == "say" and job.status == "done" and r is not None
+            and not r["found"] and not r["spliced"]):
         body["status"] = "error"
         body["error"] = "No clips found or spliced for any word in the input."
         body["error_kind"] = "nothing_found"
@@ -157,6 +158,8 @@ def reload():
     new ingests) take effect without restarting the server."""
     from app.generate import invalidate_cache
     invalidate_cache()
+    from app.ytpmv import samples
+    samples.clear_cache()       # built from the old timings
     log.info("cache invalidated via /api/reload")
     return {"status": "reloaded"}
 
@@ -392,3 +395,86 @@ def stats():
         "corpus": current["slug"],
         "corpus_name": current["name"],
     }
+
+
+# ── YTPMV ─────────────────────────────────────────────────────────────────────
+# A MIDI file played by the corpus. Upload one to have it read and a sound
+# suggested for every part; audition parts; then render through the same
+# queue as sentences.
+
+class YtpmvSampleRequest(BaseModel):
+    text: str
+    take: int = 0
+    hit: str | None = None      # a drum to cut it into: kick, snare, hats...
+
+
+class YtpmvPreviewRequest(BaseModel):
+    midi_id: str
+    part: dict
+    seconds: float = 6.0
+
+
+class YtpmvRenderRequest(BaseModel):
+    midi_id: str
+    parts: list[dict] = []
+    options: dict = {}
+
+
+def _ytpmv_call(fn, *args, **kwargs):
+    from app.ytpmv.render import YtpmvError
+    from app.ytpmv.samples import SampleError
+    try:
+        return fn(*args, **kwargs)
+    except (YtpmvError, SampleError) as exc:
+        raise HTTPException(status_code=400, detail={"message": str(exc)}) from exc
+
+
+@router.post("/ytpmv/midi")
+async def ytpmv_upload(midi: UploadFile = File(...)):
+    """Store a MIDI file and describe it: key, tempo, parts, suggested sounds.
+
+    The first song on a voice takes a few seconds longer while the suggested
+    words are measured; after that the measurements are cached with the voice.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from app.ytpmv import render
+    data = await midi.read(render.MAX_MIDI_BYTES + 1)
+    midi_id = _ytpmv_call(render.save_midi, data, midi.filename or "")
+    log.info("YTPMV  upload %s -> %s", midi.filename, midi_id)
+    return await run_in_threadpool(_ytpmv_call, render.analyse, midi_id)
+
+
+@router.get("/ytpmv/midi/{midi_id}")
+def ytpmv_describe(midi_id: str):
+    """The same description for a file already uploaded."""
+    from app.ytpmv import render
+    return _ytpmv_call(render.analyse, midi_id)
+
+
+@router.post("/ytpmv/sample")
+def ytpmv_sample(req: YtpmvSampleRequest):
+    """What a word sounds like as an instrument: the clip, and the note it is on."""
+    from app.ytpmv import samples
+    return _ytpmv_call(lambda: samples.build(req.text, req.take, req.hit or None).describe())
+
+
+@router.post("/ytpmv/preview")
+def ytpmv_preview(req: YtpmvPreviewRequest):
+    """A few seconds of one part, sung as it will be in the render (audio only)."""
+    from app.ytpmv import render
+    seconds = max(1.0, min(float(req.seconds), 15.0))
+    return _ytpmv_call(render.preview_part, req.midi_id, req.part, seconds)
+
+
+@router.post("/ytpmv/render")
+def ytpmv_render(req: YtpmvRenderRequest):
+    """Queue a render; poll /api/jobs/{id} as for a sentence."""
+    from app.ytpmv import render
+    song = _ytpmv_call(render.load_song, req.midi_id)
+    job = jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": req.parts,
+                             "options": req.options},
+                            label=song.title or f"midi {req.midi_id}")
+    log.info("QUEUE  %s  ytpmv %s", job.id, req.midi_id)
+    body = job.as_dict()
+    body["position"] = jobs.position(job.id)
+    return JSONResponse(status_code=202, content=body)

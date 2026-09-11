@@ -22,3 +22,13 @@ huggingface_hub>=0.23.0
 # could produce an archive format it could not read back, which is exactly
 # what happened: a pack built on a workstation failed to install on the server.
 zstandard>=0.22.0
+
+# YTPMV: reading MIDI files, and the pitch tracking and re-synthesis that puts
+# a spoken word exactly on a note. numpy was already here by way of torch; it
+# is named because app/ytpmv uses it directly now.
+mido>=1.3
+numpy>=1.26
+
+# The Matrix bot (python -m app.matrix_bot). Plain matrix-nio, no [e2e]: the
+# bot does not do encrypted rooms, so libolm stays out of the image.
+matrix-nio>=0.24

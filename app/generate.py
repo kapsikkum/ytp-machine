@@ -1401,14 +1401,36 @@ def generate_video(text: str, progress=None,
     than leaving a request open for minutes -- which is what used to happen,
     until a long sentence outlasted the proxy and returned 504.
     """
+    segments, report = resolve_text(text, progress=progress)
+    if not segments:
+        return {**report, "video_url": None}
+
+    run_id = uuid.uuid4().hex[:10]
+    os.makedirs("output", exist_ok=True)
+    final_path = os.path.join("output", f"{run_id}.mp4")
+
+    _build_video(segments, final_path, progress=progress, subtitles=subtitles)
+    return {**report, "video_url": f"/output/{run_id}.mp4"}
+
+
+def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
+    """Turn *text* into the segments that would say it, without encoding.
+
+    Split out of generate_video so the YTPMV sampler can have a word said by
+    exactly the same machinery -- runs, splices, reversal and all -- and then
+    do its own thing with the result instead of a sentence video.
+
+    Returns (segments, report), the report being found/spliced/missing/runs/
+    tokens as generate_video has always returned them.
+    """
     def _say(stage: str, done: int, total: int) -> None:
         if progress:
             progress(stage, done, total)
 
     marked = tokenize_marked(text)
     if not marked:
-        return {"found": [], "spliced": [], "missing": [], "runs": [],
-                "tokens": [], "video_url": None}
+        return [], {"found": [], "spliced": [], "missing": [], "runs": [],
+                    "tokens": []}
     words   = [w  for w, _e, _n, _r in marked]
     ends    = [e  for _w, e, _n, _r in marked]   # ends[i] = word i ends a sentence
     is_noise = [n for _w, _e, n, _r in marked]   # is_noise[i] = *wrapped* noise token
@@ -1587,21 +1609,14 @@ def generate_video(text: str, progress=None,
         i += cap
 
     if not segments:
-        return {"found": [], "spliced": [], "missing": missing,
-                "runs": [], "tokens": tokens, "video_url": None}
-
-    run_id = uuid.uuid4().hex[:10]
-    os.makedirs("output", exist_ok=True)
-    final_path = os.path.join("output", f"{run_id}.mp4")
+        return [], {"found": [], "spliced": [], "missing": missing,
+                    "runs": [], "tokens": tokens}
 
     _say("resolving", n, n)
-    _build_video(segments, final_path, progress=progress, subtitles=subtitles)
-
-    return {
+    return segments, {
         "found":     found,
         "spliced":   spliced,
         "missing":   missing,
         "runs":      runs,
         "tokens":    tokens,
-        "video_url": f"/output/{run_id}.mp4",
     }

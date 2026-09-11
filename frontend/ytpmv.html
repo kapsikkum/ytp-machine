@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YTPMV — YTP Machine</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
+
+    :root {
+      --yellow: #ffe500;
+      --green:  #00ff88;
+      --red:    #ff3c3c;
+      --dark:   #0d0d0d;
+      --panel:  #141414;
+      --field:  #1a1a1a;
+      --border: #2a2a2a;
+      --dim:    #666;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--dark);
+      color: #e8e8e8;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+    a { color: var(--dim); }
+    header { text-align: center; margin-bottom: 1.5rem; }
+    header h1 {
+      font-family: Impact, 'Arial Black', sans-serif;
+      font-size: clamp(2.5rem, 8vw, 4.5rem);
+      letter-spacing: 2px;
+      color: var(--yellow);
+      text-shadow: 3px 3px 0 #b3a000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
+      line-height: 1;
+    }
+    header p { color: #888; font-size: 0.85rem; margin-top: 0.5rem; letter-spacing: 1px; }
+    #voice { font-size: 0.75rem; color: #555; margin-bottom: 1.5rem; }
+    #voice span { color: var(--yellow); }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 980px;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Drop zone ── */
+    #drop {
+      border: 2px dashed #333;
+      border-radius: 8px;
+      padding: 2.25rem 1rem;
+      text-align: center;
+      color: #777;
+      cursor: pointer;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+    #drop:hover, #drop.over { border-color: var(--yellow); color: #ddd; background: #181600; }
+    #drop b { color: var(--yellow); font-weight: 400; }
+    #drop small { display: block; margin-top: .5rem; color: #4a4a4a; font-size: .72rem; }
+
+    /* ── Song summary ── */
+    #song h2 { font-family: Impact, sans-serif; font-weight: 400; letter-spacing: 1px;
+               font-size: 1.6rem; color: var(--yellow); }
+    #song .desc { color: #bbb; margin: .35rem 0 .75rem; line-height: 1.5; }
+    .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .chip { border: 1px solid var(--border); border-radius: 999px; padding: .15rem .6rem;
+            font-size: .72rem; color: #999; white-space: nowrap; }
+    .chip b { color: #eee; font-weight: 400; }
+
+    /* ── Parts ── */
+    #parts { display: flex; flex-direction: column; gap: .6rem; }
+    .part {
+      display: grid;
+      grid-template-columns: minmax(170px, 1.1fr) minmax(250px, 1.6fr) minmax(260px, 1.5fr);
+      gap: .75rem 1rem;
+      align-items: start;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .8rem .9rem;
+      background: #111;
+    }
+    .part.muted { opacity: .55; }
+    .who .role { font-size: .68rem; letter-spacing: 1px; text-transform: uppercase; color: var(--yellow); }
+    .who .name { color: #eee; margin: .1rem 0; }
+    .who .meta { color: #555; font-size: .72rem; line-height: 1.5; }
+    .sound .row, .knobs .row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+    .sound .row + .row, .knobs .row + .row { margin-top: .45rem; }
+    input[type=text], select, input[type=number] {
+      background: var(--field); border: 1px solid #333; border-radius: 5px; color: #e8e8e8;
+      font-family: inherit; font-size: .85rem; padding: .35rem .5rem;
+    }
+    input[type=text] { flex: 1; min-width: 7rem; }
+    input[type=text]:focus, select:focus { outline: none; border-color: var(--yellow); }
+    select { cursor: pointer; }
+    button {
+      background: #222; border: 1px solid #333; border-radius: 5px; color: #ddd; cursor: pointer;
+      font-family: inherit; font-size: .8rem; padding: .32rem .55rem; white-space: nowrap;
+    }
+    button:hover { border-color: #555; color: #fff; }
+    button:disabled { opacity: .4; cursor: default; }
+    button.play { color: var(--green); }
+    .take { color: #777; font-size: .75rem; min-width: 3.5rem; text-align: center; }
+    .badge { font-size: .72rem; border-radius: 4px; padding: .12rem .45rem; background: #1d1d1d; color: #aaa; }
+    .badge.good { color: var(--green); }
+    .badge.meh  { color: #ffcc55; }
+    .badge.bad  { color: var(--red); }
+    .alts { display: flex; flex-wrap: wrap; gap: .3rem; }
+    .alts button { font-size: .7rem; padding: .12rem .45rem; color: #999; background: transparent; }
+    .alts button:hover { color: var(--yellow); border-color: var(--yellow); }
+    .knobs label { color: #777; font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
+    .knobs input[type=range] { width: 5.5rem; accent-color: var(--yellow); }
+    .oct { display: inline-flex; align-items: center; gap: .2rem; }
+    .oct span { min-width: 1.8rem; text-align: center; color: #eee; font-size: .8rem; }
+    .err { color: var(--red); font-size: .72rem; margin-top: .35rem; }
+
+    /* ── Options + render ── */
+    #options { display: flex; flex-wrap: wrap; gap: .6rem 1.25rem; align-items: center; color: #888; font-size: .78rem; }
+    #options label { display: inline-flex; gap: .35rem; align-items: center; }
+    #actions { display: flex; gap: .75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+    #render-btn {
+      background: var(--yellow); color: #000; border: none; border-radius: 6px;
+      font-family: Impact, sans-serif; font-size: 1.2rem; letter-spacing: 1.5px;
+      padding: .6rem 2rem; text-transform: uppercase;
+    }
+    #render-btn:hover { background: #ffd000; color: #000; }
+    #render-btn:disabled { background: #555; color: #888; }
+    #status { color: #aaa; font-size: .8rem; }
+    #status.error { color: var(--red); }
+    #progress { height: 6px; background: #222; border-radius: 3px; overflow: hidden; margin-top: .75rem; display: none; }
+    #progress.on { display: block; }
+    #progress div { height: 100%; width: 0; background: var(--yellow); transition: width .3s; }
+    #result video { width: 100%; border-radius: 6px; margin-top: 1rem; background: #000; }
+    #result .links { margin-top: .5rem; font-size: .75rem; }
+    .hint { color: #4d4d4d; font-size: .72rem; line-height: 1.6; margin-top: .75rem; }
+    .hint b { color: #777; font-weight: 400; }
+
+    @media (max-width: 820px) {
+      .part { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>YTPMV</h1>
+  <p>a MIDI file, sung by the corpus — every note pitch perfect</p>
+</header>
+<div id="voice">voice: <span id="voice-name">—</span> · <a href="/">back to sentences</a></div>
+
+<div class="card">
+  <div id="drop" tabindex="0">
+    <b>drop a .mid file here</b> or click to pick one
+    <small>each instrument becomes a tile; each note replays its clip, tuned to the note</small>
+  </div>
+  <input type="file" id="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+  <div id="upload-status" class="hint"></div>
+</div>
+
+<div class="card" id="song" hidden>
+  <h2 id="song-title"></h2>
+  <div class="desc" id="song-desc"></div>
+  <div class="chips" id="song-chips"></div>
+  <div class="hint">
+    Every part has a suggested word — picked for the <b>kind</b> of sound the part makes (a pop for a
+    kick, a hiss for a hi-hat, a long vowel for a tune). Change any of them: type a word or a phrase,
+    try another <b>take</b> of the same word, or click an alternative. <b>▶ part</b> plays a few seconds
+    of that part on its own. <b>octave</b> moves a part up or down without changing the tune — the
+    suggestion puts each part where the voice sounds natural.
+  </div>
+</div>
+
+<div class="card" id="parts-card" hidden>
+  <div id="parts"></div>
+</div>
+
+<div class="card" id="render-card" hidden>
+  <div id="options">
+    <label>length
+      <select id="opt-len">
+        <option value="30">first 30s</option>
+        <option value="60">first minute</option>
+        <option value="0" selected>whole song</option>
+      </select>
+    </label>
+    <label>speed
+      <select id="opt-speed">
+        <option value="0.75">slower</option>
+        <option value="1" selected>as written</option>
+        <option value="1.25">faster</option>
+        <option value="1.5">much faster</option>
+      </select>
+    </label>
+    <label title="Move the whole song up or down, in semitones">key
+      <select id="opt-transpose"></select>
+    </label>
+    <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
+    <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
+    <label title="Darken a tile when its part is not playing"><input type="checkbox" id="opt-dim" checked> dim idle</label>
+    <label title="Write each part's word on its tile"><input type="checkbox" id="opt-labels"> labels</label>
+  </div>
+  <div id="actions">
+    <button id="render-btn">RENDER</button>
+    <button id="reset-btn" title="Throw away your changes and go back to the suggestions">reset to suggestions</button>
+    <span id="status"></span>
+  </div>
+  <div id="progress"><div></div></div>
+  <div id="result"></div>
+</div>
+
+<audio id="player" hidden></audio>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ROLE_ICON = { lead: '🎤', rhythm: '🎸', chords: '🎹', bass: '🔊',
+    'drums:kick': '🥁', 'drums:snare': '🥁', 'drums:hats': '🥁', 'drums:toms': '🥁',
+    'drums:cymbals': '🥁', 'drums:perc': '🥁' };
+  const ROLE_TEXT = { lead: 'tune', rhythm: 'backing', chords: 'chords', bass: 'bass',
+    'drums:kick': 'kick drum', 'drums:snare': 'snare', 'drums:hats': 'hi-hats',
+    'drums:toms': 'toms', 'drums:cymbals': 'cymbals', 'drums:perc': 'percussion' };
+  const MODE_TEXT = { perfect: 'pitch perfect', tape: 'tape (chipmunk)', raw: 'as recorded' };
+  const STAGE = { waiting: 'waiting to start', samples: 'cutting samples', notes: 'singing notes',
+    measuring: 'measuring words', frames: 'drawing frames', encoding: 'encoding', finished: 'finishing' };
+  const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const noteName = (m) => `${NAMES[((Math.round(m) % 12) + 12) % 12]}${Math.floor(Math.round(m) / 12) - 1}`;
+
+  let song = null;          // the analysis
+  let parts = {};           // id -> settings being edited
+  let info = {};            // id -> {sample describe}
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+
+  async function api(url, opts = {}) {
+    const r = await fetch(url, opts);
+    let body = null;
+    try { body = await r.json(); } catch {}
+    if (!r.ok) {
+      const d = body && body.detail;
+      throw new Error((d && (d.message || d)) || `server said ${r.status}`);
+    }
+    return body;
+  }
+  const post = (url, data) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify(data) });
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+  // ── voice + vocabulary ───────────────────────────────────────────────────
+  api('/api/stats').then(s => { $('voice-name').textContent = s.corpus_name || s.corpus; }).catch(() => {});
+  api('/api/words').then(w => {
+    const dl = document.createElement('datalist');
+    dl.id = 'vocab';
+    const words = Object.entries(w.words).sort((a, b) => b[1] - a[1]).slice(0, 3000);
+    dl.innerHTML = words.map(([word]) => `<option value="${esc(word)}">`).join('');
+    document.body.appendChild(dl);
+  }).catch(() => {});
+
+  for (let s = -12; s <= 12; s++) {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s === 0 ? 'as written' : `${s > 0 ? '+' : ''}${s} semitones`;
+    if (s === 0) o.selected = true;
+    $('opt-transpose').appendChild(o);
+  }
+
+  // ── upload ───────────────────────────────────────────────────────────────
+  const drop = $('drop'), file = $('file');
+  drop.addEventListener('click', () => file.click());
+  drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') file.click(); });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+  });
+  file.addEventListener('change', () => { if (file.files[0]) upload(file.files[0]); });
+
+  async function upload(f) {
+    $('upload-status').textContent = `reading ${f.name} and picking sounds… (the first song on a voice takes a few seconds longer)`;
+    const fd = new FormData();
+    fd.append('midi', f);
+    try {
+      const data = await api('/api/ytpmv/midi', { method: 'POST', body: fd });
+      $('upload-status').textContent = '';
+      load(data, null);
+    } catch (e) {
+      $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
+    }
+  }
+
+  function load(data, saved) {
+    song = data;
+    parts = {};
+    info = {};
+    for (const p of song.parts) {
+      parts[p.id] = Object.assign({}, p.settings, (saved && saved[p.id]) || {});
+      if (p.recommended && p.recommended.pitch) info[p.id] = { pitch: p.recommended.pitch };
+    }
+    store.set('ytpmv', { midi_id: song.midi_id, parts });
+    $('song-title').textContent = song.title || 'untitled';
+    $('song-desc').textContent = song.description;
+    $('song-chips').innerHTML = [
+      ['key', song.key], ['tempo', `${Math.round(song.bpm)} BPM`], ['time', song.time_signature],
+      ['length', `${Math.floor(song.duration / 60)}:${String(Math.round(song.duration % 60)).padStart(2, '0')}`],
+      ['parts', song.parts.length],
+    ].map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
+    ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
+    drawParts();
+    for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
+  }
+
+  // ── parts ────────────────────────────────────────────────────────────────
+  function drawParts() {
+    $('parts').innerHTML = song.parts.map(p => {
+      const s = parts[p.id];
+      const rec = p.recommended || {};
+      const range = p.range ? `${p.range[0]}–${p.range[1]}` : 'drum kit';
+      const alts = (rec.alternatives || []).map(a =>
+        `<button data-alt="${esc(a.text)}" data-take="${a.take}">${esc(a.text)}</button>`).join('');
+      return `
+      <div class="part${s.mute ? ' muted' : ''}" data-id="${p.id}">
+        <div class="who">
+          <div class="role">${ROLE_ICON[p.role] || '♪'} ${esc(ROLE_TEXT[p.role] || p.role)}</div>
+          <div class="name">${esc(p.instrument)}</div>
+          <div class="meta">${p.notes} notes · ${esc(range)}${p.polyphony > 1 && !p.is_drums ? ` · up to ${p.polyphony} at once` : ''}</div>
+        </div>
+        <div class="sound">
+          <div class="row">
+            <input type="text" list="vocab" value="${esc(s.text || '')}" placeholder="a word or phrase" data-k="text">
+            <button data-act="prev" title="previous take">◀</button>
+            <span class="take" data-el="take">take ${s.take + 1}</span>
+            <button data-act="next" title="next take">▶</button>
+          </div>
+          <div class="row">
+            <button class="play" data-act="preview" title="hear a few seconds of this part on its own">▶ part</button>
+            <button data-act="clip" title="see and hear the clip it is cut from">clip</button>
+            <span data-el="badge"></span>
+          </div>
+          ${alts ? `<div class="row alts"><span style="color:#555;font-size:.7rem">or:</span>${alts}</div>` : ''}
+          <div class="err" data-el="err"></div>
+        </div>
+        <div class="knobs">
+          <div class="row">
+            ${p.is_drums ? '' : `<label>octave <span class="oct"><button data-act="oct-">−</button><span data-el="oct">${fmtOct(s.octave)}</span><button data-act="oct+">+</button></span></label>`}
+            <label title="How the clip is put on the note">sound
+              <select data-k="mode">${Object.entries(MODE_TEXT).map(([v, t]) =>
+                `<option value="${v}"${s.mode === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
+            </label>
+          </div>
+          <div class="row">
+            <label>volume <input type="range" min="0" max="2" step="0.05" value="${s.volume}" data-k="volume"></label>
+            <label title="Left or right">pan <input type="range" min="-1" max="1" step="0.05" value="${s.pan}" data-k="pan"></label>
+          </div>
+          <div class="row">
+            <label><input type="checkbox" data-k="mute"${s.mute ? ' checked' : ''}> mute</label>
+            <label><input type="checkbox" data-k="visible"${s.visible ? ' checked' : ''}> show tile</label>
+            ${p.is_drums ? `<label title="Cut the word down to a drum sound (the pop of a b, the hiss of an s) instead of saying the whole word"><input type="checkbox" data-k="hit"${s.hit !== false ? ' checked' : ''}> drum hit</label>` : ''}
+            <label title="Cut each sound at the end of its note, or let it ring until the next one">
+              <select data-k="sustain">
+                <option value="note"${s.sustain === 'note' ? ' selected' : ''}>stop at note end</option>
+                <option value="ring"${s.sustain === 'ring' ? ' selected' : ''}>let it ring</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    for (const p of song.parts) drawBadge(p.id);
+  }
+
+  const fmtOct = (o) => o > 0 ? `+${o}` : `${o}`;
+  const row = (id) => document.querySelector(`.part[data-id="${id}"]`);
+
+  function drawBadge(id) {
+    const el = row(id)?.querySelector('[data-el=badge]');
+    if (!el) return;
+    const pitch = info[id] && info[id].pitch;
+    const part = song.parts.find(p => p.id === id);
+    if (!pitch) { el.innerHTML = ''; return; }
+    if (part.is_drums) {
+      el.innerHTML = `<span class="badge">${(pitch.duration ?? pitch.dur ?? 0).toFixed(2)}s hit</span>`;
+      return;
+    }
+    const midi = pitch.midi;
+    if (midi == null) {
+      el.innerHTML = `<span class="badge bad" title="No steady pitch was found — a whisper or a hiss can't be put on a note. Tape mode will still follow the tune.">no pitch — try another take</span>`;
+      return;
+    }
+    const stab = pitch.stability_cents ?? pitch.stability;
+    const voiced = pitch.voiced_ratio ?? pitch.voiced;
+    const cls = voiced < 0.35 ? 'bad' : stab < 40 ? 'good' : stab < 120 ? 'meh' : 'bad';
+    const word = voiced < 0.35 ? 'mostly noise' : stab < 40 ? 'steady' : stab < 120 ? 'wobbly' : 'all over the place';
+    el.innerHTML = `<span class="badge ${cls}" title="The clip is spoken around ${noteName(midi)}. Pitch perfect flattens its wobble onto every note.">speaks at ${noteName(midi)} · ${word}</span>`;
+  }
+
+  async function refreshSample(id) {
+    const s = parts[id];
+    const r = row(id);
+    const err = r && r.querySelector('[data-el=err]');
+    if (err) err.textContent = '';
+    if (!s.text) return;
+    try {
+      const part = song.parts.find(p => p.id === id);
+      const hit = part.is_drums && s.hit !== false ? part.role.split(':')[1] : null;
+      const d = await post('/api/ytpmv/sample', { text: s.text, take: s.take, hit });
+      info[id] = { pitch: d, takes: d.takes, url: d.sample_url };
+      if (d.take !== s.take) s.take = d.take;
+      const t = r && r.querySelector('[data-el=take]');
+      if (t) t.textContent = `take ${d.take + 1}/${d.takes}`;
+      drawBadge(id);
+    } catch (e) {
+      info[id] = null;
+      if (err) err.textContent = e.message;
+      drawBadge(id);
+    }
+  }
+
+  function changed(id) {
+    store.set('ytpmv', { midi_id: song.midi_id, parts });
+  }
+
+  let typing = {};
+  $('parts').addEventListener('input', (e) => {
+    const r = e.target.closest('.part'); if (!r) return;
+    const id = r.dataset.id, k = e.target.dataset.k, s = parts[id];
+    if (!k) return;
+    if (k === 'text') {
+      s.text = e.target.value.trim(); s.take = 0;
+      clearTimeout(typing[id]);
+      typing[id] = setTimeout(() => { refreshSample(id); if (s.text && s.mute && !song.parts.find(p => p.id === id).settings.text) {
+        s.mute = false; s.visible = true; drawParts(); } }, 450);
+    } else if (k === 'volume' || k === 'pan') s[k] = parseFloat(e.target.value);
+    else if (k === 'mute' || k === 'visible') { s[k] = e.target.checked; r.classList.toggle('muted', s.mute); }
+    else if (k === 'hit') { s.hit = e.target.checked; refreshSample(id); }
+    else s[k] = e.target.value;
+    changed(id);
+  });
+
+  $('parts').addEventListener('click', async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const r = b.closest('.part'); const id = r.dataset.id; const s = parts[id];
+    if (b.dataset.alt) {
+      s.text = b.dataset.alt; s.take = parseInt(b.dataset.take) || 0;
+      r.querySelector('input[data-k=text]').value = s.text;
+      changed(id); refreshSample(id); return;
+    }
+    const act = b.dataset.act;
+    if (act === 'prev' || act === 'next') {
+      const n = (info[id] && info[id].takes) || 1;
+      s.take = ((s.take + (act === 'next' ? 1 : -1)) % n + n) % n;
+      changed(id); refreshSample(id);
+    } else if (act === 'oct-' || act === 'oct+') {
+      s.octave = Math.max(-4, Math.min(4, s.octave + (act === 'oct+' ? 1 : -1)));
+      r.querySelector('[data-el=oct]').textContent = fmtOct(s.octave);
+      changed(id);
+    } else if (act === 'clip') {
+      if (info[id] && info[id].url) window.open(info[id].url, '_blank');
+    } else if (act === 'preview') {
+      b.disabled = true; const old = b.textContent; b.textContent = '…';
+      try {
+        const d = await post('/api/ytpmv/preview', { midi_id: song.midi_id, part: s, seconds: 6 });
+        const pl = $('player'); pl.src = d.audio_url; pl.play();
+      } catch (err) { r.querySelector('[data-el=err]').textContent = err.message; }
+      b.disabled = false; b.textContent = old;
+    }
+  });
+
+  $('reset-btn').addEventListener('click', () => {
+    for (const p of song.parts) parts[p.id] = Object.assign({}, p.settings);
+    changed(); drawParts();
+    for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
+  });
+
+  // ── render ───────────────────────────────────────────────────────────────
+  const bar = $('progress'), barFill = bar.firstElementChild;
+  function status(msg, error = false) { $('status').textContent = msg; $('status').className = error ? 'error' : ''; }
+  function progress(f) {
+    if (f == null) { bar.classList.remove('on'); return; }
+    bar.classList.add('on'); barFill.style.width = `${Math.round(f * 100)}%`;
+  }
+
+  $('render-btn').addEventListener('click', async () => {
+    const btn = $('render-btn');
+    btn.disabled = true;
+    $('result').innerHTML = '';
+    const len = parseInt($('opt-len').value);
+    const options = {
+      speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
+      flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
+      labels: $('opt-labels').checked,
+    };
+    if (len) options.max_seconds = len;
+    try {
+      const job = await post('/api/ytpmv/render', {
+        midi_id: song.midi_id, options,
+        parts: Object.values(parts),
+      });
+      const result = await poll(job.id);
+      if (result) show(result);
+    } catch (e) { status(e.message, true); progress(null); }
+    btn.disabled = false;
+  });
+
+  // Each stage gets its own slice of the bar, so it never runs backwards.
+  const SLICE = { measuring: [0, .05], samples: [.05, .15], notes: [.15, .35], frames: [.35, .95], encoding: [.95, 1] };
+
+  async function poll(id) {
+    let delay = 300;
+    for (;;) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 1.3, 1500);
+      const j = await api(`/api/jobs/${id}`);
+      if (j.status === 'error') { progress(null); status(j.error, true); return null; }
+      if (j.status === 'done') { progress(null); status(''); return j.result; }
+      if (j.status === 'queued') { status(`queued${j.position ? ` — ${j.position} ahead` : ''}`); progress(0); continue; }
+      const [a, b] = SLICE[j.stage] || [0, 0];
+      const within = j.total ? j.done / j.total : 0;
+      progress(a + (b - a) * within);
+      status(`${STAGE[j.stage] || j.stage}${j.total > 1 ? ` ${j.done}/${j.total}` : ''} · ${Math.round(j.running_for || 0)}s`);
+    }
+  }
+
+  function show(r) {
+    const probs = (r.problems || []).map(p =>
+      `<div class="err">${esc(p.name)}: ${esc(p.error)} — that part was left out</div>`).join('');
+    $('result').innerHTML = `
+      <video src="${r.video_url}" controls autoplay playsinline></video>
+      ${probs}
+      <div class="links"><a href="${r.video_url}" target="_blank">open the video on its own →</a>
+      · ${r.duration}s · ${r.size[0]}×${r.size[1]}</div>`;
+  }
+
+  // ── come back to where we were ───────────────────────────────────────────
+  const saved = store.get('ytpmv');
+  if (saved && saved.midi_id) {
+    api(`/api/ytpmv/midi/${saved.midi_id}`).then(d => load(d, saved.parts)).catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>

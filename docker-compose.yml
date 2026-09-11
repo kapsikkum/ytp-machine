@@ -28,5 +28,45 @@ services:
       - ./packs:/packs:ro
     restart: unless-stopped
 
+  # The Matrix bot. Off unless asked for, so a plain `docker compose up` is
+  # unchanged:
+  #
+  #   docker compose --profile matrix up
+  #
+  # Same image, its own process: it talks to the app over HTTP, so a bot that
+  # falls over cannot take the web page with it. Put the settings in a .env
+  # file beside this one (see the README), never in this file.
+  bot:
+    image: ghcr.io/kapsikkum/ytp-machine:latest
+    build: .
+    profiles: [matrix]
+    entrypoint: ["python", "-m", "app.matrix_bot"]
+    environment:
+      TZ: ${TZ:-Australia/Sydney}
+      YTP_API_URL: http://app:8765
+      YTP_PUBLIC_URL: ${YTP_PUBLIC_URL:-}
+      # Plain defaults, not ${VAR:?}: compose interpolates every service even
+      # when its profile is off, so a required variable here would break the
+      # ordinary `docker compose up` for everyone without a bot. The bot says
+      # what is missing itself when it starts.
+      MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
+      MATRIX_USER: ${MATRIX_USER:-}
+      MATRIX_PASSWORD: ${MATRIX_PASSWORD:-}
+      MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
+      MATRIX_ALLOWED_ROOMS: ${MATRIX_ALLOWED_ROOMS:-}
+      MATRIX_ALLOWED_USERS: ${MATRIX_ALLOWED_USERS:-}
+      MATRIX_ADMINS: ${MATRIX_ADMINS:-}
+      MATRIX_PREFIX: ${MATRIX_PREFIX:-!ytp}
+      MATRIX_COOLDOWN: ${MATRIX_COOLDOWN:-20}
+      MATRIX_MV_MAX_SECONDS: ${MATRIX_MV_MAX_SECONDS:-120}
+    volumes:
+      # For the saved login (matrix/session.json), so a restart is not a new
+      # device every time.
+      - ytp-data:/app/data
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   ytp-data:

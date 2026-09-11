@@ -62,7 +62,7 @@ app.include_router(editor_router, prefix="/api/edit")
 #
 # Previews go sooner than generations: a preview is listened to once, while a
 # generated video is a link somebody may still have open.
-_KEEP_HOURS = {"splice_": 24, "piece_": 24}
+_KEEP_HOURS = {"splice_": 24, "piece_": 24, "ytpmv_sample_": 24}
 _KEEP_DEFAULT_HOURS = 24 * 7
 
 

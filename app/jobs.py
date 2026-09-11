@@ -43,8 +43,10 @@ _TTL_SECONDS = 30 * 60
 @dataclass
 class Job:
     id: str
-    text: str
+    text: str                       # the sentence, or a label for other kinds
     subtitles: bool = False         # burn the words onto the picture
+    kind: str = "say"               # say | ytpmv
+    params: dict[str, Any] = field(default_factory=dict)
     status: str = "queued"          # queued | running | done | error
     stage: str = "waiting"          # loading | resolving | encoding | joining
     done: int = 0
@@ -59,6 +61,7 @@ class Job:
     def as_dict(self) -> dict[str, Any]:
         out = {
             "id": self.id,
+            "kind": self.kind,
             "status": self.status,
             "stage": self.stage,
             "done": self.done,
@@ -108,16 +111,28 @@ def _prune() -> None:
 
 
 def _run(job: Job) -> None:
-    from app.generate import generate_video
-
     def progress(stage: str, done: int, total: int) -> None:
         job.stage, job.done, job.total = stage, done, total
 
     job.status = "running"
     job.started = time.time()
     try:
-        job.result = generate_video(job.text, progress=progress,
-                                    subtitles=job.subtitles)
+        if job.kind == "ytpmv":
+            # Through the same single worker as sentences, on purpose: a song
+            # is the heaviest thing this box renders, and running one beside a
+            # sentence is exactly the contention the queue exists to prevent.
+            from app.ytpmv.render import YtpmvError, render_ytpmv
+            try:
+                job.result = render_ytpmv(job.params, progress=progress)
+            except YtpmvError as exc:
+                job.error = str(exc)
+                job.error_kind = "request"
+                job.status = "error"
+                return
+        else:
+            from app.generate import generate_video
+            job.result = generate_video(job.text, progress=progress,
+                                        subtitles=job.subtitles)
         job.status = "done"
         job.stage = "finished"
     except RuntimeError as exc:
@@ -130,6 +145,9 @@ def _run(job: Job) -> None:
         if crowded or killed:
             job.error_kind = "crowded"
             job.error = (
+                "Ran out of room part-way through. Try a shorter stretch of "
+                "the song, or fewer tiles."
+                if job.kind == "ytpmv" else
                 "Ran out of room part-way through. That usually means the "
                 "sentence produced more clips than one encode can hold — "
                 "try a shorter one."
@@ -178,6 +196,16 @@ def _ensure_worker() -> None:
 def submit(text: str, subtitles: bool = False) -> Job:
     _ensure_worker()
     job = Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles)
+    with _lock:
+        _jobs[job.id] = job
+        _order.append(job.id)
+    _queue.put(job.id)
+    return job
+
+
+def submit_ytpmv(params: dict[str, Any], label: str = "ytpmv") -> Job:
+    _ensure_worker()
+    job = Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv", params=params)
     with _lock:
         _jobs[job.id] = job
         _order.append(job.id)

@@ -79,6 +79,24 @@ jobs:
         # mode up -- and then every word comes out wrong at once.
         run: python tests/test_splice_modes.py
 
+      - name: Pitch perfect
+        # The YTPMV's whole claim is that a word lands on the note, not near
+        # it. This sings a wobbling synthetic vowel on several notes and
+        # measures every voiced frame of the result.
+        run: |
+          pip install --quiet numpy mido
+          python tests/test_pitch.py
+
+      - name: Reading MIDI
+        # Tempo maps, key, which part is the bass and which the tune -- every
+        # choice the YTPMV makes afterwards starts from this.
+        run: python tests/test_music.py
+
+      - name: Matrix commands
+        # What the bot hears in a message. Plain string handling, and where
+        # the mistakes would be; needs no homeserver.
+        run: python tests/test_matrix_commands.py
+
   image:
     # Only publish from the default branch: a pull request should prove the
     # image builds without also pushing a tag anyone could pull by accident.

@@ -65,3 +65,9 @@ _fa_*.wav
 # project. The per-corpus ones under corpora/ stay tracked -- those belong
 # to the voice and travel with it.
 /pronunciations.csv
+
+# The Matrix bot's saved login when run outside Docker (the repo root is the
+# default data directory). It holds an access token.
+/matrix/
+# YTPMV uploads and word measurements, same reason: runtime data.
+/ytpmv/

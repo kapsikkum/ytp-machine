@@ -311,6 +311,83 @@ and works for any word in any corpus.
 A run is one clip, so it is reversed or not as a whole — marking one word ends
 the run there rather than quietly reversing its neighbours.
 
+## YTPMV: sing a MIDI file
+
+<http://localhost:8765/ytpmv.html>
+
+Drop in a MIDI file and the corpus plays it: one tile per instrument, the
+clip re-triggered on every note, and every note **pitch perfect**. The clip's
+wobbling speech pitch is measured frame by frame and laid back down exactly on
+the note's frequency (TD-PSOLA, `app/ytpmv/pitch.py`), which keeps the voice's
+character while putting it in tune — solo notes measure within a few cents.
+
+You don't need to know any music theory. The file is read for you:
+
+- **key**, tempo, time signature and length, described in plain words
+- **what each part is**: tune, backing, chords, bass, or a piece of the drum
+  kit (channel 10 is split into kick, snare, hats, toms and cymbals)
+- **a word for each part**, picked for the kind of sound it makes: a plosive
+  for a kick, a hiss for a hi-hat, a long steady vowel for a tune. Every take
+  of the candidate words is measured, so the take picked is the one that holds
+  a pitch best.
+- **an octave for each part**, so a bass line at E1 is sung where the voice
+  can sing it. The notes keep their names, so it is still the same song.
+
+Change any of it: type a word or phrase, cycle through takes, click an
+alternative, press ▶ part to hear a part on its own, move an octave, mute a
+part, choose `tape` for the classic chipmunk sound instead of `pitch perfect`.
+Render goes through the same queue as sentences.
+
+From a terminal:
+
+```bash
+python scripts/ytpmv.py song.mid --info
+python scripts/ytpmv.py song.mid --part lead=yeah --part kick=boom --max 30
+python scripts/ytpmv.py song.mid --only bass --check     # measure the tuning
+```
+
+`YTPMV_MAX_SECONDS` caps the length of a render (default 300).
+
+## Matrix bot
+
+A bot account that makes videos when asked in a Matrix room:
+
+```
+!ytp say nice chocolate cake
+!ytp mv                          the last MIDI file posted in the room
+!ytp mv info                     what the song is and which words it would use
+!ytp mv lead=yeah kick=boom max=60 octave:bass=+1 mode:lead=tape
+!ytp voices
+!ytp help
+```
+
+Post a `.mid` file, then `!ytp mv` (or reply to the file with it). In a direct
+message the prefix is optional and plain text is said.
+
+It runs as a second compose service against the same image, talking to the
+web app over HTTP — so it uses the same queue, and a bot that falls over cannot
+take the site with it. Put its settings in a `.env` beside `docker-compose.yml`:
+
+```bash
+MATRIX_HOMESERVER=https://matrix.example.org
+MATRIX_USER=@ytp:example.org
+MATRIX_PASSWORD=...                 # used once; the token is saved to the volume
+MATRIX_ALLOWED_USERS=*:example.org  # or MATRIX_ALLOWED_ROOMS=!abc:example.org
+MATRIX_ADMINS=@you:example.org      # who may switch the voice for everyone
+YTP_PUBLIC_URL=https://ytp.example.org   # optional: link to videos too big to upload
+```
+
+```bash
+docker compose --profile matrix up -d
+docker compose run --rm bot --check-config
+```
+
+Invite the bot to a room and it joins. Without either allow-list it answers
+anyone who invites it (and logs a warning saying so). Each person gets one
+request at a time and a cooldown (`MATRIX_COOLDOWN`, 20 s); song videos are
+capped at `MATRIX_MV_MAX_SECONDS` (120). Encrypted rooms are not supported —
+the bot leaves them rather than sit somewhere it cannot read.
+
 ## Fixing a corpus by hand
 
 <http://localhost:8765/editor.html>
@@ -491,6 +568,10 @@ once exhausted the container's thread ceiling before the queue existed.
 | `GET`/`POST /api/splice-mode` | read or set how hard the splicer tries |
 | `POST /api/reload` | drop the clip cache after an ingest or correction |
 | `GET /api/stats` | corpus totals |
+| `POST /api/ytpmv/midi` | upload a MIDI file (multipart `midi`) → key, tempo, parts, suggested sounds |
+| `POST /api/ytpmv/sample` | `{"text","take"}` → the clip as an instrument, and the note it is on |
+| `POST /api/ytpmv/preview` | `{"midi_id","part"}` → a few seconds of one part, audio only |
+| `POST /api/ytpmv/render` | `{"midi_id","parts","options"}` → `202` with a job id, polled like the rest |
 
 ## Tests
 
@@ -499,9 +580,13 @@ python tests/test_tokenize.py        # tokeniser: expansions, markers, boundarie
 python tests/test_splice_modes.py    # pronunciations, substitutions, cost order
 python tests/test_corpus_select.py   # which corpus a run writes into
 python tests/test_bundle.py          # a bundle survives a round trip
+python tests/test_pitch.py           # YTPMV: a wobbling vowel lands on the note
+python tests/test_music.py           # YTPMV: tempo, key and parts from a MIDI file
+python tests/test_matrix_commands.py # what the Matrix bot hears in a message
 ```
 
-Those four run in CI and need nothing but `num2words`, `nltk` and `zstandard`.
+These run in CI and need nothing but `num2words`, `nltk`, `zstandard`,
+`numpy` and `mido`.
 
 ```bash
 python tests/test_end_to_end.py      # ~30s: one real video, start to finish
@@ -533,6 +618,10 @@ scripts/find_noises.py        pull non-verbal noises out of the gaps
 app/editor.py                 the corpus editor's API (the only writer
                               outside an ingest)
 frontend/editor.html          fix words and timings by hand, with a waveform
+app/ytpmv/                    MIDI in, pitch-perfect grid video out
+scripts/ytpmv.py              the same from a terminal, with a tuning check
+app/matrix_bot.py             the Matrix bot (python -m app.matrix_bot)
+frontend/ytpmv.html           the YTPMV page
 scripts/verify_corpus.py      check stored labels against YouTube captions
 scripts/corpus.py             pack / unpack / migrate / inspect
 corpora/<name>/               one voice: corpus.db + downloads/ + transcripts/
