@@ -13,6 +13,7 @@ always the same recording, so a choice made in the page survives to the render.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import random
 import subprocess
@@ -38,6 +39,14 @@ _MAX_SAMPLE = 3.0      # a phrase longer than this is not an instrument, it is a
 _cache: "OrderedDict[tuple, Sample]" = OrderedDict()
 _CACHE_MAX = 48
 _lock = threading.Lock()
+_building: dict[str, threading.Lock] = {}
+
+log = logging.getLogger(__name__)
+
+
+def _build_lock(name: str) -> threading.Lock:
+    with _lock:
+        return _building.setdefault(name, threading.Lock())
 
 
 class SampleError(ValueError):
@@ -175,10 +184,29 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
     digest = hashlib.sha1(f"{corpus}|{text}|{take}".encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     mp4 = os.path.join("output", f"ytpmv_sample_{digest}.mp4")
-    if not os.path.exists(mp4):
-        g._build_video(segments, mp4)
+    # One build per file at a time, written aside and moved into place. The
+    # page asks for every part's sample at once, and two parts suggested the
+    # same word and take: both requests saw no file, both encoded into the
+    # same path, and the interleaved result was a file ffmpeg could not
+    # decode -- which then sat there answering every later request with 500.
+    with _build_lock(digest):
+        x = None
+        if os.path.exists(mp4):
+            try:
+                x = decode_audio(mp4)
+            except RuntimeError:
+                log.warning("ytpmv: %s would not decode; building it again", mp4)
+                x = None
+        if x is None:
+            tmp = f"{mp4[:-4]}.{os.getpid()}.{threading.get_ident()}.tmp.mp4"
+            try:
+                g._build_video(segments, tmp)
+                os.replace(tmp, mp4)
+            finally:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            x = decode_audio(mp4)
 
-    x = decode_audio(mp4)
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))
     audio = x[a:b]
