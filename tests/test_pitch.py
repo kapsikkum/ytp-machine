@@ -74,6 +74,14 @@ noise = (np.random.default_rng(1).standard_normal(SR // 2) * 0.2).astype(np.floa
 check("sees noise as unvoiced", p.detect_pitch(noise).voiced_ratio < 0.2,
       f"{p.detect_pitch(noise).voiced_ratio:.2f}")
 
+import json
+try:
+    json.dumps(p.detect_pitch(noise).as_dict(), allow_nan=False)
+    ok = True
+except ValueError:
+    ok = False
+check("a sound with no pitch still describes itself as valid JSON", ok)
+
 check("midi / hz / names agree", p.note_name(p.hz_to_midi(p.midi_to_hz(64))) == "E4")
 
 print("perfect")

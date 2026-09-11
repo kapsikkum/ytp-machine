@@ -216,7 +216,9 @@ class PitchInfo:
             "midi": round(self.midi, 2) if self.midi is not None else None,
             "note": self.note,
             "voiced_ratio": round(self.voiced_ratio, 3),
-            "stability_cents": round(self.stability, 1),
+            # None, not inf, for a sound with no pitch: JSON has no infinity,
+            # and every hiss-cut drum hit 500'd on the way out.
+            "stability_cents": round(self.stability, 1) if math.isfinite(self.stability) else None,
             "duration": round(self.duration, 3),
         }
 
