@@ -262,10 +262,35 @@ def detect_key(parts: list[Part]) -> tuple[str, float]:
         rot = hist[tonic:] + hist[:tonic]
         scores.append((corr(rot, _MAJOR), f"{_PC[tonic]} major"))
         scores.append((corr(rot, _MINOR), f"{_PC[tonic]} minor"))
+    by_name = {name: sc for sc, name in scores}
     scores.sort(reverse=True)
     best, second = scores[0], scores[1]
     # Confidence: how clearly the winner beats the runner-up, squashed to 0..1.
     conf = max(0.0, min(1.0, best[0])) * min(1.0, 0.5 + (best[0] - second[0]) * 5)
+
+    # A major key and its relative minor use the same seven notes, so counting
+    # notes cannot tell them apart -- Megalovania's D minor read as F major.
+    # What does is where the music says home is: the note the tune starts on,
+    # and the notes the bass starts and ends on. When the relative key scores
+    # nearly as well, let those vote.
+    t0, mode0 = _PC.index(best[1].split()[0]), best[1].split()[1]
+    rel = (t0 + 9) % 12 if mode0 == "major" else (t0 + 3) % 12
+    rel_name = f"{_PC[rel]} {'minor' if mode0 == 'major' else 'major'}"
+    if best[0] - by_name[rel_name] < 0.15:
+        votes = {t0: 0.0, rel: 0.0}
+        melodic = [p for p in parts if not p.is_drums and p.notes]
+        if melodic:
+            low = min(melodic, key=lambda p: p.median_pitch())
+            high = max(melodic, key=lambda p: p.median_pitch())
+            bass = sorted(low.notes, key=lambda n: (n.start, n.pitch))
+            tune = sorted(high.notes, key=lambda n: (n.start, -n.pitch))
+            for pc in (bass[0].pitch % 12, bass[-1].pitch % 12, tune[0].pitch % 12):
+                if pc in votes:
+                    votes[pc] += 1
+        votes[t0] += 0.1 * hist[t0] / max(hist)        # the counts only break a tie
+        votes[rel] += 0.1 * hist[rel] / max(hist)
+        if votes[rel] > votes[t0]:
+            best = (by_name[rel_name], rel_name)
 
     # The profiles find the tonic well and the mode badly whenever one note
     # drones: a riff that sits on E for half its length correlates with E major

@@ -103,6 +103,12 @@ drone = [(i * 0.25, 0.25, 40) for i in range(64)] + [(i * 2 + 0.5, 0.25, 43) for
 check("a riff on a drone with a minor third is minor", music.parse(song(track(0, drone, program=30))).key,
       "E minor")
 
+# Megalovania's shape: only F major's notes, but it starts on D, over a bass on D.
+dm_tune = [(i * 0.5, 0.5, p) for i, p in enumerate([62, 62, 74, 69, 67, 65, 62, 65, 67, 72, 70, 69, 65, 62] * 2)]
+dm_bass = [(i * 2, 2, p) for i, p in enumerate([38, 36, 34, 33, 38, 36, 34, 38])]
+check("the relative minor wins when the music starts and ends on its tonic",
+      music.parse(song(track(0, dm_tune, program=0), track(1, dm_bass, program=33))).key, "D minor")
+
 print("roles")
 roles = {p.id: p.role for p in s.parts}
 check("the flute is the tune", roles["t1c0"], "lead")
