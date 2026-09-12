@@ -142,7 +142,16 @@
     #progress.on { display: block; }
     #progress div { height: 100%; width: 0; background: var(--yellow); transition: width .3s; }
     #result video { width: 100%; border-radius: 6px; margin-top: 1rem; background: #000; }
-    #result .links { margin-top: .5rem; font-size: .75rem; }
+    #result .links { margin-top: .5rem; font-size: .75rem; display: flex;
+                     align-items: center; gap: .75rem; flex-wrap: wrap; }
+    #result .links a.download {
+      background: var(--yellow);
+      border-radius: 5px;
+      color: #000;
+      padding: .3rem .7rem;
+      text-decoration: none;
+    }
+    #result .links a.download:hover { background: #ffd000; }
     .hint { color: #4d4d4d; font-size: .72rem; line-height: 1.6; margin-top: .75rem; }
     .hint b { color: #777; font-weight: 400; }
 
@@ -596,14 +605,30 @@
     }
   }
 
+  // What the file should be called once it is off this page. The song's name
+  // says what it is; the render's own id keeps two goes at the same song from
+  // landing on top of each other in the downloads folder.
+  function downloadName(r) {
+    const stem = (song && song.title ? song.title : 'ytpmv')
+      .replace(/\.[a-z0-9]+$/i, '')          // it arrived as a filename
+      .replace(/[^\w\-. ]+/g, ' ')           // nothing a filesystem will argue with
+      .replace(/\s+/g, ' ').trim().slice(0, 60) || 'ytpmv';
+    const hash = (r.video_url.match(/ytpmv_([0-9a-f]+)\.mp4/) || [])[1] || '';
+    return `${stem}${hash ? ' ' + hash : ''}.mp4`;
+  }
+
   function show(r) {
     const probs = (r.problems || []).map(p =>
       `<div class="err">${esc(p.name)}: ${esc(p.error)} — that part was left out</div>`).join('');
+    const name = downloadName(r);
     $('result').innerHTML = `
       <video src="${r.video_url}" controls autoplay playsinline></video>
       ${probs}
-      <div class="links"><a href="${r.video_url}" target="_blank">open the video on its own →</a>
-      · ${r.duration}s · ${r.size[0]}×${r.size[1]}</div>`;
+      <div class="links">
+        <a class="download" href="${r.video_url}" download="${esc(name)}">⤓ download ${esc(name)}</a>
+        <a href="${r.video_url}" target="_blank">open on its own →</a>
+        · ${r.duration}s · ${r.size[0]}×${r.size[1]}
+      </div>`;
   }
 
   // ── come back to where we were ───────────────────────────────────────────

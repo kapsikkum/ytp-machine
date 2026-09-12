@@ -988,7 +988,10 @@ as the word is heard.">
       // Show video
       videoEl.src = video_url;
       dlLink.href = video_url;
-      dlLink.download = video_url.split('/').pop();
+      // Named after what was said, not after the id alone. A folder of
+      // 7a7849d6ed.mp4 tells you nothing about which one is which; the id
+      // stays on the end so two goes at the same sentence do not collide.
+      dlLink.download = downloadName(text, video_url);
       videoBox.classList.add('visible');
       videoEl.load();
       videoEl.play().catch(() => {});   // autoplay may be blocked — that's fine
@@ -1054,6 +1057,17 @@ as the word is heard.">
     progressEl.classList.remove('on', 'indeterminate');
     progressBar.style.width = '0';
     progressNote.textContent = '';
+  }
+
+  // What a downloaded video should be called: the words, then the id that
+  // made it.
+  function downloadName(said, url) {
+    const stem = (said || '')
+      .replace(/[~*]/g, '')                   // markup is not part of the name
+      .replace(/[^\w\-. ]+/g, ' ')
+      .replace(/\s+/g, ' ').trim().slice(0, 60) || 'ytp';
+    const id = (url.match(/([0-9a-f]{6,})\.mp4$/) || [])[1] || '';
+    return `${stem}${id ? ' ' + id : ''}.mp4`;
   }
 
   // Poll until the job resolves. Backs off from a quarter second to two, so a
