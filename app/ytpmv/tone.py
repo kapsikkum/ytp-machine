@@ -5,11 +5,14 @@ sound. There are two kinds, and the difference decides whether you still hear
 the voice at all:
 
   clean     the voice, untouched
-  dac       the voice through the chip's PCM channel -- eight bits at about
-            13 kHz, with the dead zone around silence. Still the voice, the
-            way a Mega Drive played a sampled one
-  a patch   not the voice: the emulated YM2612 synthesising the note
-            (bass, lead, organ, brass, bell, piano, strings)
+  dac       the voice through the Mega Drive's PCM channel -- eight bits at
+            about 13 kHz, with the dead zone around silence
+  dpcm      the voice through the NES's delta-modulation channel, which can
+            only move two steps at a time and so blunts whatever it plays
+  a patch   not the voice: one of the two emulated chips synthesising the
+            note. The YM2612's (bass, lead, organ, brass, bell, piano,
+            strings, and an FM kit) or the NES's (pulse, triangle, and a kit
+            off the noise channel)
 
 That middle one is how the console did its drums and its speech, so it is
 what a corpus becomes when a whole song is routed through the chip -- the
@@ -23,21 +26,28 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.ytpmv import ym2612
+from app.ytpmv import nes, ym2612
 from app.ytpmv.pitch import SR
 
-# Everything a part's tone may be set to, and what to call it.
+# Everything a part's tone may be set to, and what to call it. Two machines,
+# and for each the same pair of choices: let its synthesiser play the note, or
+# put the recorded voice through the channel that machine kept its samples on.
 TONES = {
     "clean": "as recorded",
-    "dac": "the voice off the chip's 8-bit sample channel",
+    "dac": "the voice off the Mega Drive's 8-bit sample channel",
+    "dpcm": "the voice off the NES's delta-modulation channel",
     **{name: patch.about for name, patch in ym2612.PATCHES.items()},
+    **{name: voice.about for name, voice in nes.VOICES.items()},
 }
 
 # What these were called when there was one hand-built bass patch and no chip.
 ALIASES = {"slap": "bass", "megadrive": "bass"}
 
 # The tones that replace the voice rather than colour it.
-SYNTH = frozenset(ym2612.PATCHES)
+SYNTH = frozenset(ym2612.PATCHES) | frozenset(nes.VOICES)
+
+# What each machine calls "the voice, played off this machine".
+SAMPLED = {"md": "dac", "nes": "dpcm"}
 
 # How fast the driver managed to feed the DAC. Mega Drive games rarely did
 # better than this, and the graininess is the point.
@@ -84,8 +94,15 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
     if tone in SYNTH and hz:
         # The voice is gone here: all that is kept of it is how long it went on
         # for and how loud it was, so the part still sits where it sat before.
-        # Longer than the note on purpose: the release rings on past the key
-        # coming up, and the mixer is happy to have it overlap what follows.
-        x = ym2612.render_note(ym2612.PATCHES[tone], hz, len(y) / sr, sr, level)
+        # The Mega Drive's patches are rendered longer than the note on
+        # purpose -- the release rings on past the key coming up, and the
+        # mixer is happy to have that overlap whatever follows.
+        if tone in nes.VOICES:
+            x = nes.render_note(nes.VOICES[tone], hz, len(y) / sr, sr, level)
+        else:
+            x = ym2612.render_note(ym2612.PATCHES[tone], hz, len(y) / sr, sr, level)
         return (x * peak).astype(np.float32)
+    if tone == "dpcm":
+        # The channel's level runs 0 to 127 and idles in the middle.
+        return ((nes.dpcm(y / peak, 10, sr) / 64.0 - 1.0) * peak).astype(np.float32)
     return (ym2612.dac(y / peak, DAC_RATE, sr) * peak).astype(np.float32)

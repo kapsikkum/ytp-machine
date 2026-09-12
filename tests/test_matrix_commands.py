@@ -64,7 +64,15 @@ check("a part can be muted", c.parts["hats"], {"mute": True, "visible": False})
 c = parse("!ytp mv vary=random jitter=off")
 check("how much a part varies between hits", c.options, {"vary": "random", "jitter": False})
 check("the ultra mode", parse("!ytp mv vary=ultra").options, {"vary": "ultra"})
-check("the whole song through the chip", parse("!ytp mv chip=on").options, {"chip": True})
+check("the whole song through a chip", parse("!ytp mv chip=md").options, {"chip": "md"})
+check("keeping his voice, off that machine's sample channel",
+      parse("!ytp mv chip=md-voice").options, {"chip": "md-voice"})
+check("the other machine", parse("!ytp mv chip=nes").options, {"chip": "nes"})
+check("turning it off again", parse("!ytp mv chip=off").options, {"chip": False})
+check("a machine we do not have is reported",
+      parse("!ytp mv chip=snes").errors, ["chip is one of off, md, md-voice, nes, nes-voice"])
+check("an NES voice on one part", parse("!ytp mv tone:bass=triangle").parts,
+      {"bass": {"tone": "triangle"}})
 check("one part through one of the chip's patches",
       parse("!ytp mv tone:bass=organ").parts, {"bass": {"tone": "organ"}})
 check("the old name for the bass patch still works",

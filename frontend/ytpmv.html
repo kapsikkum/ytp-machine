@@ -226,7 +226,15 @@
         <option value="ultra">ultra: different words</option>
       </select>
     </label>
-    <label title="Play the whole song on an emulated Mega Drive sound chip. Every melodic part is synthesised by the YM2612 -- the voice is gone from those -- and the drums stay Michael Rosen, played eight-bit off its sample channel, which is how the console did drums."><input type="checkbox" id="opt-chip"> mega drive chip</label>
+    <label title="Play the whole song on an emulated sound chip. Synthesised means the machine makes the sound itself and the voice is gone — four-operator FM on the Mega Drive, two pulses and a noise register on the NES. His voice means the opposite: every note is still him, sung on the note as ever, played out through the channel that console used for speech.">chip
+      <select id="opt-chip">
+        <option value="" selected>off — the voice</option>
+        <option value="md">mega drive — synthesised</option>
+        <option value="md-voice">mega drive — his voice, 8-bit</option>
+        <option value="nes">nes — synthesised</option>
+        <option value="nes-voice">nes — his voice, delta-modulated</option>
+      </select>
+    </label>
     <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
     <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
@@ -571,7 +579,7 @@
     const len = parseInt($('opt-len').value);
     const options = {
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').checked,
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked,
     };

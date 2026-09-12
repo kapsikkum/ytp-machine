@@ -62,8 +62,11 @@ def main() -> int:
                          "(default off, the same take every hit)")
     ap.add_argument("--jitter", action=argparse.BooleanOptionalAction, default=None,
                     help="a hair of level on every hit, and of tuning on drums (default off)")
-    ap.add_argument("--chip", action="store_true",
-                    help="play the whole song through the emulated Mega Drive sound chip")
+    ap.add_argument("--chip", nargs="?", const="md", default=None,
+                    choices=("md", "md-voice", "nes", "nes-voice"),
+                    help="play the whole song on an emulated sound chip. The plain "
+                         "names synthesise it and the voice is gone; the -voice ones "
+                         "keep him, played off that machine's own sample channel")
     ap.add_argument("--only", action="append", default=[], help="play just these parts")
     ap.add_argument("--part", action="append", default=[], metavar="PART=WORDS")
     for k in ("take", "octave", "mode", "volume", "pan", "sustain", "tone"):

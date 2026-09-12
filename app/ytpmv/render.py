@@ -30,7 +30,7 @@ import numpy as np
 
 import app.generate as g
 from app.database import DATA_DIR, active
-from app.ytpmv import music, recommend, samples, tone as tones, ym2612
+from app.ytpmv import music, nes, recommend, samples, tone as tones, ym2612
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -136,15 +136,58 @@ def analyse(midi_id: str, progress=None) -> dict:
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
-def chip_tone(part: music.Part) -> str:
-    """What *part* is played by when the whole song goes through the chip.
+# The machines a song can be played on, and what to call them. Each has two
+# ways of going about it, because each machine had two: a synthesiser, and a
+# channel for playing back a recording.
+#
+# The synthesised ones throw the voice away -- the chip makes the sound from
+# nothing and only the timing and loudness of the note survive. Which is a
+# thing worth wanting, and also a strange default for a machine whose whole
+# job is a man saying words, so the sampled ones are here as well: those keep
+# every bit of the voice, pitch-perfect as ever, and play it out through the
+# channel the console actually used for speech.
+CHIPS = {
+    "md": "the Mega Drive's YM2612, synthesising: four-operator FM",
+    "md-voice": "the voice, played off the Mega Drive's 8-bit sample channel",
+    "nes": "the NES's 2A03, synthesising: two pulses, a triangle and noise",
+    "nes-voice": "the voice, played off the NES's delta-modulation channel",
+}
 
-    Melodic parts get an FM patch picked from what the part turned out to be
-    doing; drums keep the voice and go out over the sample channel, because
-    that is where a Mega Drive put its drums -- the chip could synthesise a
-    kick, and almost nobody did.
+# What people typed before the names got shorter, and before there was
+# anything to choose between.
+CHIP_ALIASES = {"megadrive": "md", "megadrive-voice": "md-voice",
+                "genesis": "md", "true": "md", "on": "md", "yes": "md"}
+
+
+def which_chip(asked) -> str | None:
+    """Which machine *asked* means, or None for none.
+
+    True still means the Mega Drive, which is all there was when this was a
+    checkbox rather than a choice.
     """
-    return "dac" if part.is_drums else ym2612.patch_for(part.role, part.program).name
+    if asked is True:
+        return "md"
+    if not asked or asked is False:
+        return None
+    name = str(asked).strip().lower()
+    name = CHIP_ALIASES.get(name, name)
+    return name if name in CHIPS else None
+
+
+def chip_tone(part: music.Part, chip: str = "megadrive") -> str:
+    """What *part* is played by when the whole song goes through *chip*.
+
+    Every part, drums included. A console usually sampled its kit rather than
+    synthesising it, and that is still available per part -- but "through the
+    chip" ought to mean through the chip, so the synthesised settings use the
+    synthesised kit.
+    """
+    machine, _, mode = chip.partition("-")
+    if mode == "voice":
+        return tones.SAMPLED[machine]
+    if machine == "nes":
+        return nes.voice_for(part.role, part.program).name
+    return ym2612.patch_for(part.role, part.program).name
 
 
 def _default_settings_for(part: music.Part, rec: dict) -> dict:
@@ -314,9 +357,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if vary not in VARY:
         vary = "off"
     jitter = bool(opts.get("jitter", False))
-    # One switch for the lot: every part out through the emulated YM2612.
+    # One switch for the lot: every part out through an emulated sound chip.
     # Parts that were given a tone of their own keep it.
-    chip = bool(opts.get("chip", False))
+    chip = which_chip(opts.get("chip", False))
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
     # Recommendations only for parts the request did not choose a sound for.
@@ -330,7 +373,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             asked = given.get(p.id) or {}
             if tones.overrides_switch(asked.get("tone")):
                 continue
-            settings[p.id]["tone"] = chip_tone(p)
+            settings[p.id]["tone"] = chip_tone(p, chip)
             # The octave a part was moved by is there because a mouth cannot
             # go where the score does: a bass line at 49 Hz comes back up an
             # octave, chords come down three. The chip has no such limit, and

@@ -92,10 +92,11 @@ jobs:
         # choice the YTPMV makes afterwards starts from this.
         run: python tests/test_music.py
 
-      - name: The Mega Drive sound chip
-        # Envelope rates, multipliers, algorithms and the output stage,
-        # against figures from the datasheet rather than from this
-        # implementation -- a wrong FM chip still makes a noise, and the
+      - name: The sound chips
+        # Both of them. Envelope rates, multipliers, algorithms, shift
+        # register periods, duty widths and the output stages, against
+        # figures from the datasheets rather than from these
+        # implementations -- a wrong chip still makes a noise, and the
         # noise is all anybody looks at.
         run: python tests/test_ym2612.py
 

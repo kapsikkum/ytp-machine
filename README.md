@@ -348,34 +348,63 @@ python scripts/ytpmv.py song.mid --only bass --check     # measure the tuning
 
 `YTPMV_MAX_SECONDS` caps the length of a render (default 300).
 
-### On the Mega Drive's sound chip
+### On a sound chip
 
-One switch on the page ("mega drive chip"), `chip=on` to the bot, or `--chip`
-from the terminal plays the whole song on an emulated YM2612:
+One control on the page, `chip=` to the bot, or `--chip` from the terminal
+plays the whole song on an emulated console:
 
 ```bash
-python scripts/ytpmv.py song.mid --chip
+python scripts/ytpmv.py song.mid --chip md          # four-operator FM
+python scripts/ytpmv.py song.mid --chip nes-voice   # him, delta-modulated
 ```
 
-The melodic parts are synthesised by the chip's FM, and the voice is gone from
-them. The drums keep the voice and go out over the chip's PCM channel at eight
-bits, which is how the console did drums -- so what comes out is the
-arrangement a real Mega Drive track had. A part can be set on its own with the
-bot's `tone:<part>=`, to one of `clean`, `dac`, or a patch: `bass`, `lead`,
-`organ`, `brass`, `bell`, `piano`, `strings`.
+Two machines, and each has two minds about how to do it:
 
-`app/ytpmv/ym2612.py` is a model of the chip rather than a cycle-exact
-emulator like Nuked-OPN2: the log-domain sine and 14-bit operators, the real
-envelope generator with its rates and key scaling, all eight algorithms,
-feedback, detune, the multipliers, 53267 samples a second, and the output
-stage -- which matters more than it sounds, because FM lands a sideband on DC
-and without the console's coupling capacitor a whole song rumbles.
+| | what makes the sound |
+| --- | --- |
+| `md` | the YM2612's FM operators. The voice is gone |
+| `md-voice` | him, sung on the note, out through the Mega Drive's 8-bit DAC |
+| `nes` | the 2A03's pulses, triangle and noise register. The voice is gone |
+| `nes-voice` | him, out through the NES's delta-modulation channel |
 
-The bass is Sonic 2's own voice `$00`, read out of the disassembly rather than
+The synthesised settings take every part, drums included: each gets a voice
+picked from what the analysis worked out it was *doing*, and all that is kept
+of the recording is how long each note lasts and how loud it was. The `-voice`
+settings keep the whole trick instead -- the clip is still pitch-tracked and
+flattened onto the exact note, and is then played out through the channel that
+console used for speech. The NES one is the more brutal: its DMC can only move
+two steps at a time, so it cannot keep up with a consonant and blunts it.
+
+A single part can be set with the bot's `tone:<part>=`, to `clean`, `dac`,
+`dpcm`, or any patch either machine has (`bass`, `lead`, `organ`, `brass`,
+`bell`, `piano`, `strings`, `md-kick`…; `pulse`, `pulse-thin`, `pulse-full`,
+`triangle`, `nes-snare`…).
+
+**`app/ytpmv/ym2612.py`** is a model of the Mega Drive's chip rather than a
+cycle-exact emulator like Nuked-OPN2: the log-domain sine and 14-bit
+operators, the real envelope generator with its rates and key scaling, all
+eight algorithms, feedback, detune, the multipliers, 53267 samples a second,
+and the output stage -- which matters more than it sounds, because FM lands a
+sideband on DC and without the console's coupling capacitor a whole song
+rumbles.
+
+Its bass is Sonic 2's own voice `$00`, read out of the disassembly rather than
 reconstructed by ear. Two things to know if you ever read one of those: SMPS
-numbers its operators backwards from the hardware, so its `op1` is operator 4;
-and the octave a part is moved by to suit a speaking voice is not applied when
-the chip is playing it, since a chip has no trouble with 49 Hz.
+numbers its operators backwards from the hardware, so its `op1` is operator 4
+(get that wrong and operators 2 and 3 swap, which in a chain is the difference
+between a bright FM bass and a near-pure sine); and the octave a part is moved
+by to suit a speaking voice is not applied when a chip is playing it, since a
+chip has no trouble with 49 Hz.
+
+**`app/ytpmv/nes.py`** is the 2A03's audio half, checked against Blargg's
+Nes_Snd_Emu rather than remembered -- the noise periods, the DMC rates, the
+duty widths and the mixing weights. It generates at four times the output rate
+and filters on the way down, because the noise register clocks at up to
+447 kHz and sampling that straight would alias it into mush; the short noise
+mode in particular is supposed to have an audible pitch, its sequence being
+only 93 steps long. The triangle divides by 32 where the pulses divide by 16,
+so it runs out of timer resolution an octave earlier and goes flat at the top
+of its range. That is the hardware, not a bug.
 
 ## Matrix bot
 

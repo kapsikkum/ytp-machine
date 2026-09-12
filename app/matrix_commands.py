@@ -42,8 +42,16 @@ _MODES = {"perfect", "tape", "raw"}
 _SUSTAINS = {"note", "ring"}
 # What a part can be played through. "megadrive" and "slap" are what the one
 # hand-built bass patch was called before the chip itself existed.
-_TONES = {"clean", "dac", "bass", "lead", "organ", "brass", "bell", "piano", "strings",
+_TONES = {"clean", "dac", "dpcm",
+          # the Mega Drive's
+          "bass", "lead", "organ", "brass", "bell", "piano", "strings",
+          "md-kick", "md-snare", "md-hat", "md-tom", "md-cymbal", "md-perc",
+          # the NES's
+          "pulse", "pulse-thin", "pulse-full", "triangle",
+          "nes-kick", "nes-snare", "nes-hat", "nes-tom", "nes-cymbal", "nes-perc",
           "megadrive", "slap"}
+_CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
+          "megadrive", "megadrive-voice"}      # the longer names still work
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
 _OPTIONS = {
@@ -57,7 +65,7 @@ _OPTIONS = {
     "flash":     ("flash", "bool"),
     "dim":       ("dim", "bool"),
     "labels":    ("labels", "bool"),
-    "chip":      ("chip", "bool"),
+    "chip":      ("chip", "chip"),
 }
 _TRUE = {"1", "yes", "on", "true", "y"}
 _FALSE = {"0", "no", "off", "false", "n"}
@@ -66,9 +74,12 @@ HELP = """\
 {p} say <words>        — a video of the voice saying it (--no-subs to drop the captions)
 {p} mv                 — play the last MIDI file posted here, one tile per instrument
 {p} mv info            — what the song is, and which word each part would use
-{p} mv chip=on        — the whole song on an emulated Mega Drive sound chip: the
-                         melodies synthesised by its FM, the drums still the voice but
-                         eight-bit off its sample channel, which is how the console did it
+{p} mv chip=md         — the whole song on an emulated sound chip, every part of it.
+{p} mv chip=nes          md is four-operator FM; nes is two pulses, a triangle
+                         and a noise register. Both throw the voice away and play the
+                         notes themselves -- add -voice (chip=nes-voice) to keep him
+                         instead, sung on the note and played off that machine's own
+                         sample channel
 {p} mv lead=yeah kick=boom max=60 octave:bass=+1 tone:bass=bass
                          vary=rotate|random (several takes of a part's word rather
                          than one) or vary=ultra (a different word every hit, still
@@ -145,7 +156,13 @@ def _mv(args: list[str]) -> Command:
             cmd.parts.setdefault(part, {})[setting] = v
         elif key in _OPTIONS:
             name, conv = _OPTIONS[key]
-            if conv == "vary":
+            if conv == "chip":
+                v = value.lower()
+                if v not in _CHIPS:
+                    cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice")
+                    continue
+                cmd.options[name] = False if v in ("off", "no") else v
+            elif conv == "vary":
                 if value.lower() not in _VARY:
                     cmd.errors.append(f"vary is one of {', '.join(sorted(_VARY))}")
                     continue

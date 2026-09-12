@@ -179,14 +179,78 @@ for name, patch in chip.PATCHES.items():
     x = chip.render_note(patch, hz, 0.4)
     check(f"{name} is finite and audible", bool(np.isfinite(x).all() and np.abs(x).max() > 0.2), True)
     check(f"{name} does not clip on its own", bool(np.abs(x).max() < 1.0), True)
-    info = describe(track_f0(x), 0.4)
-    near(f"{name} plays the note it was given", 1200 * math.log2((info.f0 or hz) / hz), 0.0, 15.0)
+    if patch.base_hz:
+        # A drum is not playing a note. Asking it to be in tune with one is
+        # asking the wrong thing: what it promises is to ignore it.
+        other = chip.render_note(patch, hz * 2.0, 0.4)
+        check(f"{name} sounds the same whatever note it is handed",
+              bool(np.array_equal(x, other)), True)
+    else:
+        info = describe(track_f0(x), 0.4)
+        near(f"{name} plays the note it was given",
+             1200 * math.log2((info.f0 or hz) / hz), 0.0, 15.0)
 check("a bass part is played by the bass patch", chip.patch_for("bass", 33).name, "bass")
 check("drums have no program, and the role decides", chip.patch_for("chords", None).name, "organ")
 check("with no role the program decides", chip.patch_for("", 56).name, "brass")
 check("the same note twice is the same sound",
       bool((chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)
             == chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)).all()), True)
+
+print("the NES")
+from app.ytpmv import nes
+# The shift register is periodic, and how long it takes to come round is why
+# the short mode has a pitch and the long one does not.
+check("the long shift register runs 32767 steps", len(nes.noise_bits(0)), 32767)
+check("and the short one 93", len(nes.noise_bits(1)), 93)
+check("the noise period table is the hardware's",
+      nes.NOISE_PERIODS[0] == 4 and nes.NOISE_PERIODS[-1] == 4068, True)
+check("so is the DMC's", nes.DMC_PERIODS[0] == 428 and nes.DMC_PERIODS[-1] == 54, True)
+near("the NTSC clock", nes.CPU, 1789773.0, 1.0)
+# The duty widths are 1 << the setting, the fourth being the quarter negated.
+for duty, want in ((0, 1 / 8), (1, 2 / 8), (2, 4 / 8), (3, 6 / 8)):
+    on = float((nes.pulse(220.0, SR, duty, SR) > 0).mean())
+    near(f"duty {duty} is high {want * 100:.0f}% of the time", on, want, 0.02)
+# The triangle divides by 32 where the pulses divide by 16, so for the same
+# timer it sounds an octave lower -- it is the bass voice for a reason.
+tri = nes.triangle(110.0, SR // 4, SR)
+check("the triangle has 16 levels each way", len(np.unique(tri)), 16)
+check("and no volume control to apply", float(tri.max()), 15.0)
+# Every voice, in tune and audible.
+for name, voice in nes.VOICES.items():
+    x = nes.render_note(voice, midi_to_hz(45), 0.3)
+    check(f"{name} is finite and audible", bool(np.isfinite(x).all() and np.abs(x).max() > 0.2), True)
+    check(f"{name} does not clip", bool(np.abs(x).max() < 1.0), True)
+check("a bass part takes the triangle", nes.voice_for("bass").name, "triangle")
+check("drums come off the noise channel", nes.voice_for("drums:snare").name, "nes-snare")
+# The DMC can only move two steps at a time, which is the whole character.
+ramp = np.linspace(-1.0, 1.0, SR // 10).astype(np.float32)
+out = nes.dpcm(ramp, 10)
+check("the DMC output stays inside its 7 bits",
+      bool(out.min() >= 0.0 and out.max() <= 127.0), True)
+check("and never moves more than two steps at once",
+      bool(np.abs(np.diff(np.unique(out))).max() <= 2.0), True)
+
+print("both machines, each of two minds")
+_r = __import__("app.ytpmv.render", fromlist=["CHIPS"])
+for name in ("md", "md-voice", "nes", "nes-voice"):
+    check(f"{name} is a setting we have", name in _r.CHIPS, True)
+check("true still means the Mega Drive, as it did when this was a tickbox",
+      _r.which_chip(True), "md")
+check("and the long name still works for anyone who typed it",
+      _r.which_chip("megadrive"), "md")
+check("and false still means none of them", _r.which_chip(False), None)
+check("a machine we do not have is not one", _r.which_chip("snes"), None)
+# The point of the sampled settings: the voice survives them.
+from app.ytpmv import music as _m
+_part = _m.Part(id="x", name="n", track=0, channel=0, program=33, notes=[], role="bass")
+check("synthesised, the Mega Drive plays it itself",
+      _r.chip_tone(_part, "md"), "bass")
+check("but its voice setting keeps him, off the sample channel",
+      _r.chip_tone(_part, "md-voice"), "dac")
+check("synthesised, the NES gives the bass its triangle",
+      _r.chip_tone(_part, "nes"), "triangle")
+check("and its voice setting keeps him, delta-modulated",
+      _r.chip_tone(_part, "nes-voice"), "dpcm")
 
 print("the song-wide switch")
 from app.ytpmv import tone as tones
