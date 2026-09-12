@@ -40,8 +40,11 @@
       line-height: 1;
     }
     header p { color: #888; font-size: 0.85rem; margin-top: 0.5rem; letter-spacing: 1px; }
-    #voice { font-size: 0.75rem; color: #555; margin-bottom: 1.5rem; }
+    #voice { font-size: 0.75rem; color: #555; margin-bottom: 1.5rem;
+             display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; justify-content: center; }
     #voice span { color: var(--yellow); }
+    #voice-select { font-size: .75rem; padding: .15rem .35rem; }
+    #voice-select:disabled { opacity: .5; cursor: wait; }
 
     .card {
       background: var(--panel);
@@ -154,7 +157,10 @@
   <h1>YTPMV</h1>
   <p>a MIDI file, sung by the corpus — every note pitch perfect</p>
 </header>
-<div id="voice">voice: <span id="voice-name">—</span> · <a href="/">back to sentences</a></div>
+<div id="voice">voice:
+  <select id="voice-select"><option>loading…</option></select>
+  <span id="voice-note"></span> · <a href="/">back to sentences</a>
+</div>
 
 <div class="card">
   <div id="drop" tabindex="0">
@@ -169,6 +175,7 @@
   <h2 id="song-title"></h2>
   <div class="desc" id="song-desc"></div>
   <div class="chips" id="song-chips"></div>
+  <div class="hint" id="song-noises"></div>
   <div class="hint">
     Every part has a suggested word — picked for the <b>kind</b> of sound the part makes (a pop for a
     kick, a hiss for a hi-hat, a long vowel for a tune). Change any of them: type a word or a phrase,
@@ -257,7 +264,38 @@
   function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   // ── voice + vocabulary ───────────────────────────────────────────────────
-  api('/api/stats').then(s => { $('voice-name').textContent = s.corpus_name || s.corpus; }).catch(() => {});
+  const voiceSel = $('voice-select');
+
+  async function loadVoices() {
+    try {
+      const d = await api('/api/corpora');
+      voiceSel.innerHTML = d.corpora.map(c =>
+        `<option value="${esc(c.slug)}"${c.slug === d.active ? ' selected' : ''}>${esc(c.name || c.slug)}` +
+        `${c.words ? ` (${c.words} words)` : ''}</option>`).join('');
+    } catch { voiceSel.innerHTML = '<option>unavailable</option>'; }
+  }
+  loadVoices();
+
+  // Switching the voice switches it for the whole app -- the sentences page
+  // and the Matrix bot included -- so it is worth saying so out loud. Every
+  // part is then re-suggested, because the words one voice has are not the
+  // words another has.
+  voiceSel.addEventListener('change', async () => {
+    const slug = voiceSel.value;
+    voiceSel.disabled = true;
+    $('voice-note').textContent = 'switching…';
+    try {
+      await post('/api/corpus', { slug });
+      $('voice-note').textContent = '(changed for everyone)';
+      if (song) {
+        const data = await api(`/api/ytpmv/midi/${song.midi_id}`);
+        load(data, null);          // new voice, new suggestions
+      }
+    } catch (e) {
+      $('voice-note').textContent = e.message;
+    }
+    voiceSel.disabled = false;
+  });
   api('/api/words').then(w => {
     const dl = document.createElement('datalist');
     dl.id = 'vocab';
@@ -314,6 +352,12 @@
       ['length', `${Math.floor(song.duration / 60)}:${String(Math.round(song.duration % 60)).padStart(2, '0')}`],
       ['parts', song.parts.length],
     ].map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
+    const kinds = Object.entries(song.noises || {});
+    $('song-noises').innerHTML = kinds.length
+      ? 'This voice also makes noises that are not words: ' + kinds.map(([k, n]) =>
+          `<b>*${esc(k)}*</b> (${n})`).join(', ') +
+        '. They make the best drums — type one into any part, or pick it from the suggestions.'
+      : '';
     ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
     drawParts();
     for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);

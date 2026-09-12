@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import app.generate as g
-from app.database import DATA_DIR
+from app.database import DATA_DIR, active
 from app.ytpmv import music, recommend, samples
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
@@ -108,6 +108,10 @@ def analyse(midi_id: str, progress=None) -> dict:
     recs = recommend.recommend(song, progress=progress)
     out = song.summary()
     out["midi_id"] = midi_id
+    # What this voice has besides words. A spew or a click is already a
+    # percussive sound, so the page offers them for any part.
+    out["noises"] = samples.noises()
+    out["voice"] = active()["name"]
     for p in out["parts"]:
         rec = recs.get(p["id"], {})
         p["recommended"] = rec

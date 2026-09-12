@@ -16,6 +16,7 @@ import hashlib
 import logging
 import os
 import random
+import re
 import subprocess
 import threading
 from collections import OrderedDict
@@ -104,6 +105,34 @@ def _norm(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+# *spew*, *click* -- a non-verbal clip rather than a word. The corpus keeps
+# these apart from speech precisely because they are not words, and they make
+# far better drums than anything anybody says.
+_NOISE = re.compile(r"^\*([a-z0-9-]+)\*$")
+
+
+def noises() -> dict[str, int]:
+    """Every non-verbal noise the voice has, and how many recordings of each."""
+    g._ensure_cache()
+    found = {k: len(v) for k, v in (g._noise_by_word or {}).items() if v}
+    if len(g._all_noises or []) > 1 and len(found) > 1:
+        found["noise"] = len(g._all_noises)      # the "any noise" pool
+    return dict(sorted(found.items(), key=lambda kv: -kv[1]))
+
+
+def noise_takes(kind: str) -> list[dict]:
+    """Every recording of one noise, in a fixed order."""
+    g._ensure_cache()
+    rows = (g._all_noises if kind == "noise" else (g._noise_by_word or {}).get(kind)) or []
+    return sorted(rows, key=lambda r: (r.get("id") or 0, r["start_time"]))
+
+
+def takes_for(text: str) -> list[dict]:
+    """The takes behind *text*, whether it names a noise or a word."""
+    m = _NOISE.match(_norm(text))
+    return noise_takes(m.group(1)) if m else takes(_norm(text))
+
+
 def takes(word: str) -> list[dict]:
     """Every recording of *word* worth playing, in a fixed order.
 
@@ -161,7 +190,15 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
             return cached
 
     g._ensure_cache()
-    word_takes = takes(text) if " " not in text and not any(c in text for c in "~*") else []
+    noise = _NOISE.match(text)
+    if noise:
+        word_takes = noise_takes(noise.group(1))
+        if not word_takes:
+            raise SampleError(f"This voice has no {noise.group(1)} noise.")
+    elif " " not in text and "~" not in text and "*" not in text:
+        word_takes = takes(text)
+    else:
+        word_takes = []
     n_takes = max(1, len(word_takes))
     if word_takes:
         clip = word_takes[int(take) % len(word_takes)]

@@ -179,6 +179,18 @@ def words():
     return {"words": {r[0]: r[1] for r in rows}}
 
 
+@router.get("/noises")
+def noises():
+    """The non-verbal clips this voice has, and how many of each.
+
+    The tokens are typed as *spew* / *click*, and nothing anywhere said which
+    ones existed -- the markup was documented and its vocabulary was not, so
+    the only way to find a noise was to guess a word and see.
+    """
+    from app.ytpmv import samples
+    return {"noises": samples.noises()}
+
+
 @router.get("/suggest")
 def suggest(context: str = "", prefix: str = "", limit: int = 10):
     """Autocomplete: phrase continuations from real spoken runs, plus

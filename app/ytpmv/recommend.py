@@ -175,8 +175,14 @@ def score(role: str, m: dict) -> float:
     return s
 
 
-def _words_for(role: str, available: dict[str, list[dict]], frequent: list[str]) -> list[str]:
+def _words_for(role: str, available: dict[str, list[dict]], frequent: list[str],
+               noises: tuple[str, ...] = ()) -> list[str]:
     words = [w for w in PREFERRED.get(role, PREFERRED["rhythm"]) if available.get(w)]
+    # A corpus with non-verbal noises has better drums in it than any word: a
+    # spew or a click is already a percussive sound, so they are auditioned for
+    # the kit alongside the words and win on their own merits.
+    if role.startswith("drums"):
+        words = [f"*{k}*" for k in noises] + words
     if len(words) < 3:
         words += [w for w in frequent if w not in words]
     return words
@@ -194,14 +200,17 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     frequent = [w for w, rows in sorted(cbw.items(), key=lambda kv: -len(kv[1]))
                 if w.isalpha()][:_FALLBACK_WORDS]
     roles = sorted({p.role for p in song.parts})
+    # "noise" is the any-of pool: every take is a different kind of sound, so
+    # it is no use as one instrument. It stays available to type by hand.
+    noise_kinds = tuple(k for k in samples.noises() if k != "noise")
 
     # Every (word, take) worth measuring for any role, measured once.
     wanted: dict[str, list[tuple[int, dict]]] = {}
     for role in roles:
-        for w in _words_for(role, cbw, frequent):
+        for w in _words_for(role, cbw, frequent, noise_kinds):
             if w in wanted:
                 continue
-            tk = samples.takes(w)
+            tk = samples.takes_for(w)
             if not tk:
                 continue
             step = max(1, len(tk) // _TAKES_PER_WORD)
@@ -234,7 +243,7 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     used: dict[str, int] = {}
     for part in song.parts:
         ranked = []
-        for w in _words_for(part.role, cbw, frequent):
+        for w in _words_for(part.role, cbw, frequent, noise_kinds):
             for i, clip in wanted.get(w, []):
                 entry = cache.get(_clip_key(clip)) or {}
                 m = entry.get(part.drum_group) if part.is_drums else entry.get("word")
@@ -244,6 +253,8 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
                 # than a slightly less ideal second word.
                 pref = PREFERRED.get(part.role, [])
                 bonus = 0.3 if w in pref[:4] else 0.0
+                if w.startswith("*"):
+                    bonus += 0.4        # a real noise beats a word pretending
                 ranked.append((score(part.role, m) + bonus - 0.6 * used.get(w, 0), w, i, m))
         ranked.sort(key=lambda r: -r[0])
         # One entry per word in the alternatives, best take of each.

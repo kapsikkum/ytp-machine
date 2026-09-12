@@ -508,6 +508,24 @@
       color: #666;
       margin-top: 0.6rem;
     }
+    /* Which noises this voice actually has. The markup was documented and its
+       vocabulary was not, so the only way to find one was to guess a word and
+       see whether anything came out. */
+    #noise-box { text-align: center; font-size: 0.7rem; color: #666; margin-top: 0.35rem; }
+    #noise-box button {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: #999;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.7rem;
+      margin: 0 0.15rem;
+      padding: 0.05rem 0.45rem;
+    }
+    #noise-box button:hover { color: var(--yellow); border-color: var(--yellow); }
+    #noise-box button b { color: #555; font-weight: 400; }
+
     #syntax-hint code {
       color: #999;
       background: var(--panel);
@@ -638,6 +656,7 @@ as the word is heard.">
   </div>
 
   <div id="syntax-hint"><code>~word~</code> plays it backwards · <code>*noise*</code> for a non-verbal clip</div>
+  <div id="noise-box" hidden>this voice also makes: <span id="noise-list"></span></div>
 
   <div id="legend" style="display:none">
     <span><span class="dot run"></span> real phrase</span>
@@ -788,6 +807,7 @@ as the word is heard.">
       // has to be rebuilt or the word checker will lie about what is available.
       await loadStats();
       await loadWords();
+      loadNoises();      // a different voice makes different noises
       await loadSpliceMode();
     } catch {
       await loadCorpora();   // put the selector back where it really is
@@ -1123,6 +1143,38 @@ as the word is heard.">
     } catch { /* ignore */ }
   }
   loadWords();
+
+  // The noises this voice has, as buttons that type themselves into the box.
+  // Reloaded with the vocabulary, because they belong to the corpus too.
+  async function loadNoises() {
+    const box = document.getElementById('noise-box');
+    const list = document.getElementById('noise-list');
+    try {
+      const r = await fetch('/api/noises');
+      if (!r.ok) return;
+      const kinds = Object.entries((await r.json()).noises || {});
+      box.hidden = !kinds.length;
+      list.innerHTML = kinds.map(([k, n]) =>
+        `<button type="button" data-noise="*${k}*">*${k}* <b>${n}</b></button>`).join('');
+    } catch { box.hidden = true; }
+  }
+  loadNoises();
+
+  document.getElementById('noise-list').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const token = b.dataset.noise;
+    const at = textInput.selectionStart ?? textInput.value.length;
+    const before = textInput.value.slice(0, at);
+    const after = textInput.value.slice(at);
+    const lead = before && !before.endsWith(' ') ? ' ' : '';
+    const tail = after.startsWith(' ') ? '' : ' ';
+    textInput.value = before + lead + token + tail + after;
+    const caret = (before + lead + token + tail).length;
+    textInput.focus();
+    textInput.setSelectionRange(caret, caret);
+    textInput.dispatchEvent(new Event('input'));
+  });
 
   // Mirror the backend tokeniser: strip non-word chars, lowercase.
   const cleanWord = (t) => t.replace(/[^\w]/g, '').toLowerCase();
