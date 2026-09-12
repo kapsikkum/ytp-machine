@@ -160,6 +160,9 @@ class Patch:
     bend: float = 0.0
     bend_time: float = 0.008
     gain: float = 1.0
+    # A drum is not playing a note, so it ignores the one it is handed and
+    # sounds at its own pitch instead.
+    base_hz: float = 0.0
     # Semitones to shift the written note by so the patch sounds where it is
     # meant to. A patch whose carrier runs at half the note sounds an octave
     # below it, and the driver is expected to have written the note an octave
@@ -267,7 +270,7 @@ def render_note(patch: Patch, hz: float, dur: float, sr: int = SR,
     n = max(2, int(round((dur + max(0.0, tail)) * FM_RATE)))
     t = np.arange(n) / FM_RATE
     ticks = np.arange(n) / 3.0
-    hz = float(hz) * 2.0 ** (patch.transpose / 12.0)
+    hz = float(patch.base_hz or hz) * 2.0 ** (patch.transpose / 12.0)
     midi = 12.0 * math.log2(max(hz, 1e-6) / 440.0) + 69.0
     keycode = int(np.clip(round(midi) // 3, 0, 31))
 
@@ -455,6 +458,63 @@ PATCHES: dict[str, Patch] = {
 }
 
 
+# Drums. The console normally sampled these and played them off the DAC, and
+# that is still here as the "dac" tone -- but the chip can synthesise a kit
+# and plenty of games did, so this is what the song-wide switch uses: with it
+# on, everything goes through the chip and nothing is left as a recording.
+#
+# A kick is a sine dropped hard and fast. Everything above it is the same
+# trick: maximum feedback on a high multiplier is as close to noise as four
+# operators get, and then it is only a question of how long it rings.
+PATCHES.update({
+    "md-kick": Patch(
+        "md-kick", "a sine dropped hard, the FM kick", alg=0, fb=0,
+        base_hz=54.0, bend=30.0, bend_time=0.012, gain=0.77,
+        ops=(Op(mul=1, tl=40, ar=31, d1r=26, sl=4, d2r=20, rr=12),
+             Op(mul=1, tl=64, ar=31, d1r=31, sl=15, d2r=31, rr=15),
+             Op(mul=1, tl=64, ar=31, d1r=31, sl=15, d2r=31, rr=15),
+             Op(mul=1, tl=2, ar=31, d1r=18, sl=15, d2r=0, rr=10))),
+    "md-snare": Patch(
+        "md-snare", "feedback turned up until it stops being a pitch", alg=4, fb=7,
+        base_hz=196.0, gain=1.9,
+        ops=(Op(mul=15, tl=22, ar=31, d1r=24, sl=15, d2r=0, rr=12),
+             Op(mul=14, tl=10, ar=31, d1r=17, sl=15, d2r=0, rr=12),
+             Op(mul=11, tl=26, ar=31, d1r=26, sl=15, d2r=0, rr=12),
+             Op(mul=13, tl=14, ar=31, d1r=17, sl=15, d2r=0, rr=12))),
+    "md-hat": Patch(
+        "md-hat", "the same, over almost before it starts", alg=4, fb=7,
+        base_hz=880.0, gain=3.03,
+        ops=(Op(mul=15, tl=20, ar=31, d1r=24, sl=15, d2r=0, rr=15),
+             Op(mul=13, tl=16, ar=31, d1r=20, sl=15, d2r=0, rr=15),
+             Op(mul=14, tl=24, ar=31, d1r=24, sl=15, d2r=0, rr=15),
+             Op(mul=15, tl=18, ar=31, d1r=20, sl=15, d2r=0, rr=15))),
+    "md-tom": Patch(
+        "md-tom", "a kick with less of a drop, and tuned", alg=0, fb=1,
+        base_hz=130.0, bend=14.0, bend_time=0.03, gain=1.06,
+        ops=(Op(mul=2, tl=38, ar=31, d1r=22, sl=5, d2r=14, rr=12),
+             Op(mul=1, tl=60, ar=31, d1r=28, sl=15, d2r=31, rr=15),
+             Op(mul=1, tl=44, ar=31, d1r=20, sl=6, d2r=12, rr=12),
+             Op(mul=1, tl=6, ar=31, d1r=16, sl=15, d2r=0, rr=10))),
+    "md-cymbal": Patch(
+        "md-cymbal", "noise left to ring", alg=4, fb=7,
+        base_hz=1100.0, gain=2.43,
+        ops=(Op(mul=15, tl=24, ar=31, d1r=16, sl=15, d2r=0, rr=6),
+             Op(mul=14, tl=14, ar=31, d1r=13, sl=15, d2r=0, rr=5),
+             Op(mul=13, tl=28, ar=31, d1r=16, sl=15, d2r=0, rr=6),
+             Op(mul=11, tl=18, ar=31, d1r=13, sl=15, d2r=0, rr=5))),
+    "md-perc": Patch(
+        "md-perc", "a tick and nothing after it", alg=4, fb=6,
+        base_hz=420.0, gain=2.79,
+        ops=(Op(mul=15, tl=26, ar=31, d1r=24, sl=15, d2r=0, rr=15),
+             Op(mul=9, tl=16, ar=31, d1r=20, sl=15, d2r=0, rr=15),
+             Op(mul=12, tl=30, ar=31, d1r=24, sl=15, d2r=0, rr=15),
+             Op(mul=7, tl=20, ar=31, d1r=20, sl=15, d2r=0, rr=15))),
+})
+
+DRUMS = {"kick": "md-kick", "snare": "md-snare", "hats": "md-hat",
+         "toms": "md-tom", "cymbals": "md-cymbal", "perc": "md-perc"}
+
+
 # What each General MIDI family sounds most like on this chip. The role the
 # song analysis worked out wins where there is one, since it knows what the
 # part is *doing*; the program number only says what it was called.
@@ -469,7 +529,10 @@ _BY_PROGRAM = (
 
 def patch_for(role: str, program: int | None = None) -> Patch:
     """The chip voice to play a part with, from what the song analysis found."""
-    name = _BY_ROLE.get((role or "").split(":")[0])
+    head = (role or "").split(":")[0]
+    if head == "drums":
+        return PATCHES[DRUMS.get((role or "").split(":")[-1], "md-perc")]
+    name = _BY_ROLE.get(head)
     if name is None and program is not None:
         for lo, hi, guess in _BY_PROGRAM:
             if lo <= program <= hi:
