@@ -210,6 +210,38 @@ def _corpus_totals() -> dict:
         }
 
 
+def _totals_of(corpus: dict) -> dict:
+    """Count one corpus without making it the active one.
+
+    Counting used to mean switching to each corpus in turn and switching back.
+    That is a global change for a read: a request arriving mid-count built its
+    clip cache against the wrong corpus, and every path in it then pointed at
+    another voice's directory -- ffmpeg looking for a Michael Rosen video
+    inside james-channel. Read-only, and the live corpus never moves.
+    """
+    import sqlite3
+    db = corpus.get("db")
+    if not db or not os.path.exists(db):
+        return {"clips": 0, "words": 0, "sources": 0}
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        out = {
+            "clips": conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0],
+            "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
+            "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
+        }
+        for key, name in (("splice_mode", "splice_mode"), ("max_units", "max_units")):
+            try:
+                row = conn.execute("SELECT value FROM settings WHERE key=?", (name,)).fetchone()
+            except sqlite3.Error:
+                row = None
+            if row:
+                out[key] = row[0]
+        return out
+    finally:
+        conn.close()
+
+
 @router.get("/corpora")
 def corpora():
     """Every installed corpus, with the size of each.
@@ -223,14 +255,10 @@ def corpora():
     for c in list_corpora():
         entry = {"slug": c["slug"], "name": c["name"], "active": c["slug"] == current["slug"]}
         try:
-            set_active(c["slug"])
-            entry.update(_corpus_totals())
-        except Exception as exc:
+            entry.update(_totals_of(c))
+        except Exception as exc:                                # noqa: BLE001
             entry["error"] = str(exc)
         out.append(entry)
-    # Always put the selection back, including when a corpus above failed to
-    # open -- otherwise merely listing them would change which one is live.
-    set_active(current["slug"])
     return {"corpora": out, "active": current["slug"]}
 
 

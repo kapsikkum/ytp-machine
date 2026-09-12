@@ -81,8 +81,49 @@ check("explicit still wins over default", resolve(legacy, "aaa-pack")["slug"], "
 # directory with a space in it.
 check("name is slugified", resolve(used, "James Channel")["slug"], "james-channel")
 
+# ── the clip cache belongs to one corpus ──────────────────────────────────────
+# Clip paths are made absolute when the cache is built, against whatever corpus
+# is active at that moment. Listing the corpora used to switch to each in turn
+# to count it, so a request arriving mid-count cached michael-rosen's clips
+# with james-channel's directory in front of them, and ffmpeg spent the rest of
+# the process looking for videos that were never there.
+import sqlite3
+
+two = tempfile.mkdtemp(prefix="ytp-sel-two-")
+for name in ("alpha", "beta"):
+    d = os.path.join(two, "corpora", name)
+    os.makedirs(os.path.join(d, "downloads"), exist_ok=True)
+    con = sqlite3.connect(os.path.join(d, "corpus.db"))
+    con.execute("CREATE TABLE word_clips (id INTEGER PRIMARY KEY, source_id INT, word TEXT, "
+                "start_time REAL, end_time REAL, source_file TEXT, edited INT, phones TEXT)")
+    con.execute("INSERT INTO word_clips VALUES (1, 1, ?, 0.0, 0.5, 'downloads/v.mp4', 0, NULL)",
+                (name,))
+    con.commit()
+    con.close()
+
+os.environ["MRS_DATA_DIR"] = two
+os.environ.pop("MRS_CORPUS", None)
+for mod in [m for m in list(sys.modules) if m.startswith("app.")]:
+    del sys.modules[mod]
+import app.database as db
+import app.generate as gen
+
+db.set_active("alpha")
+gen._ensure_cache()
+first = gen._clips_by_word_cache["alpha"][0]["source_file"]
+check("a clip resolves inside its own corpus", "alpha" in first and "beta" not in first, True)
+
+# Switching corpus without an explicit reload -- which is what a listing did --
+# must not leave the old corpus's paths in place.
+db.set_active("beta")
+gen._ensure_cache()
+words = sorted(gen._clips_by_word_cache)
+second = gen._clips_by_word_cache["beta"][0]["source_file"]
+check("switching corpus rebuilds the cache", words, ["beta"])
+check("... against the corpus now live", "beta" in second and "alpha" not in second, True)
+
 if failures:
     print(f"FAILED ({len(failures)}):")
     print("\n".join(failures))
     sys.exit(1)
-print("ok: 9 corpus-selection cases")
+print("ok: 12 corpus-selection cases")

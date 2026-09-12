@@ -50,6 +50,7 @@ _IDLE_MIN_GAP = 0.45 # a source gap this long counts as on-screen idle/silence
 
 # ── Global cache ──────────────────────────────────────────────────────────────
 _clips_by_word_cache: dict[str, list[dict[str, Any]]] | None = None
+_cache_corpus:        str | None = None   # the corpus _clips_by_word_cache was built from
 _ordered_by_source:   dict[int, list[dict[str, Any]]] | None = None  # source_id → clips in spoken order
 _word_positions:      dict[str, list[tuple[int, int]]] | None = None  # word → [(source_id, idx)]
 _source_quality:      dict[int, float] = {}  # source_id → fraction of well-aligned clips
@@ -116,9 +117,23 @@ def _ensure_cache() -> None:
     short function words ("i", "it", "a") don't break contiguous-phrase runs.
     """
     global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
-    global _noise_by_word, _all_noises, _splice_scores
+    global _noise_by_word, _all_noises, _splice_scores, _cache_corpus
+    # Which corpus the cache holds, checked rather than assumed. Every clip
+    # path in here was made absolute against whatever corpus was active while
+    # it was built, so a cache built under another one sends ffmpeg to a
+    # michael-rosen video inside james-channel's directory. That is not
+    # hypothetical: listing the corpora switches the active one to count each
+    # in turn, and a request arriving mid-count rebuilt the cache against the
+    # wrong voice.
+    from app.database import active as _active_corpus
+    slug = _active_corpus()["slug"]
     if _clips_by_word_cache is not None:
-        return
+        if slug == _cache_corpus:
+            return
+        log.warning("clip cache was built for %s, now serving %s: rebuilding",
+                    _cache_corpus, slug)
+        invalidate_cache()
+    _cache_corpus = slug
 
     with get_db() as conn:
         rows = conn.execute(
@@ -210,7 +225,8 @@ def _get_clips_by_word() -> dict[str, list[dict[str, Any]]]:
 
 def invalidate_cache(alignments: bool = True) -> None:
     global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
-    global _noise_by_word, _all_noises, _splice_scores
+    global _noise_by_word, _all_noises, _splice_scores, _cache_corpus
+    _cache_corpus        = None
     _clips_by_word_cache = None
     _ordered_by_source   = None
     _word_positions      = None
