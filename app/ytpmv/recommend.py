@@ -50,6 +50,9 @@ PREFERRED = {
     "chords":        ["ah", "oh", "all", "you", "more", "now", "me", "no"],
     "rhythm":        ["no", "go", "oh", "yeah", "you", "me", "ah", "my", "all"],
 }
+# Bumped whenever measure() learns something new, so a cache written by an
+# older version is re-measured instead of quietly scoring on missing fields.
+_MEASURE_VERSION = 2
 _FALLBACK_WORDS = 30     # most frequent words tried when too few preferred exist
 _TAKES_PER_WORD = 4
 _ALTERNATIVES = 5
@@ -109,9 +112,13 @@ def measure(x: np.ndarray) -> dict:
     if len(x) >= 256:
         power = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
         freqs = np.fft.rfftfreq(len(x), 1.0 / SR)
-        hf = float(power[freqs >= 4000].sum() / max(power.sum(), 1e-12))
+        total = max(power.sum(), 1e-12)
+        hf = float(power[freqs >= 4000].sum() / total)
+        lf = float(power[freqs < 250].sum() / total)
     else:
-        hf = 0.0
+        hf = lf = 0.0
+    rms = float(np.sqrt(np.mean(x ** 2))) if len(x) else 0.0
+    crest = peak / rms if rms > 0 else 0.0
     return {
         "dur": round(dur, 4),
         "f0": round(info.f0, 2) if info.f0 else None,
@@ -121,6 +128,8 @@ def measure(x: np.ndarray) -> dict:
         "attack": round(attack, 4),
         "centroid": round(centroid, 1),
         "hf": round(hf, 3),                  # share of the energy above 4 kHz: hiss
+        "lf": round(lf, 3),                  # ... below 250 Hz: body, what a kick is
+        "crest": round(crest, 2),            # peak over average: how much it punches
     }
 
 
@@ -129,7 +138,7 @@ def _measure_clip(clip: dict, groups: tuple[str, ...] = ()) -> dict | None:
     try:
         start, end = g.extract_window(clip)
         x = decode_audio(clip["source_file"], start, end - start)
-        out = {"word": measure(x)}
+        out = {"v": _MEASURE_VERSION, "word": measure(x)}
         a, b = samples._trim(x)
         for grp in groups:
             out[grp] = measure(drums.shape(x[a:b], grp)[0])
@@ -152,20 +161,31 @@ def score(role: str, m: dict) -> float:
     dur, voiced, stab = m["dur"], m["voiced"], m["stability"]
     attack, cen, hf = m["attack"], m["centroid"], m.get("hf", 0.0)
     sharp = _band(attack, 0.0, 0.015, 0.05)
+    # Shaped hits land in a narrow range, so the band is narrow too.
+    punch = _band(m.get("crest", 0.0), 2.4, 8.0, 0.8)
     if role == "drums:kick":
-        # A thump: hits at once, and nothing up top once it is low-passed.
-        return 2.5 * sharp + 1.5 * _band(cen, 0, 500, 600) + 0.5 * voiced
+        # A thump is *low*, and a low centroid is not the same thing: a spew
+        # low-passed has a low centroid and no bass in it at all. What makes a
+        # kick is energy under 250 Hz, arriving all at once.
+        return (2.5 * _band(m.get("lf", 0.0), 0.45, 1.0, 0.35) + 2 * sharp + punch
+                + 0.5 * _band(cen, 0, 400, 500))
     if role == "drums:snare":
-        # A crack then a hiss: sharp, and noisy rather than sung.
-        return 2 * sharp + 2 * _band(hf, 0.35, 1.0, 0.3) + (1 - voiced)
+        # A crack then a hiss: sharp, noisy rather than sung, and it punches.
+        return 2 * sharp + 2 * _band(hf, 0.35, 1.0, 0.3) + (1 - voiced) + punch
     if role == "drums:hats":
-        return 2.5 * _band(hf, 0.6, 1.0, 0.35) + _band(cen, 6000, 16000, 3000) + (1 - voiced)
+        # Graded on the hiss itself rather than a band that everything clears:
+        # scored in bands, eight different words tied on 4.50 and the pick
+        # among them was whichever happened to sort first.
+        return 3 * hf + _band(cen, 6000, 16000, 4000) + 0.5 * (1 - voiced) + 0.5 * punch
     if role == "drums:toms":
-        return 1.5 * sharp + voiced + _band(cen, 0, 1200, 1000)
+        # A tom is a kick with a note in it: body, a clean hit, and a pitch.
+        return (1.5 * _band(m.get("lf", 0.0), 0.25, 0.9, 0.3) + 1.5 * sharp + voiced
+                + 0.5 * punch + _band(cen, 0, 1200, 1000))
     if role == "drums:cymbals":
-        return 2.5 * _band(hf, 0.55, 1.0, 0.35) + _band(dur, 0.25, 0.6, 0.3) + (1 - voiced)
+        # A cymbal is a hiss that rings: bright, and long enough to hear it go.
+        return 3 * hf + 1.5 * _band(dur, 0.25, 0.6, 0.3) + 0.5 * (1 - voiced)
     if role.startswith("drums"):
-        return 2.5 * sharp + (1 - voiced)
+        return 2.5 * sharp + (1 - voiced) + punch
     # Pitched: the whole point is a note, so no pitch at all is disqualifying.
     if not m["f0"]:
         return -5.0
@@ -221,7 +241,8 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
 
     def needs(clip) -> bool:
         m = cache.get(_clip_key(clip))
-        return not isinstance(m, dict) or "word" not in m or any(grp not in m for grp in groups)
+        return (not isinstance(m, dict) or m.get("v") != _MEASURE_VERSION
+                or "word" not in m or any(grp not in m for grp in groups))
 
     todo = list({_clip_key(c): c for pairs in wanted.values() for _i, c in pairs if needs(c)}.values())
     if todo:
@@ -235,7 +256,8 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
                 if m is not None:
                     with _lock:
                         old = cache.get(_clip_key(clip))
-                        keep = old if isinstance(old, dict) and "word" in old else {}
+                        keep = (old if isinstance(old, dict) and old.get("v") == _MEASURE_VERSION
+                                else {})
                         cache[_clip_key(clip)] = {**keep, **m}
         _save(corpus)
 
@@ -249,13 +271,13 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
                 m = entry.get(part.drum_group) if part.is_drums else entry.get("word")
                 if m is None:
                     continue
-                # A little variety: the same word on every tile is a worse video
-                # than a slightly less ideal second word.
-                pref = PREFERRED.get(part.role, [])
-                bonus = 0.3 if w in pref[:4] else 0.0
-                if w.startswith("*"):
-                    bonus += 0.4        # a real noise beats a word pretending
-                ranked.append((score(part.role, m) + bonus - 0.6 * used.get(w, 0), w, i, m))
+                # Nothing gets a head start -- not the words at the top of the
+                # list above, and not the noises, which were given a bonus for
+                # being "real" percussion and won places they did not deserve.
+                # The measurements decide. The one thumb on the scale is
+                # against repetition: the same sound on every tile is a worse
+                # video than a slightly less ideal second choice.
+                ranked.append((score(part.role, m) - 0.6 * used.get(w, 0), w, i, m))
         ranked.sort(key=lambda r: -r[0])
         # One entry per word in the alternatives, best take of each.
         seen, uniq = set(), []
