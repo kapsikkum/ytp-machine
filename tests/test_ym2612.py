@@ -188,6 +188,18 @@ check("the same note twice is the same sound",
       bool((chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)
             == chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)).all()), True)
 
+print("the song-wide switch")
+from app.ytpmv import tone as tones
+# The page hands every part back the settings it was given, tone and all, so
+# the default "clean" arrives looking exactly like a choice. Counting it as
+# one turned the switch off for every song rendered from the web page.
+check("the default tone does not outrank the switch", tones.overrides_switch("clean"), False)
+check("nor does no tone at all", tones.overrides_switch(None), False)
+check("nor does something that is not a tone", tones.overrides_switch("trombone"), False)
+check("a chosen patch does", tones.overrides_switch("organ"), True)
+check("so does asking for the voice off the sample channel", tones.overrides_switch("dac"), True)
+check("and so does an old name for one", tones.overrides_switch("megadrive"), True)
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f_ in failures:

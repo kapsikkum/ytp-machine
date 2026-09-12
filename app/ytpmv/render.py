@@ -328,7 +328,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if chip:
         for p in song.parts:
             asked = given.get(p.id) or {}
-            if tones.resolve(asked.get("tone")):
+            if tones.overrides_switch(asked.get("tone")):
                 continue
             settings[p.id]["tone"] = chip_tone(p)
             # The octave a part was moved by is there because a mouth cannot

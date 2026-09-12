@@ -53,6 +53,19 @@ def resolve(name: str | None) -> str | None:
     return name if name in TONES else None
 
 
+def overrides_switch(name: str | None) -> bool:
+    """Whether a part's own tone outranks the song-wide chip switch.
+
+    "clean" does not, and that is the whole point of this existing. It is
+    the default every part carries, and the page echoes its parts back
+    exactly as it was given them -- so counting it as a choice meant the
+    switch did nothing at all from the web page, for every song, while the
+    command line (which sends no parts) worked perfectly.
+    """
+    chosen = resolve(name)
+    return bool(chosen) and chosen != "clean"
+
+
 def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
           level: float = 1.0) -> np.ndarray:
     """*y* played through *tone*. "clean" and anything unknown pass through.
