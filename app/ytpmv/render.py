@@ -18,6 +18,7 @@ import hashlib
 import logging
 import math
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -41,6 +42,12 @@ MAX_MIDI_BYTES = 2 * 1024 * 1024
 _OUT_W, _OUT_H = 1920, 1080
 _TAIL = 0.8                    # let the last notes ring out after the final note-off
 _MODES = ("perfect", "tape", "raw")
+# How a part avoids sounding like one recording on a loop.
+VARY = {
+    "off": "the one take, every time",
+    "rotate": "the best few takes in turn",
+    "random": "those takes in no order",
+}
 
 # How loud and where each kind of part sits unless told otherwise.
 _VOLUME = {"lead": 1.0, "bass": 1.0, "rhythm": 0.75, "chords": 0.7,
@@ -126,6 +133,10 @@ def _default_settings_for(part: music.Part, rec: dict) -> dict:
         "id": part.id,
         "text": rec.get("text"),
         "take": rec.get("take", 0),
+        # Round-robin: one recording on every beat is what makes a part sound
+        # like a loop instead of somebody playing. Different takes also mean
+        # different footage on the tile, which is half the point of the form.
+        "takes": rec.get("takes") or [rec.get("take", 0)],
         "octave": rec.get("octave", 0),
         "transpose": 0,
         "volume": _VOLUME.get(part.role, 0.8),
@@ -159,6 +170,11 @@ def _merge(defaults: dict, given: dict | None) -> dict:
         if given["text"].strip().lower() != (defaults.get("text") or "") and "take" not in given:
             s["take"] = 0
     s["take"] = _num(given.get("take", s["take"]), s["take"], 0, 10_000, int)
+    if isinstance(given.get("takes"), list):
+        picked = [_num(t, 0, 0, 10_000, int) for t in given["takes"][:6]]
+        s["takes"] = picked or [s["take"]]
+    elif "take" in given or (given.get("text") or "").strip():
+        s["takes"] = [s["take"]]        # a take chosen by hand is the one meant
     s["octave"] = _num(given.get("octave", s["octave"]), s["octave"], -4, 4, int)
     s["transpose"] = _num(given.get("transpose", s["transpose"]), 0, -24, 24, int)
     s["volume"] = _num(given.get("volume", s["volume"]), s["volume"], 0.0, 2.0)
@@ -207,6 +223,7 @@ class _Hit:
     dur: float                 # how long the note sounds
     warp: Warp
     flip: bool
+    take: int = 0              # which of the part's takes played it
 
 
 def _write_wav(path: str, stereo: np.ndarray) -> None:
@@ -250,6 +267,15 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     flash = bool(opts.get("flash", True))
     dim = bool(opts.get("dim", True))
     labels = bool(opts.get("labels", False))
+    # Rotating takes and a touch of jitter, both on unless turned off: without
+    # them a part is the same recording at the same level on every beat, which
+    # is the difference between a drummer and a loop.
+    vary = opts.get("vary", "rotate")
+    if isinstance(vary, bool):
+        vary = "rotate" if vary else "off"
+    if vary not in VARY:
+        vary = "rotate"
+    jitter = bool(opts.get("jitter", True))
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
     # Recommendations only for parts the request did not choose a sound for.
@@ -271,16 +297,23 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     playing_ids = {p.id for p in playing}
 
     # Samples first: the cheapest place to find out a word cannot be said.
-    sample_of: dict[str, samples.Sample] = {}
+    sample_of: dict[str, list[samples.Sample]] = {}
     problems: list[dict] = []
     for i, part in enumerate(wanted.values()):
         say("samples", i, len(wanted))
         s = settings[part.id]
-        try:
-            sample_of[part.id] = samples.build(s["text"], s["take"], _hit(part, s))
-        except samples.SampleError as exc:
+        want = [s["take"]] if vary == "off" else s["takes"]
+        got, failed = [], None
+        for take in dict.fromkeys(want):        # in order, no repeats
+            try:
+                got.append(samples.build(s["text"], take, _hit(part, s)))
+            except samples.SampleError as exc:
+                failed = exc
+        if got:
+            sample_of[part.id] = got
+        else:
             problems.append({"part": part.id, "name": part.name, "text": s["text"],
-                             "error": str(exc)})
+                             "error": str(failed)})
     say("samples", len(wanted), len(wanted))
     if not sample_of:
         raise YtpmvError("None of the parts has a sound this voice can make.")
@@ -296,9 +329,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
 
     for part in wanted.values():
         if part.id in sample_of:
-            hits[part.id] = _play(part, settings[part.id], sample_of[part.id].voice,
+            hits[part.id] = _play(part, settings[part.id], sample_of[part.id],
                                   mix if part.id in playing_ids else None,
-                                  0.0, T, speed, g_transpose, flip, tick)
+                                  0.0, T, speed, g_transpose, flip, tick, jitter, vary)
     say("notes", total, total)
 
     tmpdir = tempfile.mkdtemp(prefix="ytpmv_")
@@ -311,7 +344,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         tiles = [p for p in playing if p.id in sample_of][:1]
     cols, rows, tw, th = grid(len(tiles))
     W, H = cols * tw, rows * th
-    frames_of = {p.id: sample_of[p.id].frames(tw, th) for p in tiles}
+    frames_of = {p.id: [smp.frames(tw, th) for smp in sample_of[p.id]] for p in tiles}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
     run_id = uuid.uuid4().hex[:10]
@@ -376,10 +409,13 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         "duration": round(T, 2),
         "size": [W, H],
         "song": {k: v for k, v in song.summary().items() if k != "parts"},
+        "options": {"vary": vary, "jitter": jitter, "speed": speed,
+                    "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
                                                    "mute", "visible")},
-                   "pitch": sample_of[p.id].voice.info.as_dict() if p.id in sample_of else None}
+                   "takes_played": len(sample_of.get(p.id, [])),
+                   "pitch": sample_of[p.id][0].voice.info.as_dict() if p.id in sample_of else None}
                   for p in song.parts],
         "problems": problems,
     }
@@ -389,26 +425,28 @@ def _hit(part: music.Part, s: dict) -> str | None:
     return part.drum_group if part.is_drums and s.get("hit", True) else None
 
 
-def _play(part: music.Part, s: dict, voice, mix: np.ndarray | None, t_from: float,
-          T: float, speed: float, g_transpose: int, flip: bool, tick=None) -> list[_Hit]:
+def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from: float,
+          T: float, speed: float, g_transpose: int, flip: bool, tick=None,
+          jitter: bool = True, vary: str = "rotate") -> list[_Hit]:
     """Sing every note of *part* between t_from and T into *mix*; return its hits.
 
-    Times are in the rendered song's clock (after *speed*), and the mix starts
-    at t_from. *mix* None still works out the hits, for a tile that is shown
-    but muted.
+    *takes* are the Samples to play, rotated between hits (see VARY). Times are
+    in the rendered song's clock (after *speed*), and the mix starts at t_from.
+    *mix* None still works out the hits, for a tile that is shown but muted.
     """
     N = mix.shape[0] if mix is not None else 0
     gl = math.cos((s["pan"] + 1) * math.pi / 4)
     gr = math.sin((s["pan"] + 1) * math.pi / 4)
     shift = 12 * s["octave"] + s["transpose"] + (0 if part.is_drums else g_transpose)
     ref = part.median_pitch() + 12 * s["octave"]           # for a voice with no pitch
-    mode = s["mode"]
-    if mode == "perfect" and not voice.info.f0:
-        mode = "tape"
+    # Seeded on the part, so a render is the same twice: "random" here means
+    # unpatterned, not different every time you press the button.
+    rng = random.Random(f"{part.id}|{len(takes)}|{s['text']}")
     notes = sorted(part.notes, key=lambda n: (n.start, n.pitch))
     starts = sorted({n.start for n in notes})
     hits: list[_Hit] = []
     last_start = None
+    pick = 0
     for n in notes:
         if tick:
             tick()
@@ -417,6 +455,15 @@ def _play(part: music.Part, s: dict, voice, mix: np.ndarray | None, t_from: floa
             break
         if t0 < t_from:
             continue
+        if n.start != last_start:              # a chord is one hit: one take
+            pick = (0 if vary == "off" or len(takes) == 1 else
+                    rng.randrange(len(takes)) if vary == "random" else
+                    len(hits) % len(takes))
+        sample = takes[pick]
+        voice = sample.voice
+        mode = s["mode"]
+        if mode == "perfect" and not voice.info.f0:
+            mode = "tape"
         j = bisect.bisect_right(starts, n.start)
         nxt = starts[j] / speed if j < len(starts) else T
         if s["sustain"] == "ring":
@@ -426,9 +473,15 @@ def _play(part: music.Part, s: dict, voice, mix: np.ndarray | None, t_from: floa
         dur = min(dur, T - t0)
         if dur <= 0:
             continue
+        # A drum hit that is identical every beat is a machine gun. A hair of
+        # detune (drums only -- a pitched part is meant to be exactly in tune)
+        # and a decibel either way is what a person hitting something sounds
+        # like. Quantised, so the note cache still gets hits.
+        detune = round(rng.uniform(-0.25, 0.25), 2) if jitter and part.is_drums else 0.0
+        loud = 10 ** (rng.uniform(-1.2, 1.2) / 20.0) if jitter else 1.0
         midi = n.pitch + shift
         if part.is_drums or mode == "raw":
-            semis = s["transpose"]
+            semis = s["transpose"] + detune
             if part.drum_group == "toms":
                 # Toms are tuned: GM gives each its own note, low to high.
                 semis += n.pitch - round(part.median_pitch())
@@ -441,11 +494,11 @@ def _play(part: music.Part, s: dict, voice, mix: np.ndarray | None, t_from: floa
             a = int(round((t0 - t_from) * SR))
             k = min(len(y), N - a)
             if k > 0:
-                gain = s["volume"] * (0.35 + 0.65 * n.velocity / 127.0)
+                gain = s["volume"] * loud * (0.35 + 0.65 * n.velocity / 127.0)
                 mix[a:a + k, 0] += y[:k] * (gain * gl)
                 mix[a:a + k, 1] += y[:k] * (gain * gr)
-        if n.start != last_start:              # a chord is one hit on screen
-            hits.append(_Hit(t0, dur, warp, flip and len(hits) % 2 == 1))
+        if n.start != last_start:
+            hits.append(_Hit(t0, dur, warp, flip and len(hits) % 2 == 1, pick))
             last_start = n.start
     return hits
 
@@ -471,7 +524,7 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0) -> dic
     t_from = max(0.0, (part.notes[0].start if part.notes else 0.0) - 0.05)
     T = min(t_from + seconds, song.duration + _TAIL)
     mix = np.zeros((int((T - t_from) * SR), 2), dtype=np.float32)
-    _play(part, s, sample.voice, mix, t_from, T, 1.0, 0, False)
+    _play(part, s, [sample], mix, t_from, T, 1.0, 0, False)
     name = hashlib.sha1(repr((midi_id, sorted(s.items()))).encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     path = os.path.join("output", f"ytpmv_sample_{name}.wav")
@@ -487,12 +540,13 @@ def _scale(img: np.ndarray, k: float) -> np.ndarray:
     return np.minimum(img.astype(np.uint32) * int(k * 256) >> 8, 255).astype(np.uint8)
 
 
-def _tile(frames: np.ndarray, hits: list[_Hit], starts: list[float], t: float,
+def _tile(takes: list, hits: list[_Hit], starts: list[float], t: float,
           flash: bool, dim: bool) -> np.ndarray:
     i = bisect.bisect_right(starts, t) - 1
     if i < 0:
-        return _scale(frames[0], 0.35) if dim else frames[0]
+        return _scale(takes[0][0], 0.35) if dim else takes[0][0]
     h = hits[i]
+    frames = takes[h.take % len(takes)]
     since = t - h.start
     src = h.warp.src(min(since, h.dur))
     img = frames[min(max(int(src * FPS), 0), len(frames) - 1)]

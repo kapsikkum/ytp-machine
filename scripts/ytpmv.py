@@ -56,6 +56,11 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--transpose", type=int, default=0)
     ap.add_argument("--labels", action="store_true", help="write each part's word on its tile")
+    ap.add_argument("--vary", choices=("off", "rotate", "random"), default=None,
+                    help="how a part avoids sounding like one recording on a loop "
+                         "(default: rotate through its best few takes)")
+    ap.add_argument("--no-jitter", action="store_true",
+                    help="play every hit at exactly the same level and tuning")
     ap.add_argument("--only", action="append", default=[], help="play just these parts")
     ap.add_argument("--part", action="append", default=[], metavar="PART=WORDS")
     for k in ("take", "octave", "mode", "volume", "pan", "sustain"):
@@ -112,6 +117,10 @@ def main() -> int:
                 parts.setdefault(p.id, {}).update(mute=True, visible=False)
 
     options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels}
+    if args.vary:
+        options["vary"] = args.vary
+    if args.no_jitter:
+        options["jitter"] = False
     if args.max:
         options["max_seconds"] = args.max
 

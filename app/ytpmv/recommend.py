@@ -56,6 +56,7 @@ _MEASURE_VERSION = 2
 _FALLBACK_WORDS = 30     # most frequent words tried when too few preferred exist
 _TAKES_PER_WORD = 4
 _ALTERNATIVES = 5
+_ROTATE = 3              # takes of the chosen word to play round-robin
 
 _lock = threading.Lock()
 _mem: dict[str, dict] = {}      # corpus -> {clip key: measurement}
@@ -293,9 +294,14 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
         best = uniq[0]
         used[best[1]] = used.get(best[1], 0) + 1
         m = best[3]
+        # The best few takes of the word it chose, best first. Playing one
+        # recording on every beat is what makes a part sound like a loop
+        # rather than a drummer; the renderer rotates through these.
+        rotate = [i for _s, w, i, _m in ranked if w == best[1]][:_ROTATE]
         out[part.id] = {
             "text": best[1],
             "take": best[2],
+            "takes": rotate or [best[2]],
             "octave": 0 if part.is_drums else auto_octave(part.median_pitch(), m["midi"]),
             # A voice with no pitch (a whisper) cannot be put *on* a note, but
             # tape speed still follows the tune up and down.

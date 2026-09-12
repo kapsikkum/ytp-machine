@@ -61,6 +61,10 @@ check("per-part settings", c.parts, {"bass": {"octave": 1}, "lead": {"mode": "ta
                                      "kick": {"take": 2 + 1}, "hats": {"volume": 0.4}})
 c = parse("!ytp mv hats=mute")
 check("a part can be muted", c.parts["hats"], {"mute": True, "visible": False})
+c = parse("!ytp mv vary=random jitter=off")
+check("how much a part varies between hits", c.options, {"vary": "random", "jitter": False})
+check("a variety mode that does not exist is reported",
+      parse("!ytp mv vary=sideways").errors, ["vary is one of off, random, rotate"])
 c = parse("!ytp mv speed=1.5 key=-2 labels=on flip=off")
 check("speed, key and switches", c.options,
       {"speed": 1.5, "transpose": -2, "labels": True, "flip": False})
