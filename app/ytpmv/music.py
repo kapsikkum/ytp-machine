@@ -63,11 +63,16 @@ _FAMILY = ["piano", "chromatic percussion", "organ", "guitar", "bass", "strings"
            "synth effects", "ethnic", "percussive", "sound effects"]
 
 # General MIDI's drum kit, folded into the handful of sounds a grid can show.
+# The whole percussion map, not just the middle of it: a kit that reaches for
+# timbales, sticks and a metronome bell -- as "Chaos King" does -- put 795 of
+# its 800 hits in the leftover "perc" pile, which is one tile playing four
+# different instruments.
 DRUM_GROUPS = {
     "kick":    {35, 36},
-    "snare":   {37, 38, 39, 40},
-    "hats":    {42, 44, 46},
-    "toms":    {41, 43, 45, 47, 48, 50},
+    "snare":   {31, 37, 38, 39, 40},                    # 31 is a stick hit
+    "hats":    {42, 44, 46, 54, 69, 70, 82},            # and shakers, which sit the same way
+    "toms":    {41, 43, 45, 47, 48, 50,
+                60, 61, 62, 63, 64, 65, 66, 67, 68},    # bongos, congas, timbales
     "cymbals": {49, 51, 52, 53, 55, 57, 59},
 }
 _DRUM_ORDER = ["kick", "snare", "hats", "toms", "cymbals", "perc"]
@@ -339,7 +344,11 @@ def _assign_roles(parts: list[Part]) -> None:
 
 
 def parse(data: bytes, title: str = "") -> Song:
-    mf = mido.MidiFile(file=io.BytesIO(data))
+    # clip=True: a data byte over 127 is clamped rather than refused. Files in
+    # the wild have them -- one exported "Chaos King" has a velocity out of
+    # range -- and mido's default is to raise, which threw away a whole song
+    # over one byte in one note.
+    mf = mido.MidiFile(file=io.BytesIO(data), clip=True)
     tpb = mf.ticks_per_beat or 480
 
     tempo_changes: list[tuple[int, int]] = []

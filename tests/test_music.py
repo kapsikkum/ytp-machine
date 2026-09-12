@@ -91,6 +91,15 @@ sc = music.parse(song(track(0, [(b, 1, 60) for b in range(8)]), tempo=[(0, 120),
 near("a tempo change slows what follows", sc.parts[0].notes[5].start, 4 * 0.5 + 1 * 1.0)
 check("the main tempo is the one it spends longest in", round(sc.bpm), 60)
 
+print("broken files")
+raw = bytearray(song(track(0, [(0, 1, 60)], program=0)))
+raw[raw.index(b"MTrk") + 12] = 200          # a data byte no MIDI file should have
+try:
+    over = music.parse(bytes(raw))
+    check("a byte out of range is clamped, not fatal", bool(over.parts), True)
+except Exception as exc:
+    check("a byte out of range is clamped, not fatal", f"{type(exc).__name__}: {exc}", True)
+
 print("key")
 check("C major", s.key, "C major")
 minor = [57, 59, 60, 62, 64, 65, 67, 69]            # A natural minor, sitting on A
@@ -114,6 +123,9 @@ roles = {p.id: p.role for p in s.parts}
 check("the flute is the tune", roles["t1c0"], "lead")
 check("the GM bass is the bass", roles["t2c1"], "bass")
 check("three notes at once is chords", roles["t3c2"], "chords")
+check("the whole GM kit is mapped, not just its middle",
+      [music.drum_group(n) for n in (36, 31, 54, 66, 62, 55, 34, 82)],
+      ["kick", "snare", "hats", "toms", "toms", "cymbals", "perc", "hats"])
 check("drums split into kit pieces",
       sorted(p.drum_group for p in s.parts if p.is_drums), ["hats", "kick", "snare"])
 check("the kit sorts after the band", [p.is_drums for p in s.parts], [False] * 3 + [True] * 3)
