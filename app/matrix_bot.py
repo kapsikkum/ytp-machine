@@ -42,6 +42,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -655,8 +656,22 @@ class Bot:
         self.client.add_event_callback(self.on_invite, InviteMemberEvent)
         self.client.add_event_callback(self.on_encrypted, MegolmEvent)
         watcher = asyncio.create_task(self.watch_voice())
+
+        # Stop when systemd or podman says stop. Without this, sync_forever
+        # sits through SIGTERM and every restart waited the full ten seconds
+        # for the SIGKILL, leaving the unit "failed" each time it was asked
+        # politely to stop.
+        syncing = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        for sig in ("SIGTERM", "SIGINT"):
+            try:
+                loop.add_signal_handler(getattr(signal, sig), syncing.cancel)
+            except (AttributeError, NotImplementedError):   # Windows has neither
+                pass
         try:
             await self.client.sync_forever(timeout=30000, full_state=False)
+        except asyncio.CancelledError:
+            log.info("asked to stop")
         finally:
             watcher.cancel()
             await self.api.close()
