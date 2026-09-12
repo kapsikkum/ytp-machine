@@ -15,7 +15,8 @@ Configuration is all environment:
     MATRIX_PASSWORD        used once; the token it gets is kept (see below)
     MATRIX_ACCESS_TOKEN    ... or give a token and no password at all
     MATRIX_ALLOWED_ROOMS   comma-separated room ids the bot will join and answer in
-    MATRIX_ALLOWED_USERS   comma-separated user ids, or *:example.org for a server
+    MATRIX_ALLOWED_USERS   comma-separated user ids (@me:example.org), or
+                           *:example.org for everyone on a server
     MATRIX_ADMINS          users who may switch the voice for everyone
     MATRIX_PREFIX          default !ytp
     MATRIX_COOLDOWN        seconds between one person's requests, default 20
@@ -31,8 +32,9 @@ With neither allow-list set the bot answers anyone who invites it, and says
 so in its log. The login is saved to $MRS_DATA_DIR/matrix/session.json so a
 restart does not create a new device every time.
 
-Encrypted rooms are not supported: the bot leaves them rather than sit in a
-room where it cannot read a word.
+Encrypted rooms are not supported. It leaves one it is invited to, and says
+so once in one it is already in -- from in here an encrypted room looks
+exactly like an idle one, so silence would be the only other answer.
 """
 
 from __future__ import annotations
@@ -71,6 +73,17 @@ def _csv(name: str) -> set[str]:
     return {x.strip() for x in os.environ.get(name, "").split(",") if x.strip()}
 
 
+def _users(name: str) -> set[str]:
+    """A list of user ids, forgiving the missing @ everyone leaves off.
+
+    A Matrix user id is @name:server, but "name:server" is what people write,
+    and an allow-list that silently matches nobody is the worst way to find
+    that out -- the bot simply ignores you, exactly as it would if it were
+    broken. A "*:server" wildcard is left as it is.
+    """
+    return {u if u.startswith(("@", "*")) else "@" + u for u in _csv(name)}
+
+
 @dataclass
 class Config:
     homeserver: str = ""
@@ -102,8 +115,8 @@ class Config:
             api_url=os.environ.get("YTP_API_URL", "http://app:8765").rstrip("/"),
             public_url=os.environ.get("YTP_PUBLIC_URL", "").rstrip("/"),
             allowed_rooms=_csv("MATRIX_ALLOWED_ROOMS"),
-            allowed_users=_csv("MATRIX_ALLOWED_USERS"),
-            admins=_csv("MATRIX_ADMINS"),
+            allowed_users=_users("MATRIX_ALLOWED_USERS"),
+            admins=_users("MATRIX_ADMINS"),
             cooldown=float(os.environ.get("MATRIX_COOLDOWN", "20")),
             mv_max_seconds=float(os.environ.get("MATRIX_MV_MAX_SECONDS", "120")),
             voice_poll=max(5.0, float(os.environ.get("MATRIX_VOICE_POLL", "20"))),
