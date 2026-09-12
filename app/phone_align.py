@@ -59,6 +59,36 @@ _SR = 16000
 _bundle: dict[str, Any] | None = None
 
 
+def outside(raw: str | None, duration: float, tol: float = 0.06) -> bool:
+    """Do these stored times describe sound this clip no longer contains?
+
+    Phoneme times are relative to the clip's own start, and an edit moves them
+    with the boundary -- which is right while the boundary moves a little, and
+    nonsense once it moves past them. A clip edited from one word to the one
+    beside it kept times sitting entirely before its own beginning: "sad" with
+    its S, AE and D all at negative seconds. Nothing reported it, because
+    "aligned" was only ever a test for whether times existed.
+
+    True when they fall outside the clip by more than *tol*, which is the
+    slack a boundary nudge legitimately leaves.
+    """
+    if not raw:
+        return False
+    import json
+    try:
+        phones = json.loads(raw)
+    except (TypeError, ValueError):
+        return True                     # unreadable is not usable either
+    if not phones:
+        return False
+    try:
+        first = min(float(p[1]) for p in phones)
+        last = max(float(p[2]) for p in phones)
+    except (IndexError, TypeError, ValueError):
+        return True
+    return first < -tol or last > duration + tol
+
+
 def shift_stored(raw: str | None, delta: float) -> str | None:
     """Stored phoneme times moved by *delta* seconds, as JSON.
 

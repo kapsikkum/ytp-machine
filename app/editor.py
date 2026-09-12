@@ -36,6 +36,11 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 
+def _phones_moved_off(raw, duration: float) -> bool:
+    from app.phone_align import outside
+    return outside(raw, duration)
+
+
 class ClipEdit(BaseModel):
     word: str | None = None
     start_time: float | None = None
@@ -189,6 +194,8 @@ def source_clips(source_id: int):
             from app.phonemes import word_to_phonemes
             flags.append("not aligned" if word_to_phonemes(c["word"])
                          else "no pronunciation")
+        elif _phones_moved_off(c.get("phones"), c["end_time"] - c["start_time"]):
+            flags.append("alignment moved off")
         c["flags"] = flags
     return {"source": dict(src), "clips": rows}
 
@@ -256,8 +263,21 @@ def align_status(source_id: int):
             else:
                 unknown_clips += r["n"]
                 unknown.append(r["word"])
+        # Times that exist but no longer describe this clip are work to do as
+        # much as times never measured -- more so, because they are believed.
+        from app.phone_align import outside
+        stale = 0
+        for r in conn.execute(
+                "SELECT word, phones, end_time - start_time AS dur FROM word_clips "
+                "WHERE source_id=? AND phones IS NOT NULL AND phones != ''", (source_id,)):
+            if outside(r["phones"], r["dur"]):
+                if word_to_phonemes(r["word"]):
+                    stale += 1
+                    pending += 1
+                else:
+                    unknown_clips += 1
     st = dict(_align_state)
-    return {"available": ready, "reason": why, "pending": pending,
+    return {"available": ready, "reason": why, "pending": pending, "stale": stale,
             "no_pronunciation": unknown_clips,
             "unknown_words": sorted(unknown)[:20],
             "running": st["running"] and st["source_id"] == source_id,
@@ -286,6 +306,20 @@ def align_source(source_id: int, redo: bool = False):
                 detail=f"already aligning source {_align_state['source_id']}")
         _align_state.update(running=True, source_id=source_id, done=0,
                             total=0, result=None, error=None)
+
+    # The pass only visits clips with no times, so stale ones lose theirs
+    # first -- otherwise the button offers work it then quietly skips.
+    from app.phone_align import outside
+    with get_db() as conn:
+        bad = [r["id"] for r in conn.execute(
+            "SELECT id, phones, end_time - start_time AS dur FROM word_clips "
+            "WHERE source_id=? AND phones IS NOT NULL AND phones != ''", (source_id,))
+            if outside(r["phones"], r["dur"])]
+        for cid in bad:
+            conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?", (cid,))
+    if bad:
+        log.info("ALIGN   source %s: dropped %d alignment(s) that had moved off "
+                 "their clip", source_id, len(bad))
 
     def work() -> None:
         try:
@@ -429,9 +463,20 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
                 conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?",
                              (clip_id,))
             elif abs(shift) > 1e-9:
-                from app.phone_align import shift_stored
+                from app.phone_align import outside, shift_stored
+                moved_phones = shift_stored(row["phones"], shift)
+                # Moving them is right until the boundary moves past them. A
+                # clip retimed onto the word beside it kept phonemes sitting
+                # entirely before its own start, and nothing noticed, because
+                # "aligned" only ever asked whether times existed.
+                if outside(moved_phones, new_end - new_start):
+                    moved_phones = None
                 conn.execute("UPDATE word_clips SET phones=? WHERE id=?",
-                             (shift_stored(row["phones"], shift), clip_id))
+                             (moved_phones, clip_id))
+            else:
+                from app.phone_align import outside
+                if outside(row["phones"], new_end - new_start):
+                    conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?", (clip_id,))
 
         out = dict(conn.execute(f"SELECT id, word, start_time, end_time "
                                 f"FROM {table} WHERE id=?", (clip_id,)).fetchone(),
