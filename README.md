@@ -348,6 +348,35 @@ python scripts/ytpmv.py song.mid --only bass --check     # measure the tuning
 
 `YTPMV_MAX_SECONDS` caps the length of a render (default 300).
 
+### On the Mega Drive's sound chip
+
+One switch on the page ("mega drive chip"), `chip=on` to the bot, or `--chip`
+from the terminal plays the whole song on an emulated YM2612:
+
+```bash
+python scripts/ytpmv.py song.mid --chip
+```
+
+The melodic parts are synthesised by the chip's FM, and the voice is gone from
+them. The drums keep the voice and go out over the chip's PCM channel at eight
+bits, which is how the console did drums -- so what comes out is the
+arrangement a real Mega Drive track had. A part can be set on its own with the
+bot's `tone:<part>=`, to one of `clean`, `dac`, or a patch: `bass`, `lead`,
+`organ`, `brass`, `bell`, `piano`, `strings`.
+
+`app/ytpmv/ym2612.py` is a model of the chip rather than a cycle-exact
+emulator like Nuked-OPN2: the log-domain sine and 14-bit operators, the real
+envelope generator with its rates and key scaling, all eight algorithms,
+feedback, detune, the multipliers, 53267 samples a second, and the output
+stage -- which matters more than it sounds, because FM lands a sideband on DC
+and without the console's coupling capacitor a whole song rumbles.
+
+The bass is Sonic 2's own voice `$00`, read out of the disassembly rather than
+reconstructed by ear. Two things to know if you ever read one of those: SMPS
+numbers its operators backwards from the hardware, so its `op1` is operator 4;
+and the octave a part is moved by to suit a speaking voice is not applied when
+the chip is playing it, since a chip has no trouble with 49 Hz.
+
 ## Matrix bot
 
 A bot account that makes videos when asked in a Matrix room:

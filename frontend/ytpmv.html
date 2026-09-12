@@ -226,6 +226,7 @@
         <option value="ultra">ultra: different words</option>
       </select>
     </label>
+    <label title="Play the whole song on an emulated Mega Drive sound chip. Every melodic part is synthesised by the YM2612 -- the voice is gone from those -- and the drums stay Michael Rosen, played eight-bit off its sample channel, which is how the console did drums."><input type="checkbox" id="opt-chip"> mega drive chip</label>
     <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
     <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
@@ -570,7 +571,7 @@
     const len = parseInt($('opt-len').value);
     const options = {
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked,
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked,
     };

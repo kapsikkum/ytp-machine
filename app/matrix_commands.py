@@ -36,9 +36,14 @@ _PART_KEYS = {
     "volume":    float,
     "pan":       float,
     "sustain":   str,
+    "tone":      str,
 }
 _MODES = {"perfect", "tape", "raw"}
 _SUSTAINS = {"note", "ring"}
+# What a part can be played through. "megadrive" and "slap" are what the one
+# hand-built bass patch was called before the chip itself existed.
+_TONES = {"clean", "dac", "bass", "lead", "organ", "brass", "bell", "piano", "strings",
+          "megadrive", "slap"}
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
 _OPTIONS = {
@@ -52,6 +57,7 @@ _OPTIONS = {
     "flash":     ("flash", "bool"),
     "dim":       ("dim", "bool"),
     "labels":    ("labels", "bool"),
+    "chip":      ("chip", "bool"),
 }
 _TRUE = {"1", "yes", "on", "true", "y"}
 _FALSE = {"0", "no", "off", "false", "n"}
@@ -60,13 +66,18 @@ HELP = """\
 {p} say <words>        — a video of the voice saying it (--no-subs to drop the captions)
 {p} mv                 — play the last MIDI file posted here, one tile per instrument
 {p} mv info            — what the song is, and which word each part would use
-{p} mv lead=yeah kick=boom max=60 octave:bass=+1 mode:lead=tape
+{p} mv chip=on        — the whole song on an emulated Mega Drive sound chip: the
+                         melodies synthesised by its FM, the drums still the voice but
+                         eight-bit off its sample channel, which is how the console did it
+{p} mv lead=yeah kick=boom max=60 octave:bass=+1 tone:bass=bass
                          vary=rotate|random (several takes of a part's word rather
                          than one) or vary=ultra (a different word every hit, still
                          on the note), jitter=on (a hair of level and tuning per hit),
                          choose a part's word, or tweak it; parts are named by role
                          (lead, bass, rhythm, chords, kick, snare, hats, toms, cymbals)
-                         or by instrument; a sound can be a word, a noise (*spew*)
+                         or by instrument; tone:<part>= picks what one part is played
+                         through (clean, dac, bass, lead, organ, brass, bell, piano,
+                         strings); a sound can be a word, a noise (*spew*)
                          or one phoneme cut out of words (/ah/, /s/); max= caps the
                          length in seconds
 {p} voices             — the voices available
@@ -127,6 +138,9 @@ def _mv(args: list[str]) -> Command:
                 continue
             if setting == "sustain" and v not in _SUSTAINS:
                 cmd.errors.append(f"sustain is one of {', '.join(sorted(_SUSTAINS))}")
+                continue
+            if setting == "tone" and v not in _TONES:
+                cmd.errors.append(f"tone is one of {', '.join(sorted(_TONES))}")
                 continue
             cmd.parts.setdefault(part, {})[setting] = v
         elif key in _OPTIONS:

@@ -92,6 +92,13 @@ jobs:
         # choice the YTPMV makes afterwards starts from this.
         run: python tests/test_music.py
 
+      - name: The Mega Drive sound chip
+        # Envelope rates, multipliers, algorithms and the output stage,
+        # against figures from the datasheet rather than from this
+        # implementation -- a wrong FM chip still makes a noise, and the
+        # noise is all anybody looks at.
+        run: python tests/test_ym2612.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

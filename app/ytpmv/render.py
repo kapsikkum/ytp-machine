@@ -30,7 +30,7 @@ import numpy as np
 
 import app.generate as g
 from app.database import DATA_DIR, active
-from app.ytpmv import music, recommend, samples
+from app.ytpmv import music, recommend, samples, tone as tones, ym2612
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,17 @@ def analyse(midi_id: str, progress=None) -> dict:
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
+def chip_tone(part: music.Part) -> str:
+    """What *part* is played by when the whole song goes through the chip.
+
+    Melodic parts get an FM patch picked from what the part turned out to be
+    doing; drums keep the voice and go out over the sample channel, because
+    that is where a Mega Drive put its drums -- the chip could synthesise a
+    kick, and almost nobody did.
+    """
+    return "dac" if part.is_drums else ym2612.patch_for(part.role, part.program).name
+
+
 def _default_settings_for(part: music.Part, rec: dict) -> dict:
     return {
         "id": part.id,
@@ -152,6 +163,12 @@ def _default_settings_for(part: music.Part, rec: dict) -> dict:
         "pan": _PAN.get(part.role, 0.0),
         "mode": rec.get("mode") or ("raw" if part.is_drums else "perfect"),
         "sustain": "ring" if part.is_drums else "note",
+        # What the part is played through, and always nothing until asked.
+        # The file naming General MIDI 36 (Slap Bass) is a hint, not an
+        # instruction: the point of this thing is a corpus speaking, and
+        # swapping the voice for a synthesiser is a decision to be made per
+        # song rather than one made on your behalf.
+        "tone": "clean",
         # Drums are cut down to a hit (the "b" of a word, not the word) --
         # a kick that says "bum" on every beat is a person, not a drum.
         "hit": part.is_drums,
@@ -199,6 +216,9 @@ def _merge(defaults: dict, given: dict | None) -> dict:
         s["mode"] = given["mode"]
     if given.get("sustain") in ("note", "ring"):
         s["sustain"] = given["sustain"]
+    asked_tone = tones.resolve(given.get("tone"))
+    if asked_tone:
+        s["tone"] = asked_tone
     if "hit" in given:
         s["hit"] = bool(given["hit"])
     if s["text"] and defaults.get("text") is None:
@@ -294,6 +314,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if vary not in VARY:
         vary = "off"
     jitter = bool(opts.get("jitter", False))
+    # One switch for the lot: every part out through the emulated YM2612.
+    # Parts that were given a tone of their own keep it.
+    chip = bool(opts.get("chip", False))
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
     # Recommendations only for parts the request did not choose a sound for.
@@ -302,6 +325,21 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                                           song.key, song.key_confidence)) if need else {}
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
+    if chip:
+        for p in song.parts:
+            asked = given.get(p.id) or {}
+            if tones.resolve(asked.get("tone")):
+                continue
+            settings[p.id]["tone"] = chip_tone(p)
+            # The octave a part was moved by is there because a mouth cannot
+            # go where the score does: a bass line at 49 Hz comes back up an
+            # octave, chords come down three. The chip has no such limit, and
+            # those shifts are not musical decisions -- applying them to it
+            # spreads parts written in one register across five octaves and
+            # takes the arrangement apart. So a part the chip is playing goes
+            # back to the octave it was written in, unless one was asked for.
+            if "octave" not in asked and settings[p.id]["tone"] in tones.SYNTH:
+                settings[p.id]["octave"] = 0
 
     T = min(song.duration / speed + _TAIL, max_s)
     n_frames = max(1, int(round(T * FPS)))
@@ -436,7 +474,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
-                                                   "mute", "visible")},
+                                                   "tone", "mute", "visible")},
                    "played": [smp.text for smp in sample_of.get(p.id, [])],
                    "takes_played": len(sample_of.get(p.id, [])),
                    "pitch": sample_of[p.id][0].voice.info.as_dict() if p.id in sample_of else None}
@@ -514,6 +552,12 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
             y, warp = voice.render(None, dur, "raw", semitones=midi - ref, stretch=stretch)
         else:
             y, warp = voice.render(midi_to_hz(midi), dur, mode, stretch=stretch)
+        if s.get("tone", "clean") != "clean":
+            # A patch synthesises the note, so it has to be told which note --
+            # and how hard it was struck, since it is not playing a recording
+            # of that any more. Drums have no note, and say so.
+            y = tones.apply(y, s["tone"], hz=None if part.is_drums else midi_to_hz(midi),
+                            level=max(0.2, n.velocity / 127.0))
         if mix is not None and s["volume"] > 0:
             a = int(round((t0 - t_from) * SR))
             k = min(len(y), N - a)

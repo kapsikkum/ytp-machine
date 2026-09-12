@@ -62,9 +62,11 @@ def main() -> int:
                          "(default off, the same take every hit)")
     ap.add_argument("--jitter", action=argparse.BooleanOptionalAction, default=None,
                     help="a hair of level on every hit, and of tuning on drums (default off)")
+    ap.add_argument("--chip", action="store_true",
+                    help="play the whole song through the emulated Mega Drive sound chip")
     ap.add_argument("--only", action="append", default=[], help="play just these parts")
     ap.add_argument("--part", action="append", default=[], metavar="PART=WORDS")
-    for k in ("take", "octave", "mode", "volume", "pan", "sustain"):
+    for k in ("take", "octave", "mode", "volume", "pan", "sustain", "tone"):
         ap.add_argument(f"--{k}", action="append", default=[], metavar=f"PART={k.upper()}")
     ap.add_argument("--check", action="store_true", help="measure the result's tuning")
     args = ap.parse_args()
@@ -111,13 +113,16 @@ def main() -> int:
         setting(spec, "pan", float)
     for spec in args.sustain:
         setting(spec, "sustain")
+    for spec in args.tone:
+        setting(spec, "tone")
     if args.only:
         keep = {_find_part(song, n).id for n in args.only}
         for p in song.parts:
             if p.id not in keep:
                 parts.setdefault(p.id, {}).update(mute=True, visible=False)
 
-    options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels}
+    options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels,
+               "chip": args.chip}
     if args.vary:
         options["vary"] = args.vary
     if args.jitter is not None:

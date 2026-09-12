@@ -64,6 +64,13 @@ check("a part can be muted", c.parts["hats"], {"mute": True, "visible": False})
 c = parse("!ytp mv vary=random jitter=off")
 check("how much a part varies between hits", c.options, {"vary": "random", "jitter": False})
 check("the ultra mode", parse("!ytp mv vary=ultra").options, {"vary": "ultra"})
+check("the whole song through the chip", parse("!ytp mv chip=on").options, {"chip": True})
+check("one part through one of the chip's patches",
+      parse("!ytp mv tone:bass=organ").parts, {"bass": {"tone": "organ"}})
+check("the old name for the bass patch still works",
+      parse("!ytp mv tone:bass=megadrive").parts, {"bass": {"tone": "megadrive"}})
+check("a tone that does not exist is reported",
+      len(parse("!ytp mv tone:bass=trombone").errors), 1)
 check("a variety mode that does not exist is reported",
       parse("!ytp mv vary=sideways").errors, ["vary is one of off, random, rotate, ultra"])
 c = parse("!ytp mv speed=1.5 key=-2 labels=on flip=off")
