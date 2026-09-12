@@ -57,6 +57,7 @@ _FALLBACK_WORDS = 30     # most frequent words tried when too few preferred exis
 _TAKES_PER_WORD = 4
 _ALTERNATIVES = 5
 _ROTATE = 3              # takes of the chosen word to play round-robin
+_POOL = 6                # words good enough for the ultra mode to throw about
 
 _lock = threading.Lock()
 _mem: dict[str, dict] = {}      # corpus -> {clip key: measurement}
@@ -298,10 +299,18 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
         # recording on every beat is what makes a part sound like a loop
         # rather than a drummer; the renderer rotates through these.
         rotate = [i for _s, w, i, _m in ranked if w == best[1]][:_ROTATE]
+        # For the ultra mode: the words that would also have done, so it can
+        # pick a different one on every hit. Only ones that scored, so it
+        # stays a mad version of this part rather than a mad version of
+        # nothing -- and for a pitched part they all have a pitch to bend,
+        # since a word without one cannot be sung on the note.
+        pool = [{"text": w, "take": i} for sc, w, i, m in uniq[:_POOL]
+                if sc > 0 and (part.is_drums or m["f0"])]
         out[part.id] = {
             "text": best[1],
             "take": best[2],
             "takes": rotate or [best[2]],
+            "pool": pool or [{"text": best[1], "take": best[2]}],
             "octave": 0 if part.is_drums else auto_octave(part.median_pitch(), m["midi"]),
             # A voice with no pitch (a whisper) cannot be put *on* a note, but
             # tape speed still follows the tune up and down.

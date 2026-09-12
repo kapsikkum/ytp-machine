@@ -47,7 +47,9 @@ VARY = {
     "off": "the one take, every time",
     "rotate": "the best few takes in turn",
     "random": "those takes in no order",
+    "ultra": "a different word every hit, each sung on the note",
 }
+_ULTRA_POOL = 5          # words a part throws about in the ultra mode
 
 # How loud and where each kind of part sits unless told otherwise.
 _VOLUME = {"lead": 1.0, "bass": 1.0, "rhythm": 0.75, "chords": 0.7,
@@ -133,10 +135,11 @@ def _default_settings_for(part: music.Part, rec: dict) -> dict:
         "id": part.id,
         "text": rec.get("text"),
         "take": rec.get("take", 0),
-        # Round-robin: one recording on every beat is what makes a part sound
-        # like a loop instead of somebody playing. Different takes also mean
-        # different footage on the tile, which is half the point of the form.
+        # The best few takes of this word, for the variety modes to rotate
+        # through when one is turned on, and the other words that would have
+        # done, for the ultra mode to throw about.
         "takes": rec.get("takes") or [rec.get("take", 0)],
+        "pool": rec.get("pool") or [{"text": rec.get("text"), "take": rec.get("take", 0)}],
         "octave": rec.get("octave", 0),
         "transpose": 0,
         "volume": _VOLUME.get(part.role, 0.8),
@@ -174,7 +177,14 @@ def _merge(defaults: dict, given: dict | None) -> dict:
         picked = [_num(t, 0, 0, 10_000, int) for t in given["takes"][:6]]
         s["takes"] = picked or [s["take"]]
     elif "take" in given or (given.get("text") or "").strip():
-        s["takes"] = [s["take"]]        # a take chosen by hand is the one meant
+        # A word or take chosen by hand is the one meant; nothing rotates away
+        # from it, and the ultra mode throws that one word about instead.
+        s["takes"] = [s["take"]]
+        s["pool"] = [{"text": s["text"], "take": s["take"]}]
+    if isinstance(given.get("pool"), list):
+        chosen = [{"text": str(e.get("text"))[:60], "take": _num(e.get("take", 0), 0, 0, 10_000, int)}
+                  for e in given["pool"][:_ULTRA_POOL] if isinstance(e, dict) and e.get("text")]
+        s["pool"] = chosen or s["pool"]
     s["octave"] = _num(given.get("octave", s["octave"]), s["octave"], -4, 4, int)
     s["transpose"] = _num(given.get("transpose", s["transpose"]), 0, -24, 24, int)
     s["volume"] = _num(given.get("volume", s["volume"]), s["volume"], 0.0, 2.0)
@@ -267,15 +277,17 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     flash = bool(opts.get("flash", True))
     dim = bool(opts.get("dim", True))
     labels = bool(opts.get("labels", False))
-    # Rotating takes and a touch of jitter, both on unless turned off: without
-    # them a part is the same recording at the same level on every beat, which
-    # is the difference between a drummer and a loop.
-    vary = opts.get("vary", "rotate")
+    # Both off by default. Rotating takes does stop a part sounding like a
+    # loop, but it also changes the part: takes differ in length and
+    # inflection as well as in the exact sound, and across a whole song that
+    # reads as the song wandering rather than as a player. Available, not
+    # assumed -- a repeated sample is what the form sounds like.
+    vary = opts.get("vary", "off")
     if isinstance(vary, bool):
         vary = "rotate" if vary else "off"
     if vary not in VARY:
-        vary = "rotate"
-    jitter = bool(opts.get("jitter", True))
+        vary = "off"
+    jitter = bool(opts.get("jitter", False))
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
     # Recommendations only for parts the request did not choose a sound for.
@@ -302,11 +314,16 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     for i, part in enumerate(wanted.values()):
         say("samples", i, len(wanted))
         s = settings[part.id]
-        want = [s["take"]] if vary == "off" else s["takes"]
+        if vary == "ultra":
+            want = [(e["text"], e["take"]) for e in s["pool"][:_ULTRA_POOL]]
+        elif vary == "off":
+            want = [(s["text"], s["take"])]
+        else:
+            want = [(s["text"], t) for t in s["takes"]]
         got, failed = [], None
-        for take in dict.fromkeys(want):        # in order, no repeats
+        for text, take in dict.fromkeys(want):  # in order, no repeats
             try:
-                got.append(samples.build(s["text"], take, _hit(part, s)))
+                got.append(samples.build(text, take, _hit(part, s)))
             except samples.SampleError as exc:
                 failed = exc
         if got:
@@ -414,6 +431,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
                                                    "mute", "visible")},
+                   "played": [smp.text for smp in sample_of.get(p.id, [])],
                    "takes_played": len(sample_of.get(p.id, [])),
                    "pitch": sample_of[p.id][0].voice.info.as_dict() if p.id in sample_of else None}
                   for p in song.parts],
@@ -457,7 +475,7 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
             continue
         if n.start != last_start:              # a chord is one hit: one take
             pick = (0 if vary == "off" or len(takes) == 1 else
-                    rng.randrange(len(takes)) if vary == "random" else
+                    rng.randrange(len(takes)) if vary in ("random", "ultra") else
                     len(hits) % len(takes))
         sample = takes[pick]
         voice = sample.voice

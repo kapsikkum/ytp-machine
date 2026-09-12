@@ -63,8 +63,9 @@ c = parse("!ytp mv hats=mute")
 check("a part can be muted", c.parts["hats"], {"mute": True, "visible": False})
 c = parse("!ytp mv vary=random jitter=off")
 check("how much a part varies between hits", c.options, {"vary": "random", "jitter": False})
+check("the ultra mode", parse("!ytp mv vary=ultra").options, {"vary": "ultra"})
 check("a variety mode that does not exist is reported",
-      parse("!ytp mv vary=sideways").errors, ["vary is one of off, random, rotate"])
+      parse("!ytp mv vary=sideways").errors, ["vary is one of off, random, rotate, ultra"])
 c = parse("!ytp mv speed=1.5 key=-2 labels=on flip=off")
 check("speed, key and switches", c.options,
       {"speed": 1.5, "transpose": -2, "labels": True, "flip": False})

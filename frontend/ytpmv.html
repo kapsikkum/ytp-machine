@@ -209,14 +209,15 @@
     <label title="Move the whole song up or down, in semitones">key
       <select id="opt-transpose"></select>
     </label>
-    <label title="One recording on every beat sounds like a loop. Rotating through the best few takes of the same word varies the sound -- and the footage on the tile.">variety
+    <label title="One recording on every beat sounds like a loop. Rotating plays the best few takes of the same word; ultra picks a different word for every hit, each still sung on its note.">variety
       <select id="opt-vary">
-        <option value="rotate" selected>rotate takes</option>
+        <option value="off" selected>one take only</option>
+        <option value="rotate">rotate takes</option>
         <option value="random">random takes</option>
-        <option value="off">one take only</option>
+        <option value="ultra">ultra: different words</option>
       </select>
     </label>
-    <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter" checked> jitter</label>
+    <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
     <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
     <label title="Darken a tile when its part is not playing"><input type="checkbox" id="opt-dim" checked> dim idle</label>

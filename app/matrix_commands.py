@@ -40,7 +40,7 @@ _PART_KEYS = {
 _MODES = {"perfect", "tape", "raw"}
 _SUSTAINS = {"note", "ring"}
 # Whole-song options.
-_VARY = {"off", "rotate", "random"}
+_VARY = {"off", "rotate", "random", "ultra"}
 _OPTIONS = {
     "max":       ("max_seconds", float),
     "vary":      ("vary", "vary"),
@@ -61,8 +61,9 @@ HELP = """\
 {p} mv                 — play the last MIDI file posted here, one tile per instrument
 {p} mv info            — what the song is, and which word each part would use
 {p} mv lead=yeah kick=boom max=60 octave:bass=+1 mode:lead=tape
-                         vary=rotate|random|off (how much each part varies between
-                         hits), jitter=on|off (a hair of level and tuning per hit),
+                         vary=rotate|random (several takes of a part's word rather
+                         than one) or vary=ultra (a different word every hit, still
+                         on the note), jitter=on (a hair of level and tuning per hit),
                          choose a part's word, or tweak it; parts are named by role
                          (lead, bass, rhythm, chords, kick, snare, hats, toms, cymbals)
                          or by instrument; max= caps the length in seconds

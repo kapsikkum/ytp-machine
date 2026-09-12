@@ -56,11 +56,12 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--transpose", type=int, default=0)
     ap.add_argument("--labels", action="store_true", help="write each part's word on its tile")
-    ap.add_argument("--vary", choices=("off", "rotate", "random"), default=None,
-                    help="how a part avoids sounding like one recording on a loop "
-                         "(default: rotate through its best few takes)")
-    ap.add_argument("--no-jitter", action="store_true",
-                    help="play every hit at exactly the same level and tuning")
+    ap.add_argument("--vary", choices=("off", "rotate", "random", "ultra"), default=None,
+                    help="play more than one take of a part's word, in turn or in no order; "
+                         "ultra plays a different word every hit, still on the note "
+                         "(default off, the same take every hit)")
+    ap.add_argument("--jitter", action=argparse.BooleanOptionalAction, default=None,
+                    help="a hair of level on every hit, and of tuning on drums (default off)")
     ap.add_argument("--only", action="append", default=[], help="play just these parts")
     ap.add_argument("--part", action="append", default=[], metavar="PART=WORDS")
     for k in ("take", "octave", "mode", "volume", "pan", "sustain"):
@@ -119,8 +120,8 @@ def main() -> int:
     options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels}
     if args.vary:
         options["vary"] = args.vary
-    if args.no_jitter:
-        options["jitter"] = False
+    if args.jitter is not None:
+        options["jitter"] = args.jitter
     if args.max:
         options["max_seconds"] = args.max
 
