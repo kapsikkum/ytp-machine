@@ -23,7 +23,11 @@ class GenerateRequest(BaseModel):
     # Burned into the picture rather than written to a sidecar file: the
     # output of this thing is shared as a video, and a .vtt nobody carries
     # with it is a caption nobody sees.
-    subtitles: bool = False
+    #
+    # On by default. A spliced sentence is not always intelligible first time
+    # -- that is half the joke -- and the words on screen are what let someone
+    # hear what it was going for. Pass false to turn them off.
+    subtitles: bool = True
 
 
 class SpliceModeRequest(BaseModel):

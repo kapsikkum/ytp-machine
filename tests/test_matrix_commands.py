@@ -37,9 +37,13 @@ check("quoted reply lines are not the command",
 
 print("say")
 c = parse("!ytp say nice chocolate cake")
-check("say takes the rest as words", (c.name, c.text, c.subtitles), ("say", "nice chocolate cake", False))
+check("say takes the rest as words, captions on by default",
+      (c.name, c.text, c.subtitles), ("say", "nice chocolate cake", True))
 c = parse("!ytp say --subs nice cake")
-check("--subs turns captions on", (c.text, c.subtitles), ("nice cake", True))
+check("--subs is still accepted", (c.text, c.subtitles), ("nice cake", True))
+c = parse("!ytp say --no-subs nice cake")
+check("--no-subs turns captions off", (c.text, c.subtitles), ("nice cake", False))
+check("a bare --no-subs says nothing", parse("!ytp say --no-subs").name, "help")
 check("say with nothing to say is help", parse("!ytp say").name, "help")
 check("~markup~ passes through", parse("!ytp say ~nice~ *spew*").text, "~nice~ *spew*")
 

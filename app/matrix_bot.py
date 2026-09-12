@@ -20,6 +20,9 @@ Configuration is all environment:
     MATRIX_PREFIX          default !ytp
     MATRIX_COOLDOWN        seconds between one person's requests, default 20
     MATRIX_MV_MAX_SECONDS  longest song video it will make, default 120
+    MATRIX_VOICE_POLL      how often to check which voice is live, default 20s.
+                           One corpus serves the whole app, so a switch on the
+                           web page is announced in every room the bot is in
     YTP_API_URL            where the web app is, default http://app:8765
     YTP_PUBLIC_URL         the web app as the room can reach it, for links to
                            videos too big for the homeserver to take
@@ -47,8 +50,8 @@ from dataclasses import dataclass, field
 
 import aiohttp
 from nio import (AsyncClient, AsyncClientConfig, InviteMemberEvent, LoginResponse,
-                 MatrixRoom, RoomMessageAudio, RoomMessageFile, RoomMessageText,
-                 UploadResponse)
+                 MatrixRoom, MegolmEvent, RoomMessageAudio, RoomMessageFile,
+                 RoomMessageText, UploadResponse)
 
 from app.matrix_commands import DEFAULT_PREFIX, HELP, Command, is_midi, match_part, parse
 
@@ -82,6 +85,7 @@ class Config:
     admins: set[str] = field(default_factory=set)
     cooldown: float = 20.0
     mv_max_seconds: float = 120.0
+    voice_poll: float = 20.0
     session_path: str = ""
 
     @classmethod
@@ -101,6 +105,7 @@ class Config:
             admins=_csv("MATRIX_ADMINS"),
             cooldown=float(os.environ.get("MATRIX_COOLDOWN", "20")),
             mv_max_seconds=float(os.environ.get("MATRIX_MV_MAX_SECONDS", "120")),
+            voice_poll=max(5.0, float(os.environ.get("MATRIX_VOICE_POLL", "20"))),
             session_path=os.path.join(data, "matrix", "session.json"),
         )
 
@@ -222,6 +227,8 @@ class Bot:
                                                            encryption_enabled=False))
         self.busy: set[str] = set()                     # users with a request in flight
         self.last_request: dict[str, float] = {}
+        self._warned: set[str] = set()                         # rooms told they are encrypted
+        self._voice_asked_in: str | None = None                # room that asked for the last switch
         self.midi_by_event: dict[str, tuple[str, str]] = {}    # event id -> (mxc, filename)
         self.last_midi: dict[str, tuple[str, str]] = {}        # room id -> (mxc, filename)
         self.upload_limit: int | None = None
@@ -475,6 +482,9 @@ class Bot:
         if self.cfg.admins and event.sender not in self.cfg.admins:
             await self.say(room.room_id, "Only an admin can switch the voice.", event.event_id)
             return
+        # Every other room hears about this from the watcher below; this one
+        # is getting a direct answer, so it does not need telling twice.
+        self._voice_asked_in = room.room_id
         data = await self.api.post("/api/corpus", {"slug": cmd.text.strip()})
         await self.say(room.room_id, f"Now speaking as {data.get('name', cmd.text)} "
                        f"({data.get('words', '?')} words).", event.event_id)
@@ -482,6 +492,38 @@ class Bot:
     async def cmd_queue(self, room: MatrixRoom, event, cmd: Command) -> None:
         q = await self.api.get("/api/queue")
         await self.say(room.room_id, f"{q['running']} running, {q['queued']} waiting.", event.event_id)
+
+    async def watch_voice(self) -> None:
+        """Tell every room when the voice changes, whoever changed it.
+
+        One corpus is live at a time for the whole app, so somebody switching
+        it on the web page changes what the bot says in every room it sits in.
+        That used to happen silently, and the next video came back in a voice
+        nobody in the room had asked for.
+
+        Polled rather than pushed: the app has nothing to push with, and one
+        small request every MATRIX_VOICE_POLL seconds is cheaper than building
+        it a way to.
+        """
+        last: tuple | None = None
+        while True:
+            try:
+                s = await self.api.get("/api/stats")
+                now = (s.get("corpus"), s.get("corpus_name"))
+                if last is not None and now != last:
+                    asked_in, self._voice_asked_in = self._voice_asked_in, None
+                    text = (f"The voice is now {s.get('corpus_name')} "
+                            f"({s.get('unique_words')} words, {s.get('total_clips')} clips).")
+                    for room_id in list(self.client.rooms):
+                        if room_id != asked_in:
+                            await self.say(room_id, text)
+                    log.info("voice changed to %s; told %d room(s)", now[1], len(self.client.rooms))
+                last = now
+            except (ApiError, aiohttp.ClientError) as exc:
+                log.debug("voice check failed: %s", exc)
+            except Exception:  # noqa: BLE001 -- this loop outlives everything else
+                log.exception("voice watcher stumbled")
+            await asyncio.sleep(self.cfg.voice_poll)
 
     # ── events ───────────────────────────────────────────────────────────────
 
@@ -520,6 +562,24 @@ class Bot:
         caption = content.get("body") if content.get("filename") and content.get("body") != name else None
         if caption:
             await self.on_text(room, event, caption)
+
+    async def on_encrypted(self, room: MatrixRoom, event: MegolmEvent) -> None:
+        """Say, once per room, that it cannot read a word in here.
+
+        An encrypted room looks exactly like an idle one from in here: every
+        message arrives as ciphertext this bot has no key for, so it answers
+        nothing and there is nothing in the log either. Saying so out loud
+        beats leaving somebody typing !ytp at a bot that cannot hear them.
+        Encryption cannot be turned off once a room has it on, so the answer
+        is always a different room.
+        """
+        if event.sender == self.client.user_id or room.room_id in self._warned:
+            return
+        self._warned.add(room.room_id)
+        log.warning("%s is encrypted; this bot cannot read it", room.room_id)
+        await self.say(room.room_id,
+                       "I can't read this room -- it's end-to-end encrypted, and I have no "
+                       "keys for it. Make an unencrypted room and invite me there instead.")
 
     async def on_message(self, room: MatrixRoom, event: RoomMessageText) -> None:
         await self.on_text(room, event, event.body)
@@ -593,9 +653,12 @@ class Bot:
         self.client.add_event_callback(self.on_message, RoomMessageText)
         self.client.add_event_callback(self.on_file, (RoomMessageFile, RoomMessageAudio))
         self.client.add_event_callback(self.on_invite, InviteMemberEvent)
+        self.client.add_event_callback(self.on_encrypted, MegolmEvent)
+        watcher = asyncio.create_task(self.watch_voice())
         try:
             await self.client.sync_forever(timeout=30000, full_state=False)
         finally:
+            watcher.cancel()
             await self.api.close()
             await self.client.close()
 

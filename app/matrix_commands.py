@@ -4,8 +4,8 @@ Kept apart from the bot itself so it can be tested without a homeserver, or
 matrix-nio installed at all: this is plain string handling, and it is where
 the mistakes would be.
 
-    !ytp say nice chocolate cake          a sentence video
-    !ytp say --subs nice chocolate cake   ... with the words on the picture
+    !ytp say nice chocolate cake            a sentence video, words on the picture
+    !ytp say --no-subs nice chocolate cake  ... without them
     !ytp mv                               the last MIDI posted here, as a YTPMV
     !ytp mv lead=yeah kick=boom max=60    ... with some parts' sounds chosen
     !ytp mv octave:bass=+1 mode:lead=tape
@@ -54,7 +54,7 @@ _TRUE = {"1", "yes", "on", "true", "y"}
 _FALSE = {"0", "no", "off", "false", "n"}
 
 HELP = """\
-{p} say <words>        — a video of the voice saying it (add --subs for captions)
+{p} say <words>        — a video of the voice saying it (--no-subs to drop the captions)
 {p} mv                 — play the last MIDI file posted here, one tile per instrument
 {p} mv info            — what the song is, and which word each part would use
 {p} mv lead=yeah kick=boom max=60 octave:bass=+1 mode:lead=tape
@@ -71,7 +71,7 @@ Reply to a MIDI file with {p} mv to use that one instead of the latest."""
 class Command:
     name: str                                   # say | mv | info | voices | voice | queue | help | unknown
     text: str = ""                              # say: the words; voice: the slug; unknown: what was typed
-    subtitles: bool = False
+    subtitles: bool = True                      # captions are the default; --no-subs turns them off
     parts: dict[str, dict] = field(default_factory=dict)   # mv: part name -> settings
     options: dict = field(default_factory=dict)            # mv: song options
     errors: list[str] = field(default_factory=list)
@@ -175,11 +175,13 @@ def parse(body: str, prefix: str = DEFAULT_PREFIX, direct: bool = False) -> Comm
     verb = verb.lower().strip()
     args = args.strip()
     if verb in ("say", "s"):
-        subs = False
+        subs = True                      # the words on screen, unless asked otherwise
         words = args
-        for flag in ("--subs", "--subtitles", "-s"):
+        for flag, on in (("--subs", True), ("--subtitles", True), ("-s", True),
+                         ("--no-subs", False), ("--nosubs", False), ("--no-subtitles", False)):
             if words.startswith(flag + " ") or words == flag:
-                subs, words = True, words[len(flag):].strip()
+                subs, words = on, words[len(flag):].strip()
+                break
         if not words:
             return Command("help", errors=["say what?"])
         return Command("say", text=words, subtitles=subs)
