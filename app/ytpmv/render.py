@@ -53,7 +53,10 @@ _ULTRA_POOL = 5          # words a part throws about in the ultra mode
 
 # How loud and where each kind of part sits unless told otherwise.
 _VOLUME = {"lead": 1.0, "bass": 1.0, "rhythm": 0.75, "chords": 0.7,
-           "drums:kick": 1.0, "drums:snare": 0.9, "drums:hats": 0.55,
+           # The kick sits a little above the rest: it is the only part whose
+           # job is to be felt, and peak-matching a saturated low-passed hit
+           # leaves it quieter than it sounds like it should be.
+           "drums:kick": 1.2, "drums:snare": 0.9, "drums:hats": 0.55,
            "drums:toms": 0.8, "drums:cymbals": 0.5, "drums:perc": 0.7}
 _PAN = {"lead": 0.0, "bass": 0.0, "rhythm": -0.35, "chords": 0.35,
         "drums:kick": 0.0, "drums:snare": 0.05, "drums:hats": 0.3,

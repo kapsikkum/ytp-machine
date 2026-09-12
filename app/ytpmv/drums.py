@@ -77,8 +77,13 @@ def find_hiss(x: np.ndarray, min_share: float = 0.35) -> tuple[int, int] | None:
     return a * _HOP, min(len(x), (b + 4) * _HOP)
 
 
-def _filter(y: np.ndarray, lo: float | None = None, hi: float | None = None) -> np.ndarray:
-    """Band-limit *y* with gentle (half-octave) edges. Short arrays only."""
+def _filter(y: np.ndarray, lo: float | None = None, hi: float | None = None,
+            shelf: tuple[float, float] | None = None) -> np.ndarray:
+    """Band-limit *y* with gentle (half-octave) edges. Short arrays only.
+
+    *shelf* is (corner, gain): everything below the corner is lifted, which is
+    how a kick gets its weight without a synthesiser under it.
+    """
     if len(y) < 16:
         return y
     n = 1 << int(np.ceil(np.log2(len(y) * 2)))
@@ -89,7 +94,16 @@ def _filter(y: np.ndarray, lo: float | None = None, hi: float | None = None) -> 
         H *= 1.0 / (1.0 + (f / hi) ** 4)
     if lo:
         H *= 1.0 - 1.0 / (1.0 + (f / lo) ** 4)
+    if shelf:
+        corner, gain = shelf
+        H *= 1.0 + (gain - 1.0) / (1.0 + (f / corner) ** 2)
     return np.fft.irfft(Y * H, n)[: len(y)].astype(np.float32)
+
+
+def _saturate(y: np.ndarray, drive: float) -> np.ndarray:
+    """Round the peaks off. Adds harmonics of the low end, which is what makes
+    a kick audible on a phone speaker that cannot reproduce the low end."""
+    return (np.tanh(y * drive) / np.tanh(drive)).astype(np.float32)
 
 
 def _decay(y: np.ndarray, tau: float, attack: float = 0.002) -> np.ndarray:
@@ -126,10 +140,20 @@ def shape(x: np.ndarray, group: str) -> tuple[np.ndarray, int]:
     hiss = find_hiss(x)
 
     if group == "kick":
-        y = _slice(x, s, 0.16)
-        y = _tape(y, -5.0)                                  # deeper: a body, not a mouth
-        y = _filter(y, hi=900.0)
-        y = _decay(y, 0.045)[: int(0.13 * SR)]
+        # Beef, in the order it is built: take longer than the hit will be so
+        # there is decay to work with, drop it further than a voice can go,
+        # lay an octave-down copy underneath for the weight a mouth has not
+        # got, lift everything under 90 Hz, then saturate so the low end
+        # survives a speaker that cannot reproduce it. A longer decay lets it
+        # land rather than click.
+        y = _tape(_slice(x, s, 0.24), -7.0)
+        sub = _tape(y, -12.0) * 0.55                        # the octave below, underneath
+        body = np.zeros(max(len(y), len(sub)), dtype=np.float32)
+        body[:len(y)] += y
+        body[:len(sub)] += sub
+        body = _filter(body, hi=750.0, shelf=(90.0, 2.2))
+        body = _saturate(body, 2.0)
+        y = _decay(body, 0.075)[: int(0.2 * SR)]
         start = s
     elif group == "snare":
         head = _slice(x, s, 0.045)
