@@ -66,7 +66,9 @@ HELP = """\
                          on the note), jitter=on (a hair of level and tuning per hit),
                          choose a part's word, or tweak it; parts are named by role
                          (lead, bass, rhythm, chords, kick, snare, hats, toms, cymbals)
-                         or by instrument; max= caps the length in seconds
+                         or by instrument; a sound can be a word, a noise (*spew*)
+                         or one phoneme cut out of words (/ah/, /s/); max= caps the
+                         length in seconds
 {p} voices             — the voices available
 {p} voice <name>       — switch voice (admins only)
 {p} queue              — how many videos are waiting

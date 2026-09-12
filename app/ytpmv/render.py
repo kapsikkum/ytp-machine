@@ -120,6 +120,9 @@ def analyse(midi_id: str, progress=None) -> dict:
     # What this voice has besides words. A spew or a click is already a
     # percussive sound, so the page offers them for any part.
     out["noises"] = samples.noises()
+    # Single sounds, cut out of words wherever the aligner found them.
+    out["units"] = {k: len(v) for k, v in sorted(samples.units().items(),
+                                                 key=lambda kv: -len(kv[1]))}
     out["voice"] = active()["name"]
     for p in out["parts"]:
         rec = recs.get(p["id"], {})

@@ -53,6 +53,23 @@ PREFERRED = {
 # Bumped whenever measure() learns something new, so a cache written by an
 # older version is re-measured instead of quietly scoring on missing fields.
 _MEASURE_VERSION = 2
+# One sound out of the middle of a word, which the aligner has already located
+# in every clip. A vowel on its own holds a note in a way no whole word does --
+# it has no consonants to get through first -- and there are far more of them
+# than there are short words worth singing. Drums get the consonants: a /k/ is
+# a snare hit with nothing else attached to it.
+UNITS = {
+    "lead":          ["/ah/", "/aa/", "/ao/", "/ow/", "/uw/", "/iy/", "/eh/", "/ae/", "/er/", "/ay/", "/aw/"],
+    "bass":          ["/ow/", "/uw/", "/ao/", "/aa/", "/ah/", "/er/", "/oy/"],
+    "drums:kick":    ["/b/", "/d/", "/g/", "/p/"],
+    "drums:snare":   ["/k/", "/t/", "/ch/", "/p/", "/jh/"],
+    "drums:hats":    ["/s/", "/sh/", "/z/", "/f/", "/th/"],
+    "drums:toms":    ["/d/", "/b/", "/g/", "/m/", "/n/"],
+    "drums:cymbals": ["/sh/", "/s/", "/zh/", "/ch/"],
+    "drums:perc":    ["/t/", "/k/", "/p/", "/ch/"],
+}
+UNITS["rhythm"] = UNITS["chords"] = UNITS["lead"]
+
 _FALLBACK_WORDS = 30     # most frequent words tried when too few preferred exist
 _TAKES_PER_WORD = 4
 _ALTERNATIVES = 5
@@ -198,8 +215,11 @@ def score(role: str, m: dict) -> float:
 
 
 def _words_for(role: str, available: dict[str, list[dict]], frequent: list[str],
-               noises: tuple[str, ...] = ()) -> list[str]:
+               noises: tuple[str, ...] = (), units: dict | None = None) -> list[str]:
     words = [w for w in PREFERRED.get(role, PREFERRED["rhythm"]) if available.get(w)]
+    if units:
+        words = [u for u in UNITS.get(role, UNITS["lead"])
+                 if len(units.get(u.strip("/"), ())) >= 3] + words
     # A corpus with non-verbal noises has better drums in it than any word: a
     # spew or a click is already a percussive sound, so they are auditioned for
     # the kit alongside the words and win on their own merits.
@@ -225,11 +245,12 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     # "noise" is the any-of pool: every take is a different kind of sound, so
     # it is no use as one instrument. It stays available to type by hand.
     noise_kinds = tuple(k for k in samples.noises() if k != "noise")
+    unit_kinds = samples.units()
 
     # Every (word, take) worth measuring for any role, measured once.
     wanted: dict[str, list[tuple[int, dict]]] = {}
     for role in roles:
-        for w in _words_for(role, cbw, frequent, noise_kinds):
+        for w in _words_for(role, cbw, frequent, noise_kinds, unit_kinds):
             if w in wanted:
                 continue
             tk = samples.takes_for(w)
@@ -267,7 +288,7 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     used: dict[str, int] = {}
     for part in song.parts:
         ranked = []
-        for w in _words_for(part.role, cbw, frequent, noise_kinds):
+        for w in _words_for(part.role, cbw, frequent, noise_kinds, unit_kinds):
             for i, clip in wanted.get(w, []):
                 entry = cache.get(_clip_key(clip)) or {}
                 m = entry.get(part.drum_group) if part.is_drums else entry.get("word")

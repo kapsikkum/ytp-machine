@@ -247,6 +247,7 @@
   const STAGE = { waiting: 'waiting to start', samples: 'cutting samples', notes: 'singing notes',
     measuring: 'measuring words', frames: 'drawing frames', encoding: 'encoding', finished: 'finishing' };
   const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const VOWEL = new Set(['aa','ae','ah','ao','aw','ay','eh','er','ey','ih','iy','ow','oy','uh','uw']);
   const noteName = (m) => `${NAMES[((Math.round(m) % 12) + 12) % 12]}${Math.floor(Math.round(m) / 12) - 1}`;
 
   let song = null;          // the analysis
@@ -362,11 +363,22 @@
       ['parts', song.parts.length],
     ].map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
     const kinds = Object.entries(song.noises || {});
-    $('song-noises').innerHTML = kinds.length
-      ? 'This voice also makes noises that are not words: ' + kinds.map(([k, n]) =>
-          `<b>*${esc(k)}*</b> (${n})`).join(', ') +
-        '. They make the best drums — type one into any part, or pick it from the suggestions.'
-      : '';
+    const sounds = Object.keys(song.units || {});
+    const vowels = sounds.filter(u => VOWEL.has(u)).slice(0, 8);
+    const rest = sounds.filter(u => !VOWEL.has(u)).slice(0, 8);
+    const lines = [];
+    if (kinds.length) {
+      lines.push('Noises that are not words: ' + kinds.map(([k, n]) =>
+        `<b>*${esc(k)}*</b> (${n})`).join(', ') + '.');
+    }
+    if (sounds.length) {
+      lines.push('Single sounds, cut out of words wherever they occur: ' +
+        vowels.concat(rest).map(u => `<b>/${esc(u)}/</b>`).join(' ') +
+        ` and ${Math.max(sounds.length - vowels.length - rest.length, 0)} more. ` +
+        'A vowel on its own holds a note better than any word does; the consonants make drums.');
+    }
+    lines.push('Type any of them into a part, or pick one from the suggestions.');
+    $('song-noises').innerHTML = lines.join('<br>');
     ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
     drawParts();
     for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);

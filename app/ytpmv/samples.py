@@ -13,6 +13,7 @@ always the same recording, so a choice made in the page survives to the render.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import random
@@ -105,6 +106,96 @@ def _norm(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+# /ah/, /s/, /ow/ -- one sound out of the middle of words, wherever the corpus
+# has it. The aligner already wrote down where every phoneme of every clip
+# falls, which is what makes a word spliceable; the same timings make each
+# sound playable on its own. A vowel cut out of a word is a far better
+# instrument than the word: no consonants top and tail, so it holds a note.
+_UNIT = re.compile(r"^/([a-z]{1,3}\d?)/$")
+
+# ARPAbet's vowels. They carry the pitch, so they are the ones worth singing.
+VOWELS = {"aa", "ae", "ah", "ao", "aw", "ay", "eh", "er", "ey",
+          "ih", "iy", "ow", "oy", "uh", "uw"}
+
+# How long each kind of sound ought to be: (shortest, longest, the length to
+# prefer). Sorting purely by length looked sensible and was not -- the longest
+# "ah" in the corpus is 1.4 seconds, inside the word "but", which is the
+# aligner having slipped rather than a sound anybody made. Ranking by nearness
+# to a plausible length throws those out and keeps the ones worth playing.
+_SHAPE = {
+    "vowel":     (0.07, 0.60, 0.20),
+    "fricative": (0.05, 0.40, 0.14),
+    "plosive":   (0.03, 0.20, 0.07),
+    "other":     (0.05, 0.35, 0.12),
+}
+FRICATIVES = {"s", "sh", "z", "zh", "f", "v", "th", "dh", "hh"}
+PLOSIVES = {"p", "b", "t", "d", "k", "g", "ch", "jh"}
+_UNITS_KEPT = 60         # instances of each sound to keep
+_unit_cache: dict[str, dict[str, list[dict]]] = {}
+
+
+def _kind(name: str) -> str:
+    return ("vowel" if name in VOWELS else "fricative" if name in FRICATIVES
+            else "plosive" if name in PLOSIVES else "other")
+
+
+def units() -> dict[str, list[dict]]:
+    """Every phoneme this voice has, as clips of its own: {"ah": [clip, ...]}.
+
+    Each is a slice of a real clip, marked *edited* so it is cut exactly where
+    the aligner put the boundary rather than padded like a word.
+    """
+    corpus = active()["slug"]
+    got = _unit_cache.get(corpus)
+    if got is not None:
+        return got
+    g._ensure_cache()
+    found: dict[str, list[dict]] = {}
+    for rows in (g._clips_by_word_cache or {}).values():
+        for clip in rows:
+            phones = clip.get("phones")
+            if not phones:
+                continue
+            if isinstance(phones, str):
+                try:
+                    phones = json.loads(phones)
+                except ValueError:
+                    continue
+            for i, (ph, a, b) in enumerate(phones):
+                name = str(ph).lower().rstrip("0123456789")
+                lo, hi, _want = _SHAPE[_kind(name)]
+                dur = b - a
+                if not lo <= dur <= hi:
+                    continue
+                start = clip["start_time"] + max(a, 0.0)
+                end = clip["start_time"] + b
+                found.setdefault(name, []).append({
+                    "id": f"{clip.get('id')}#{i}",
+                    "word": f"/{name}/",
+                    "source_id": clip.get("source_id"),
+                    "source_file": clip["source_file"],
+                    "start_time": start,
+                    "end_time": end,
+                    "prev_end": start,
+                    "next_start": end,
+                    "edited": 1,            # cut where the aligner said, not padded
+                    # A word's fades would swallow a 60ms sound whole.
+                    "fade_in": 0.004,
+                    "fade_out": 0.006,
+                    "unit_of": clip.get("word"),
+                })
+    for name, rows in found.items():
+        want = _SHAPE[_kind(name)][2]
+        rows.sort(key=lambda r: abs((r["end_time"] - r["start_time"]) - want))
+        found[name] = rows[:_UNITS_KEPT]
+    _unit_cache[corpus] = found
+    return found
+
+
+def unit_takes(name: str) -> list[dict]:
+    return units().get(name.lower(), [])
+
+
 # *spew*, *click* -- a non-verbal clip rather than a word. The corpus keeps
 # these apart from speech precisely because they are not words, and they make
 # far better drums than anything anybody says.
@@ -128,9 +219,13 @@ def noise_takes(kind: str) -> list[dict]:
 
 
 def takes_for(text: str) -> list[dict]:
-    """The takes behind *text*, whether it names a noise or a word."""
-    m = _NOISE.match(_norm(text))
-    return noise_takes(m.group(1)) if m else takes(_norm(text))
+    """The takes behind *text*: a phoneme, a noise, or a word."""
+    text = _norm(text)
+    u = _UNIT.match(text)
+    if u:
+        return unit_takes(u.group(1))
+    m = _NOISE.match(text)
+    return noise_takes(m.group(1)) if m else takes(text)
 
 
 def takes(word: str) -> list[dict]:
@@ -190,8 +285,13 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
             return cached
 
     g._ensure_cache()
-    noise = _NOISE.match(text)
-    if noise:
+    unit = _UNIT.match(text)
+    noise = None if unit else _NOISE.match(text)
+    if unit:
+        word_takes = unit_takes(unit.group(1))
+        if not word_takes:
+            raise SampleError(f"This voice has no {text} sound the aligner could find.")
+    elif noise:
         word_takes = noise_takes(noise.group(1))
         if not word_takes:
             raise SampleError(f"This voice has no {noise.group(1)} noise.")
@@ -218,7 +318,13 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
     if not segments:
         raise SampleError(f"This voice can't say \"{text}\".")
 
-    digest = hashlib.sha1(f"{corpus}|{text}|{take}".encode()).hexdigest()[:12]
+    # The clip itself is in the name, not just its index. Take 3 of a word is
+    # whatever sorts third, and that moves when the corpus is edited or the
+    # ranking changes -- so a file cached under (voice, text, take) alone came
+    # back as the sound that used to be there. A phoneme unit made that
+    # obvious: every one of them returned a 1.4s sample it no longer used.
+    ident = "|".join(str(clip.get(k)) for k in ("id", "start_time", "end_time")) if word_takes         else "|".join(f"{sg.get('id')}:{sg['start_time']:.3f}" for sg in segments)
+    digest = hashlib.sha1(f"{corpus}|{text}|{take}|{ident}".encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     mp4 = os.path.join("output", f"ytpmv_sample_{digest}.mp4")
     # One build per file at a time, written aside and moved into place. The
@@ -262,3 +368,4 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
 def clear_cache() -> None:
     with _lock:
         _cache.clear()
+    _unit_cache.clear()
