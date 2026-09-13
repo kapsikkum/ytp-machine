@@ -235,6 +235,14 @@
         <option value="nes-voice">nes — his voice, delta-modulated</option>
       </select>
     </label>
+    <label title="Put the picture through a console as well as the sound: its resolution, and its colours and no others. The Mega Drive had 320x224 and nine bits of colour; the NES had 256x240 and sixty-four fixed colours it could not mix or change.">screen
+      <select id="opt-screen">
+        <option value="none" selected>off — full colour</option>
+        <option value="md">mega drive — 320x224, 9-bit</option>
+        <option value="nes">nes — 256x240, 64 colours</option>
+      </select>
+    </label>
+    <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
     <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
     <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
@@ -579,7 +587,7 @@
     const len = parseInt($('opt-len').value);
     const options = {
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false,
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked, screen: $('opt-screen').value,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked,
     };

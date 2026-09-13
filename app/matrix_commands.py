@@ -52,6 +52,7 @@ _TONES = {"clean", "dac", "dpcm",
           "megadrive", "slap"}
 _CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
           "megadrive", "megadrive-voice"}      # the longer names still work
+_SCREENS = {"off", "no", "none", "md", "nes"}
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
 _OPTIONS = {
@@ -66,6 +67,8 @@ _OPTIONS = {
     "dim":       ("dim", "bool"),
     "labels":    ("labels", "bool"),
     "chip":      ("chip", "chip"),
+    "balance":   ("balance", "bool"),
+    "screen":    ("screen", "screen"),
 }
 _TRUE = {"1", "yes", "on", "true", "y"}
 _FALSE = {"0", "no", "off", "false", "n"}
@@ -91,6 +94,10 @@ HELP = """\
                          strings); a sound can be a word, a noise (*spew*)
                          or one phoneme cut out of words (/ah/, /s/); max= caps the
                          length in seconds
+{p} mv screen=nes      — put the picture through a console too: 256x240 and the NES's
+                         sixty-four colours, or screen=md for 320x224 and nine-bit
+{p} mv balance=off     — leave the parts at their table levels instead of measuring
+                         each one and moving it to where its job wants it
 {p} voices             — the voices available
 {p} voice <name>       — switch voice (admins only)
 {p} queue              — how many videos are waiting
@@ -156,7 +163,13 @@ def _mv(args: list[str]) -> Command:
             cmd.parts.setdefault(part, {})[setting] = v
         elif key in _OPTIONS:
             name, conv = _OPTIONS[key]
-            if conv == "chip":
+            if conv == "screen":
+                v = value.lower()
+                if v not in _SCREENS:
+                    cmd.errors.append("screen is one of off, md, nes")
+                    continue
+                cmd.options[name] = "none" if v in ("off", "no") else v
+            elif conv == "chip":
                 v = value.lower()
                 if v not in _CHIPS:
                     cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice")

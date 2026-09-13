@@ -100,6 +100,17 @@ jobs:
         # noise is all anybody looks at.
         run: python tests/test_ym2612.py
 
+      - name: Loudness and balance
+        # A loudness meter is easy to write wrongly and a wrong one still
+        # hands back a number that looks like decibels, so these are checked
+        # against signals whose loudness follows from arithmetic.
+        run: python tests/test_master.py
+
+      - name: The picture, put through a console
+        # That every colour out is one the machine could have made, and that
+        # the tables are the hardware's rather than a plausible-looking ramp.
+        run: python tests/test_screen.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

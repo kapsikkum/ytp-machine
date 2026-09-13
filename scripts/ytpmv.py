@@ -67,6 +67,12 @@ def main() -> int:
                     help="play the whole song on an emulated sound chip. The plain "
                          "names synthesise it and the voice is gone; the -voice ones "
                          "keep him, played off that machine's own sample channel")
+    ap.add_argument("--screen", choices=("md", "nes"), default=None,
+                    help="put the picture through a console as well: its resolution, "
+                         "and its colours and no others")
+    ap.add_argument("--balance", action=argparse.BooleanOptionalAction, default=None,
+                    help="measure every part and move it to where its job wants it "
+                         "(on by default; --no-balance for the old fixed levels)")
     ap.add_argument("--only", action="append", default=[], help="play just these parts")
     ap.add_argument("--part", action="append", default=[], metavar="PART=WORDS")
     for k in ("take", "octave", "mode", "volume", "pan", "sustain", "tone"):
@@ -126,6 +132,10 @@ def main() -> int:
 
     options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels,
                "chip": args.chip}
+    if args.balance is not None:
+        options["balance"] = args.balance
+    if args.screen:
+        options["screen"] = args.screen
     if args.vary:
         options["vary"] = args.vary
     if args.jitter is not None:

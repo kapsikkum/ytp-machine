@@ -406,6 +406,42 @@ only 93 steps long. The triangle divides by 32 where the pulses divide by 16,
 so it runs out of timer resolution an octave earlier and goes flat at the top
 of its range. That is the hardware, not a bug.
 
+### Balance
+
+Every part is measured and moved to where its job says it should sit, rather
+than trusting a table that cannot tell a whisper from a brass patch. On by
+default; `--no-balance`, `balance=off`, or the checkbox.
+
+The measurement is the broadcast one (ITU-R BS.1770), and the part that earns
+its keep is the gating: a cymbal might be four hits in three minutes, and
+averaged across the song it looks nearly silent. Anything balancing on plain
+RMS would crank it until those four hits took the roof off. Gated, the same
+cymbal played forty times and four times measures within about a decibel.
+
+It nudges rather than levels. Parts inside one role are not meant to be
+equally loud -- several decibels between two things both called "rhythm" is
+usually somebody's arrangement -- so anything within `DEADBAND` of its target
+is left alone and anything past that is brought back by `STRENGTH` of the
+excess. Flattening them outright was tried, measured tidier, and sounded
+worse. The targets in `app/ytpmv/master.py` are themselves measured, not
+guessed: render songs the old way, see what each role came to, take the
+median.
+
+### A console's picture
+
+`--screen md` / `screen=nes` puts the video through a machine as well as the
+audio -- its resolution, and its colours and no others. Independent of
+`chip=`, so an NES picture with his actual voice is available.
+
+The Mega Drive is 320x224 and three bits a channel, and those eight levels
+are **not** evenly spaced: measured off hardware they run 0, 52, 87, 116,
+144, 172, 206, 255. The NES is 256x240 and the 2C02's sixty-four fixed
+colours, which it could neither mix nor change; there is no single correct
+palette for it, since the chip emits composite video and the television
+decodes it, so this uses FCEUX's. Console renders are encoded harder than
+normal, because at the usual setting the codec smears the palette the filter
+just went to the trouble of restricting.
+
 ## Matrix bot
 
 A bot account that makes videos when asked in a Matrix room:

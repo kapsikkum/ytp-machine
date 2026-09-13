@@ -30,7 +30,8 @@ import numpy as np
 
 import app.generate as g
 from app.database import DATA_DIR, active
-from app.ytpmv import music, nes, recommend, samples, tone as tones, ym2612
+from app.ytpmv import (master as mastering, music, nes, recommend, samples,
+                        screen as screens, tone as tones, ym2612)
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -357,6 +358,14 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if vary not in VARY:
         vary = "off"
     jitter = bool(opts.get("jitter", False))
+    # Measure every part and set it where its job says it should sit, rather
+    # than trusting a table that cannot tell a whisper from a brass patch.
+    balance = bool(opts.get("balance", True))
+    # Put the picture through a console too: its resolution, and its colours
+    # and no others.
+    screen = str(opts.get("screen", "none") or "none").lower()
+    if screen not in screens.SIZES:
+        screen = "none"
     # One switch for the lot: every part out through an emulated sound chip.
     # Parts that were given a tone of their own keep it.
     chip = which_chip(opts.get("chip", False))
@@ -431,11 +440,34 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         if done[0] % 200 == 0:
             say("notes", done[0], total)
 
+    # Each part is played into a buffer of its own, measured, and only then
+    # added to the mix at whatever level the measurement says it wants. One
+    # buffer, cleared and used again, rather than one per part: a three minute
+    # song is 60 MB of it and there is no need to hold eight at once.
+    scratch = np.zeros_like(mix) if balance else None
+    levels: dict[str, dict] = {}
     for part in wanted.values():
-        if part.id in sample_of:
-            hits[part.id] = _play(part, settings[part.id], sample_of[part.id],
-                                  mix if part.id in playing_ids else None,
-                                  0.0, T, speed, g_transpose, flip, tick, jitter, vary)
+        if part.id not in sample_of:
+            continue
+        into = mix if part.id in playing_ids else None
+        if balance and into is not None:
+            scratch.fill(0.0)
+            into = scratch
+        hits[part.id] = _play(part, settings[part.id], sample_of[part.id], into,
+                              0.0, T, speed, g_transpose, flip, tick, jitter, vary)
+        if balance and into is scratch:
+            was = mastering.loudness(scratch)
+            # What the person asked for over and above the old table, kept:
+            # the measurement decides where a part sits on its own, and
+            # somebody who has moved a slider still outranks it.
+            vol = settings[part.id]["volume"]
+            ref = _VOLUME.get(part.role, 0.8)
+            trim = 20.0 * math.log10(max(vol, 1e-4) / ref) if ref > 0 else 0.0
+            gain = mastering.gain_for(was, part.role, trim)
+            mix += scratch * gain
+            levels[part.id] = {"lufs": round(was, 1) if math.isfinite(was) else None,
+                               "gain_db": round(20.0 * math.log10(max(gain, 1e-6)), 1)}
+    del scratch
     say("notes", total, total)
 
     tmpdir = tempfile.mkdtemp(prefix="ytpmv_")
@@ -455,6 +487,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     os.makedirs("output", exist_ok=True)
     out_path = os.path.join("output", f"ytpmv_{run_id}.mp4")
     vf = ["format=yuv420p"]
+    src_w, src_h = (screens.SIZES[screen] if screen in screens.SIZES else (W, H))
     font = g.subtitle_font() if labels else None
     if font:
         for i, p in enumerate(tiles):
@@ -464,10 +497,21 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
                          f":fontsize={max(12, th // 12)}:borderw=2:bordercolor=black"
                          f":x={x + 8}:y={y + th - th // 12 - 10}")
+    if screen in screens.SIZES:
+        # Blown back up first, so the labels below are still placed in the
+        # full-size picture and stay readable rather than becoming eight
+        # chunky squares.
+        vf.insert(0, f"scale={W}:{H}:flags=neighbor")
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-           "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-i", wav,
+           "-s", f"{src_w}x{src_h}", "-r", str(FPS), "-i", "-", "-i", wav,
            "-map", "0:v", "-map", "1:a", "-vf", ",".join(vf),
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           # Flat blocks of a handful of colours compress for almost nothing,
+           # so a console picture is encoded harder: at the usual setting the
+           # codec smears the palette it just went to the trouble of using,
+           # and the point of the filter is that every pixel is one of these
+           # colours and not a blend of two of them.
+           "-c:v", "libx264", "-preset", "veryfast",
+           "-crf", "16" if screen in screens.SIZES else "23",
            "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), "-ac", "2",
            "-shortest", "-movflags", "+faststart", out_path]
     errlog = open(os.path.join(tmpdir, "ffmpeg.log"), "w+b")
@@ -483,7 +527,8 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                 canvas[y0:y0 + th, x0:x0 + tw] = _tile(frames_of[p.id], hits.get(p.id, []),
                                                        starts_of[p.id], t, flash, dim)
             try:
-                proc.stdin.write(canvas.tobytes())
+                proc.stdin.write(screens.apply(canvas, screen).tobytes()
+                                 if screen in screens.SIZES else canvas.tobytes())
             except (BrokenPipeError, OSError):
                 break
         proc.stdin.close()
@@ -513,11 +558,15 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         "duration": round(T, 2),
         "size": [W, H],
         "song": {k: v for k, v in song.summary().items() if k != "parts"},
-        "options": {"vary": vary, "jitter": jitter, "speed": speed,
+        "options": {"vary": vary, "jitter": jitter, "speed": speed, "balance": balance,
+                    "screen": screen,
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
                                                    "tone", "mute", "visible")},
+                   # How loud the part turned out, and how far it had to be
+                   # moved to sit where its job wants it.
+                   **levels.get(p.id, {}),
                    "played": [smp.text for smp in sample_of.get(p.id, [])],
                    "takes_played": len(sample_of.get(p.id, [])),
                    "pitch": sample_of[p.id][0].voice.info.as_dict() if p.id in sample_of else None}
