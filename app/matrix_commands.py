@@ -51,8 +51,8 @@ _TONES = {"clean", "dac", "dpcm",
           "nes-kick", "nes-snare", "nes-hat", "nes-tom", "nes-cymbal", "nes-perc",
           "megadrive", "slap"}
 _CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
+          "sms", "sms-voice", "snes",
           "megadrive", "megadrive-voice"}      # the longer names still work
-_SCREENS = {"off", "no", "none", "md", "nes"}
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
 _OPTIONS = {
@@ -68,7 +68,6 @@ _OPTIONS = {
     "labels":    ("labels", "bool"),
     "chip":      ("chip", "chip"),
     "balance":   ("balance", "bool"),
-    "screen":    ("screen", "screen"),
 }
 _TRUE = {"1", "yes", "on", "true", "y"}
 _FALSE = {"0", "no", "off", "false", "n"}
@@ -78,11 +77,13 @@ HELP = """\
 {p} mv                 — play the last MIDI file posted here, one tile per instrument
 {p} mv info            — what the song is, and which word each part would use
 {p} mv chip=md         — the whole song on an emulated sound chip, every part of it.
-{p} mv chip=nes          md is four-operator FM; nes is two pulses, a triangle
-                         and a noise register. Both throw the voice away and play the
-                         notes themselves -- add -voice (chip=nes-voice) to keep him
-                         instead, sung on the note and played off that machine's own
-                         sample channel
+{p} mv chip=nes          md is four-operator FM, nes is two pulses and a noise
+{p} mv chip=sms          register, sms is three squares and nothing else. All three
+{p} mv chip=snes         throw the voice away -- add -voice to keep him instead,
+                         played off that machine's own sample channel. snes has no
+                         other mode: it is a sampler, so it is always him. The
+                         picture goes through the same console's resolution and
+                         colours
 {p} mv lead=yeah kick=boom max=60 octave:bass=+1 tone:bass=bass
                          vary=rotate|random (several takes of a part's word rather
                          than one) or vary=ultra (a different word every hit, still
@@ -94,8 +95,6 @@ HELP = """\
                          strings); a sound can be a word, a noise (*spew*)
                          or one phoneme cut out of words (/ah/, /s/); max= caps the
                          length in seconds
-{p} mv screen=nes      — put the picture through a console too: 256x240 and the NES's
-                         sixty-four colours, or screen=md for 320x224 and nine-bit
 {p} mv balance=off     — leave the parts at their table levels instead of measuring
                          each one and moving it to where its job wants it
 {p} voices             — the voices available
@@ -163,16 +162,11 @@ def _mv(args: list[str]) -> Command:
             cmd.parts.setdefault(part, {})[setting] = v
         elif key in _OPTIONS:
             name, conv = _OPTIONS[key]
-            if conv == "screen":
-                v = value.lower()
-                if v not in _SCREENS:
-                    cmd.errors.append("screen is one of off, md, nes")
-                    continue
-                cmd.options[name] = "none" if v in ("off", "no") else v
-            elif conv == "chip":
+            if conv == "chip":
                 v = value.lower()
                 if v not in _CHIPS:
-                    cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice")
+                    cmd.errors.append("chip is one of off, md, md-voice, nes, "
+                                      "nes-voice, sms, sms-voice, snes")
                     continue
                 cmd.options[name] = False if v in ("off", "no") else v
             elif conv == "vary":

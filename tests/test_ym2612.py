@@ -232,14 +232,14 @@ check("and never moves more than two steps at once",
 
 print("both machines, each of two minds")
 _r = __import__("app.ytpmv.render", fromlist=["CHIPS"])
-for name in ("md", "md-voice", "nes", "nes-voice"):
+for name in ("md", "md-voice", "nes", "nes-voice", "sms", "sms-voice", "snes"):
     check(f"{name} is a setting we have", name in _r.CHIPS, True)
 check("true still means the Mega Drive, as it did when this was a tickbox",
       _r.which_chip(True), "md")
 check("and the long name still works for anyone who typed it",
       _r.which_chip("megadrive"), "md")
 check("and false still means none of them", _r.which_chip(False), None)
-check("a machine we do not have is not one", _r.which_chip("snes"), None)
+check("a machine we do not have is not one", _r.which_chip("amiga"), None)
 # The point of the sampled settings: the voice survives them.
 from app.ytpmv import music as _m
 _part = _m.Part(id="x", name="n", track=0, channel=0, program=33, notes=[], role="bass")
@@ -251,6 +251,51 @@ check("synthesised, the NES gives the bass its triangle",
       _r.chip_tone(_part, "nes"), "triangle")
 check("and its voice setting keeps him, delta-modulated",
       _r.chip_tone(_part, "nes-voice"), "dpcm")
+check("the Master System gives the bass a square",
+      _r.chip_tone(_part, "sms"), "psg-bass")
+check("and hammers the voice out of its volume register when asked",
+      _r.chip_tone(_part, "sms-voice"), "psg-pcm")
+# The SNES has no synthesiser to switch to, so there is nothing to choose.
+check("the SNES is his voice whether or not you ask",
+      _r.chip_tone(_part, "snes"), "brr")
+# The picture goes with the sound, not beside it.
+for chip, want in (("md", "md"), ("md-voice", "md"), ("nes", "nes"), ("nes-voice", "nes"),
+                   ("sms", "sms"), ("sms-voice", "sms"), ("snes", "snes"), (None, "none")):
+    check(f"{chip} puts the picture through {want}", _r.screen_for(chip), want)
+
+print("a part that cannot go as low as it is written")
+from app.ytpmv.music import Note, Song
+from app.ytpmv.pitch import midi_to_hz as _hz
+# The Megalovania riff, which crosses the Master System's 109 Hz floor.
+riff = [Note(i * 0.2, 0.2, m, 90) for i, m in enumerate((38, 38, 50, 45, 44, 43, 41))]
+up = _r.octaves_to_fit(riff, 109.3, 0)
+check("the whole part is raised by one octave", up, 1)
+played = [n.pitch + 12 * up for n in riff]
+check("so every note clears the floor", min(_hz(m) for m in played) >= 109.3 - 1e-6, True)
+# The thing raising notes one at a time broke: the shape of the line.
+steps = lambda ms: [b - a for a, b in zip(ms, ms[1:])]
+check("and every interval is exactly as written", steps(played), steps([n.pitch for n in riff]))
+check("a part already above the floor is not moved", _r.octaves_to_fit(riff, 50.0, 0), 0)
+check("nor is anything with no floor", _r.octaves_to_fit(riff, 0.0, 0), 0)
+
+print("finding the bass when nothing says which it is")
+def _part(pid, role, pitches, drums=False):
+    # A part is drums by its drum group, not by its channel.
+    return _m.Part(id=pid, name=pid, track=0, channel=9 if drums else 0, program=None if drums else 0,
+                   notes=[Note(i * 0.2, 0.2, m, 90) for i, m in enumerate(pitches)], role=role,
+                   drum_group=role.split(":")[-1] if drums else None)
+tune = _part("tune", "lead", [72, 74, 76, 79])
+low = _part("low", "rhythm", [38, 45, 50, 43])
+kit = _part("kit", "drums:kick", [36, 36], drums=True)
+song = Song([tune, low, kit], 2.0, 120.0, (4, 4), "D minor", 0.9)
+check("the lowest line is the bass", _r.bass_line(song), "low")
+check("which the NES gives its triangle", _r.chip_tone(low, "nes", as_bass=True), "triangle")
+check("the Master System its bass square", _r.chip_tone(low, "sms", as_bass=True), "psg-bass")
+check("but drums are never the bass", _r.chip_tone(kit, "nes", as_bass=True), "nes-kick")
+named = Song([tune, _part("b", "bass", [40, 43]), low], 2.0, 120.0, (4, 4), "D minor", 0.9)
+check("when a part is already called the bass, nothing is guessed", _r.bass_line(named), None)
+high = Song([tune, _part("h", "rhythm", [67, 69, 71])], 2.0, 120.0, (4, 4), "C", 0.9)
+check("and a line that is not low is not made one", _r.bass_line(high), None)
 
 print("the song-wide switch")
 from app.ytpmv import tone as tones

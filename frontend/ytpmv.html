@@ -226,20 +226,16 @@
         <option value="ultra">ultra: different words</option>
       </select>
     </label>
-    <label title="Play the whole song on an emulated sound chip. Synthesised means the machine makes the sound itself and the voice is gone — four-operator FM on the Mega Drive, two pulses and a noise register on the NES. His voice means the opposite: every note is still him, sung on the note as ever, played out through the channel that console used for speech.">chip
+    <label title="Play the song on an emulated console, sound and picture both: the picture is cut to that machine's resolution and colours. md, nes and sms synthesise the notes and the voice is gone; the -voice settings keep him, played off that console's sample channel. snes only plays samples, so it is always him.">chip
       <select id="opt-chip">
-        <option value="" selected>off — the voice</option>
-        <option value="md">mega drive — synthesised</option>
-        <option value="md-voice">mega drive — his voice, 8-bit</option>
-        <option value="nes">nes — synthesised</option>
-        <option value="nes-voice">nes — his voice, delta-modulated</option>
-      </select>
-    </label>
-    <label title="Put the picture through a console as well as the sound: its resolution, and its colours and no others. The Mega Drive had 320x224 and nine bits of colour; the NES had 256x240 and sixty-four fixed colours it could not mix or change.">screen
-      <select id="opt-screen">
-        <option value="none" selected>off — full colour</option>
-        <option value="md">mega drive — 320x224, 9-bit</option>
-        <option value="nes">nes — 256x240, 64 colours</option>
+        <option value="" selected>off</option>
+        <option value="md">md</option>
+        <option value="md-voice">md-voice</option>
+        <option value="nes">nes</option>
+        <option value="nes-voice">nes-voice</option>
+        <option value="sms">sms</option>
+        <option value="sms-voice">sms-voice</option>
+        <option value="snes">snes</option>
       </select>
     </label>
     <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
@@ -587,7 +583,7 @@
     const len = parseInt($('opt-len').value);
     const options = {
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked, screen: $('opt-screen').value,
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked,
     };
@@ -595,7 +591,24 @@
     try {
       const job = await post('/api/ytpmv/render', {
         midi_id: song.midi_id, options,
-        parts: Object.values(parts),
+        // A setting still at its suggestion is left out where the suggestion
+        // no longer applies, so the server can tell "nobody touched this" from
+        // "somebody chose this". Sending every part back exactly as it arrived
+        // made the two look identical.
+        //
+        // The octave is the case that matters. It is suggested to suit a
+        // speaking voice -- a lead brought down two octaves, because nobody
+        // talks at C5 -- which is right for anything the voice still sings,
+        // and wrong for a chip synthesising the note, where it put a lead two
+        // octaves down and a bass under the Master System's floor. So it is
+        // only dropped when the chosen chip synthesises.
+        parts: song.parts.map(p => {
+          const s = Object.assign({}, parts[p.id]);
+          const synth = ['md', 'nes', 'sms'].includes($('opt-chip').value);
+          if (s.tone === p.settings.tone) delete s.tone;
+          if (synth && s.octave === p.settings.octave) delete s.octave;
+          return s;
+        }),
       });
       const result = await poll(job.id);
       if (result) show(result);

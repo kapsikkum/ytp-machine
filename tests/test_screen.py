@@ -42,6 +42,10 @@ check("$21 is the Super Mario Bros sky",
 
 print("the Mega Drive's levels are the hardware's")
 check("eight of them", len(screen.MD_LEVELS), 8)
+check("the Master System has four a channel", len(screen.SMS_LEVELS), 4)
+check("the SNES has thirty-two", len(screen.SNES_LEVELS), 32)
+check("and all-ones on the SNES is white", int(screen.SNES_LEVELS[31]), 255)
+check("as all-zeroes is black", int(screen.SNES_LEVELS[0]), 0)
 check("measured off a console, not a linear ramp",
       [int(v) for v in screen.MD_LEVELS], [0, 52, 87, 116, 144, 172, 206, 255])
 # The point of the table: a linear ramp would put the middle steps elsewhere.
@@ -56,19 +60,21 @@ for name, (w, h) in screen.SIZES.items():
         check(f"{name} comes back at the machine's own size", out.shape, (h, w, 3))
         check(f"{name} comes back as bytes", out.dtype, np.dtype(np.uint8))
     out = screen.apply(photo, name)
-    if name == "md":
-        allowed = {int(v) for v in screen.MD_LEVELS}
-        check("every Mega Drive channel value is one the DAC has",
-              set(int(v) for v in np.unique(out)) <= allowed, True)
-        check("and there are no more than 512 colours to be had",
-              len(np.unique(out.reshape(-1, 3), axis=0)) <= 512, True)
-    else:
+    if name == "nes":
+        # The only machine with no say in the matter: its colours are burnt in.
         legal = {tuple(int(v) for v in p) for p in screen.NES_PALETTE}
         seen = {tuple(int(v) for v in c) for c in np.unique(out.reshape(-1, 3), axis=0)}
         check("every NES colour is one of the sixty-four", seen <= legal, True)
+    else:
+        allowed = {int(v) for v in screen._LEVELS[name]}
+        check(f"every {name} channel value is a level the hardware has",
+              set(int(v) for v in np.unique(out)) <= allowed, True)
+        most = len(screen._LEVELS[name]) ** 3
+        check(f"and no more than {most} colours are available",
+              len(np.unique(out.reshape(-1, 3), axis=0)) <= most, True)
 
 print("leaving it alone")
-for name in ("none", "", "snes", None):
+for name in ("none", "", "amiga", None):
     out = screen.apply(frame, name)
     check(f"{name!r} changes nothing", out.shape, frame.shape)
 check("and nothing is copied when nothing is asked for",

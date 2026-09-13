@@ -348,63 +348,69 @@ python scripts/ytpmv.py song.mid --only bass --check     # measure the tuning
 
 `YTPMV_MAX_SECONDS` caps the length of a render (default 300).
 
-### On a sound chip
+### On a console
 
-One control on the page, `chip=` to the bot, or `--chip` from the terminal
-plays the whole song on an emulated console:
+`chip=` to the bot, `--chip` from the terminal, or the dropdown plays the song
+on an emulated console -- sound and picture both:
 
 ```bash
 python scripts/ytpmv.py song.mid --chip md          # four-operator FM
-python scripts/ytpmv.py song.mid --chip nes-voice   # him, delta-modulated
+python scripts/ytpmv.py song.mid --chip snes        # him, through a SNES
 ```
 
-Two machines, and each has two minds about how to do it:
+| setting | sound | picture |
+| --- | --- | --- |
+| `md` | the YM2612's FM operators; the voice is gone | 320x224, 9-bit colour |
+| `md-voice` | him, out through the Mega Drive's 8-bit DAC | 320x224, 9-bit colour |
+| `nes` | the 2A03's pulses, triangle and noise; the voice is gone | 256x240, the 64-colour palette |
+| `nes-voice` | him, out through the NES's delta-modulation channel | 256x240, the 64-colour palette |
+| `sms` | the SN76489's three squares and noise; the voice is gone | 256x192, 6-bit colour |
+| `sms-voice` | him, hammered out of the Master System's volume register | 256x192, 6-bit colour |
+| `snes` | him, through the S-DSP's BRR, interpolation and echo | 256x224, 15-bit colour |
 
-| | what makes the sound |
-| --- | --- |
-| `md` | the YM2612's FM operators. The voice is gone |
-| `md-voice` | him, sung on the note, out through the Mega Drive's 8-bit DAC |
-| `nes` | the 2A03's pulses, triangle and noise register. The voice is gone |
-| `nes-voice` | him, out through the NES's delta-modulation channel |
+The picture is not a separate choice. A Mega Drive soundtrack over a picture
+the Mega Drive could never have drawn is two machines, and nobody asking for
+one meant that.
 
-The synthesised settings take every part, drums included: each gets a voice
-picked from what the analysis worked out it was *doing*, and all that is kept
-of the recording is how long each note lasts and how loud it was. The `-voice`
-settings keep the whole trick instead -- the clip is still pitch-tracked and
-flattened onto the exact note, and is then played out through the channel that
-console used for speech. The NES one is the more brutal: its DMC can only move
-two steps at a time, so it cannot keep up with a consonant and blunts it.
+The synthesised settings take every part, drums included, and keep only how
+long each note lasts and how loud it was. The `-voice` settings keep the whole
+trick -- the clip still pitch-tracked onto the exact note -- and play it out
+through the channel that console used for speech. The SNES has no other mode:
+it synthesises nothing, so it is always him.
 
 A single part can be set with the bot's `tone:<part>=`, to `clean`, `dac`,
-`dpcm`, or any patch either machine has (`bass`, `lead`, `organ`, `brass`,
-`bell`, `piano`, `strings`, `md-kick`…; `pulse`, `pulse-thin`, `pulse-full`,
-`triangle`, `nes-snare`…).
+`dpcm`, `psg-pcm`, `brr`, or any patch a machine has.
 
-**`app/ytpmv/ym2612.py`** is a model of the Mega Drive's chip rather than a
-cycle-exact emulator like Nuked-OPN2: the log-domain sine and 14-bit
-operators, the real envelope generator with its rates and key scaling, all
-eight algorithms, feedback, detune, the multipliers, 53267 samples a second,
-and the output stage -- which matters more than it sounds, because FM lands a
-sideband on DC and without the console's coupling capacitor a whole song
-rumbles.
+**`app/ytpmv/ym2612.py`** -- the Mega Drive. A model rather than a cycle-exact
+emulator like Nuked-OPN2: the log-domain sine and 14-bit operators, the real
+envelope generator, all eight algorithms, feedback, detune, 53267 samples a
+second, and the output stage, which matters because FM lands a sideband on DC
+and without the console's coupling capacitor a song rumbles. Its bass is Sonic
+2's own voice `$00`, read out of the disassembly. SMPS numbers operators
+backwards from the hardware, so its `op1` is operator 4; get that wrong and
+operators 2 and 3 swap, which in a chain is a bright FM bass or a near-pure
+sine.
 
-Its bass is Sonic 2's own voice `$00`, read out of the disassembly rather than
-reconstructed by ear. Two things to know if you ever read one of those: SMPS
-numbers its operators backwards from the hardware, so its `op1` is operator 4
-(get that wrong and operators 2 and 3 swap, which in a chain is the difference
-between a bright FM bass and a near-pure sine); and the octave a part is moved
-by to suit a speaking voice is not applied when a chip is playing it, since a
-chip has no trouble with 49 Hz.
+**`app/ytpmv/nes.py`** -- the NES, checked against Blargg's Nes_Snd_Emu. It
+generates at four times the output rate and filters on the way down, because
+the noise register clocks at up to 447 kHz. The triangle runs out of timer
+resolution an octave before the pulses and goes flat at the top of its range;
+that is the hardware.
 
-**`app/ytpmv/nes.py`** is the 2A03's audio half, checked against Blargg's
-Nes_Snd_Emu rather than remembered -- the noise periods, the DMC rates, the
-duty widths and the mixing weights. It generates at four times the output rate
-and filters on the way down, because the noise register clocks at up to
-447 kHz and sampling that straight would alias it into mush; the short noise
-mode in particular is supposed to have an audible pitch, its sequence being
-only 93 steps long. The triangle divides by 32 where the pulses divide by 16,
-so it runs out of timer resolution an octave earlier and goes flat at the top
-of its range. That is the hardware, not a bug.
+**`app/ytpmv/sms.py`** -- the Master System, checked against SMSPower's notes:
+register `$0FE` is 440.4 Hz. It cannot go below 109 Hz, so anything written
+lower is raised by octaves. Its documented noise taps are not a maximal-length
+polynomial and repeat after 57337 steps, not 65535.
+
+**`app/ytpmv/snes.py`** -- the SNES, checked against fullsnes: the four BRR
+predictors and the 512-entry interpolation table, whose taps sum to 2048 at
+every phase. BRR works in fifteen-bit integers; fed floats between -1 and 1 it
+quantises everything to nothing. Most of the famous muffle is not the chip but
+the 64 KB the whole soundtrack had to fit in, which kept samples far below the
+DSP's rate -- `stored_hz` models that practice, and says so.
+
+The octave a part is moved by to suit a speaking voice is not applied when a
+chip synthesises it, since a chip has no trouble with 49 Hz.
 
 ### Balance
 
@@ -427,20 +433,19 @@ worse. The targets in `app/ytpmv/master.py` are themselves measured, not
 guessed: render songs the old way, see what each role came to, take the
 median.
 
-### A console's picture
+### The palettes
 
-`--screen md` / `screen=nes` puts the video through a machine as well as the
-audio -- its resolution, and its colours and no others. Independent of
-`chip=`, so an NES picture with his actual voice is available.
+`app/ytpmv/screen.py`. Each machine's resolution, and its colours and no
+others.
 
-The Mega Drive is 320x224 and three bits a channel, and those eight levels
-are **not** evenly spaced: measured off hardware they run 0, 52, 87, 116,
-144, 172, 206, 255. The NES is 256x240 and the 2C02's sixty-four fixed
-colours, which it could neither mix nor change; there is no single correct
-palette for it, since the chip emits composite video and the television
-decodes it, so this uses FCEUX's. Console renders are encoded harder than
-normal, because at the usual setting the codec smears the palette the filter
-just went to the trouble of restricting.
+The Mega Drive's eight levels per channel are **not** evenly spaced: measured
+off hardware they run 0, 52, 87, 116, 144, 172, 206, 255. The NES has sixty-four
+colours burnt in that it could neither mix nor change; there is no single
+correct palette for it, since the chip emits composite video and the television
+decodes it, so this uses FCEUX's. The Master System is two bits a channel,
+taken as even quarters rather than measured. The SNES is five bits a channel on
+a straight ramp. Console renders are encoded harder than normal, because at the
+usual setting the codec smears the palette the filter just restricted.
 
 ## Matrix bot
 

@@ -15,6 +15,10 @@ way the hardware was.
         into the chip, of which a real frame could show about sixteen at
         once. There is no mixing and no choosing -- every pixel is one of
         these or it is not on the screen
+  sms   256x192 and two bits a channel, so sixty-four colours, though
+        unlike the NES they are yours to choose
+  snes  256x224 and five bits a channel, which after the other three is
+        an embarrassment of riches -- thirty-two thousand
 
 The palette below is the one FCEUX ships, which is what most people picture
 when they picture NES colours. There is no single correct answer: the 2C02
@@ -49,24 +53,39 @@ _NES_HEX = (
 NES_PALETTE = np.array([[int(h[i:i + 2], 16) for i in (0, 2, 4)] for h in _NES_HEX],
                        dtype=np.uint8)
 
+# Two bits a channel on the Master System -- sixty-four colours in all, of
+# which a frame could hold thirty-two. Evenly spaced, unlike the Mega
+# Drive's: these are the obvious quarters rather than anything measured, so
+# if they ever matter enough to argue about, go and measure a console.
+SMS_LEVELS = np.array([0, 85, 170, 255], dtype=np.uint8)
+
+# Five bits a channel on the SNES, which is a straight ramp: the value is
+# repeated into the low bits so that all-ones comes out as white.
+SNES_LEVELS = np.array([(v << 3) | (v >> 2) for v in range(32)], dtype=np.uint8)
+
 # What each machine could put on a television.
 SCREENS = {
     "none": "as rendered",
     "md": "320x224, nine bits of colour",
     "nes": "256x240, and the 2C02's sixty-four colours",
+    "sms": "256x192, six bits of colour",
+    "snes": "256x224, fifteen bits of colour",
 }
 
-_MD_LUT: np.ndarray | None = None
+_LEVEL_LUTS: dict[str, np.ndarray] = {}
 _NES_LUT: np.ndarray | None = None
 
+# Which machine quantises each channel on its own, and to what.
+_LEVELS = {"md": MD_LEVELS, "sms": SMS_LEVELS, "snes": SNES_LEVELS}
 
-def _md_lut() -> np.ndarray:
-    """For every byte a channel might be, the level it comes out at."""
-    global _MD_LUT
-    if _MD_LUT is None:
+
+def _level_lut(name: str) -> np.ndarray:
+    """For every byte a channel might be, the level *name* comes out at."""
+    if name not in _LEVEL_LUTS:
+        levels = _LEVELS[name]
         v = np.arange(256)[:, None]
-        _MD_LUT = MD_LEVELS[np.argmin(np.abs(v - MD_LEVELS[None, :].astype(int)), axis=1)]
-    return _MD_LUT
+        _LEVEL_LUTS[name] = levels[np.argmin(np.abs(v - levels[None, :].astype(int)), axis=1)]
+    return _LEVEL_LUTS[name]
 
 
 def _nes_lut() -> np.ndarray:
@@ -107,7 +126,7 @@ def _shrink(img: np.ndarray, w: int, h: int) -> np.ndarray:
 
 
 # What each machine put on the screen, in its own pixels.
-SIZES = {"md": (320, 224), "nes": (256, 240)}
+SIZES = {"md": (320, 224), "nes": (256, 240), "sms": (256, 192), "snes": (256, 224)}
 
 
 def apply(frame: np.ndarray, screen: str) -> np.ndarray:
@@ -121,8 +140,8 @@ def apply(frame: np.ndarray, screen: str) -> np.ndarray:
         return frame
     w, h = SIZES[screen]
     small = np.clip(_shrink(frame, w, h), 0, 255).astype(np.uint8)
-    if screen == "md":
-        return np.ascontiguousarray(_md_lut()[small])
+    if screen in _LEVELS:
+        return np.ascontiguousarray(_level_lut(screen)[small])
     idx = ((small[:, :, 0] >> 3).astype(np.int32) * 1024
            + (small[:, :, 1] >> 3).astype(np.int32) * 32
            + (small[:, :, 2] >> 3).astype(np.int32))

@@ -104,8 +104,9 @@ def pulse(hz: float, n: int, duty: int, sr: int = SR,
     """A square wave at one of the chip's four widths, 0 to 15."""
     t = np.arange(n) / sr
     f = hz * 2.0 ** (bend * np.exp(-t / bend_time) / 12.0) if bend else np.full(n, hz)
-    # Quantised to the timer the chip can hold, moment to moment.
-    div = np.maximum(np.round(CPU / (16.0 * np.maximum(f, 1e-6)) - 1.0), 8.0)
+    # Quantised to the timer the chip can hold, moment to moment: eleven bits,
+    # and under 8 the channel mutes itself rather than going any higher.
+    div = np.clip(np.round(CPU / (16.0 * np.maximum(f, 1e-6)) - 1.0), 8.0, 2047.0)
     real = CPU / (16.0 * (div + 1.0))
     step = np.floor(np.cumsum(real) / sr * 8.0).astype(np.int64) % 8
     width = (1, 2, 4, 2)[duty & 3]
@@ -217,6 +218,17 @@ class Voice:
     gain: float = 1.0
 
 
+def floor_hz(voice: Voice) -> float:
+    """The lowest note *voice* can play. 0 for anything with no pitch.
+
+    The timers are eleven bits, and the triangle divides by twice what the
+    pulses do, so it reaches an octave lower -- which is why it is the bass.
+    """
+    if voice.base_hz or voice.kind == "noise":
+        return 0.0
+    return CPU / ((32.0 if voice.kind == "triangle" else 16.0) * 2048.0)
+
+
 def render_note(voice: Voice, hz: float, dur: float, sr: int = SR,
                 level: float = 1.0) -> np.ndarray:
     """*voice* playing *hz* for *dur* seconds, as the chip would."""
@@ -232,6 +244,17 @@ def render_note(voice: Voice, hz: float, dur: float, sr: int = SR,
     else:
         out = mix_pulse(pulse(hz, m, voice.duty, isr, voice.bend, voice.bend_time))
     out = _down(out, sr)
+    # The curves sit well above zero. Centred before anything shapes it, so
+    # the centre is the steady tone's and not a fade's.
+    out = out - out.mean()
+
+    # Levelled here, at full volume, and nowhere after. Levelling at the end
+    # instead set every note to the same peak whatever it had been asked to
+    # be -- velocity 30 came out exactly as loud as velocity 127, and a part
+    # with no dynamics at all is what "no range" sounds like.
+    peak = float(np.abs(out).max(initial=0.0))
+    if peak > 0:
+        out = out / peak * 0.62 * voice.gain
 
     t = np.arange(n) / sr
     # The triangle has no volume control at all, so neither velocity nor a
@@ -243,12 +266,10 @@ def render_note(voice: Voice, hz: float, dur: float, sr: int = SR,
         # Velocity is the four-bit volume, so it is a staircase, not a slope.
         out = out * (max(1, round(level * 15.0)) / 15.0)
 
-    out = out - out.mean()                          # the curves sit well above zero
     edge = min(n, int(0.002 * sr))
     if edge > 1:
         out[-edge:] *= np.linspace(1.0, 0.0, edge, dtype=np.float32)
-    peak = float(np.abs(out).max(initial=0.0))
-    return (out / peak * 0.62 * voice.gain).astype(np.float32) if peak > 0 else out
+    return out.astype(np.float32)
 
 
 VOICES: dict[str, Voice] = {

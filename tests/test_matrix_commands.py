@@ -68,15 +68,14 @@ check("the whole song through a chip", parse("!ytp mv chip=md").options, {"chip"
 check("keeping his voice, off that machine's sample channel",
       parse("!ytp mv chip=md-voice").options, {"chip": "md-voice"})
 check("the other machine", parse("!ytp mv chip=nes").options, {"chip": "nes"})
+check("the Master System", parse("!ytp mv chip=sms").options, {"chip": "sms"})
+check("the SNES, which is only ever his voice",
+      parse("!ytp mv chip=snes").options, {"chip": "snes"})
 check("leaving the levels alone", parse("!ytp mv balance=off").options, {"balance": False})
-check("the picture through a console too", parse("!ytp mv screen=nes").options,
-      {"screen": "nes"})
-check("and back to full colour", parse("!ytp mv screen=off").options, {"screen": "none"})
-check("a screen we do not have is reported",
-      parse("!ytp mv screen=vga").errors, ["screen is one of off, md, nes"])
 check("turning it off again", parse("!ytp mv chip=off").options, {"chip": False})
 check("a machine we do not have is reported",
-      parse("!ytp mv chip=snes").errors, ["chip is one of off, md, md-voice, nes, nes-voice"])
+      parse("!ytp mv chip=amiga").errors,
+      ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes"])
 check("an NES voice on one part", parse("!ytp mv tone:bass=triangle").parts,
       {"bass": {"tone": "triangle"}})
 check("one part through one of the chip's patches",

@@ -31,7 +31,7 @@ import numpy as np
 import app.generate as g
 from app.database import DATA_DIR, active
 from app.ytpmv import (master as mastering, music, nes, recommend, samples,
-                        screen as screens, tone as tones, ym2612)
+                        screen as screens, sms, tone as tones, ym2612)
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -152,6 +152,9 @@ CHIPS = {
     "md-voice": "the voice, played off the Mega Drive's 8-bit sample channel",
     "nes": "the NES's 2A03, synthesising: two pulses, a triangle and noise",
     "nes-voice": "the voice, played off the NES's delta-modulation channel",
+    "sms": "the Master System's SN76489: three squares and a shift register",
+    "sms-voice": "the voice, hammered out of the Master System's volume register",
+    "snes": "the SNES's S-DSP, which only ever plays back a recording",
 }
 
 # What people typed before the names got shorter, and before there was
@@ -175,20 +178,77 @@ def which_chip(asked) -> str | None:
     return name if name in CHIPS else None
 
 
-def chip_tone(part: music.Part, chip: str = "megadrive") -> str:
+def screen_for(chip: str | None) -> str:
+    """Which console's picture goes with *chip*: the same machine's, or none."""
+    if not chip:
+        return "none"
+    machine = chip.partition("-")[0]
+    return machine if machine in screens.SIZES else "none"
+
+
+def bass_line(song: music.Song) -> str | None:
+    """The part to treat as the bass when nothing in the song is called one.
+
+    A MIDI file does not have to say which part is the bass, and plenty do
+    not: Megalovania's bass line comes out of the analysis as "rhythm",
+    because it is played on a piano patch. A synthesised part is then given
+    whatever "rhythm" gets -- a thin pulse on the NES rather than the
+    triangle that is the machine's actual bass voice -- and the song loses
+    its bottom end. So the lowest melodic line is taken as the bass, as long
+    as it really is low and is not the tune.
+    """
+    melodic = [p for p in song.parts if not p.is_drums and p.notes]
+    if not melodic or any(p.role == "bass" for p in melodic):
+        return None
+    low = min(melodic, key=lambda p: p.median_pitch())
+    return low.id if low.role != "lead" and low.median_pitch() < 53 else None
+
+
+def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False) -> str:
     """What *part* is played by when the whole song goes through *chip*.
 
     Every part, drums included. A console usually sampled its kit rather than
     synthesising it, and that is still available per part -- but "through the
     chip" ought to mean through the chip, so the synthesised settings use the
-    synthesised kit.
+    synthesised kit. *as_bass* plays the part as the bass whatever the
+    analysis called it; see bass_line.
     """
     machine, _, mode = chip.partition("-")
-    if mode == "voice":
+    # The SNES synthesises nothing at all, so there is only the one way to
+    # play a part on it, and it keeps his voice whether you asked or not.
+    if mode == "voice" or machine == "snes":
         return tones.SAMPLED[machine]
+    role = "bass" if as_bass and not part.is_drums else part.role
     if machine == "nes":
-        return nes.voice_for(part.role, part.program).name
-    return ym2612.patch_for(part.role, part.program).name
+        return nes.voice_for(role, part.program).name
+    if machine == "sms":
+        return sms.voice_for(role, part.program).name
+    return ym2612.patch_for(role, part.program).name
+
+
+def floor_hz(tone: str) -> float:
+    """The lowest note *tone* can play, or 0 when it has no such limit."""
+    if tone in nes.VOICES:
+        return nes.floor_hz(nes.VOICES[tone])
+    if tone in sms.VOICES:
+        return sms.floor_hz(sms.VOICES[tone])
+    return 0.0
+
+
+def octaves_to_fit(notes: list, floor: float, shift: int) -> int:
+    """Whole octaves to raise a part by so its lowest note is not under *floor*.
+
+    For the whole part at once, never per note: raising only the notes that
+    fall under the limit and leaving the rest keeps each note in tune and
+    wrecks the line, since a note can end up above one it was written below.
+    """
+    if floor <= 0 or not notes:
+        return 0
+    lowest = midi_to_hz(min(n.pitch for n in notes) + shift)
+    up = 0
+    while lowest * 2.0 ** up < floor - 1e-6 and up < 6:
+        up += 1
+    return up
 
 
 def _default_settings_for(part: music.Part, rec: dict) -> dict:
@@ -361,14 +421,14 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # Measure every part and set it where its job says it should sit, rather
     # than trusting a table that cannot tell a whisper from a brass patch.
     balance = bool(opts.get("balance", True))
-    # Put the picture through a console too: its resolution, and its colours
-    # and no others.
-    screen = str(opts.get("screen", "none") or "none").lower()
-    if screen not in screens.SIZES:
-        screen = "none"
     # One switch for the lot: every part out through an emulated sound chip.
     # Parts that were given a tone of their own keep it.
     chip = which_chip(opts.get("chip", False))
+    # And the picture goes through the same machine: its resolution, and its
+    # colours and no others. Not a separate choice -- a Mega Drive soundtrack
+    # over a picture the Mega Drive could never have drawn is two machines,
+    # and nobody asking for one of them meant that.
+    screen = screen_for(chip)
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
     # Recommendations only for parts the request did not choose a sound for.
@@ -378,11 +438,12 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
     if chip:
+        low = bass_line(song)
         for p in song.parts:
             asked = given.get(p.id) or {}
             if tones.overrides_switch(asked.get("tone")):
                 continue
-            settings[p.id]["tone"] = chip_tone(p, chip)
+            settings[p.id]["tone"] = chip_tone(p, chip, as_bass=(p.id == low))
             # The octave a part was moved by is there because a mouth cannot
             # go where the score does: a bass line at 49 Hz comes back up an
             # octave, chords come down three. The chip has no such limit, and
@@ -392,6 +453,18 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             # back to the octave it was written in, unless one was asked for.
             if "octave" not in asked and settings[p.id]["tone"] in tones.SYNTH:
                 settings[p.id]["octave"] = 0
+
+    # Some machines cannot go as low as a part is written: the Master System
+    # stops at 109 Hz, an NES pulse at 55. Such a part moves up by whole
+    # octaves, all of it together, until its lowest note is playable. Unless
+    # an octave was asked for, in which case the asker has heard it.
+    for p in song.parts:
+        s_ = settings[p.id]
+        floor = floor_hz(s_["tone"])
+        if floor <= 0 or p.is_drums or "octave" in (given.get(p.id) or {}):
+            continue
+        shift = 12 * s_["octave"] + s_["transpose"] + g_transpose
+        s_["octave"] += octaves_to_fit(p.notes, floor, shift)
 
     T = min(song.duration / speed + _TAIL, max_s)
     n_frames = max(1, int(round(T * FPS)))

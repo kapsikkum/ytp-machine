@@ -63,13 +63,12 @@ def main() -> int:
     ap.add_argument("--jitter", action=argparse.BooleanOptionalAction, default=None,
                     help="a hair of level on every hit, and of tuning on drums (default off)")
     ap.add_argument("--chip", nargs="?", const="md", default=None,
-                    choices=("md", "md-voice", "nes", "nes-voice"),
+                    choices=("md", "md-voice", "nes", "nes-voice",
+                             "sms", "sms-voice", "snes"),
                     help="play the whole song on an emulated sound chip. The plain "
                          "names synthesise it and the voice is gone; the -voice ones "
-                         "keep him, played off that machine's own sample channel")
-    ap.add_argument("--screen", choices=("md", "nes"), default=None,
-                    help="put the picture through a console as well: its resolution, "
-                         "and its colours and no others")
+                         "keep him, played off that machine's own sample channel. "
+                         "The picture goes through the same console")
     ap.add_argument("--balance", action=argparse.BooleanOptionalAction, default=None,
                     help="measure every part and move it to where its job wants it "
                          "(on by default; --no-balance for the old fixed levels)")
@@ -134,8 +133,6 @@ def main() -> int:
                "chip": args.chip}
     if args.balance is not None:
         options["balance"] = args.balance
-    if args.screen:
-        options["screen"] = args.screen
     if args.vary:
         options["vary"] = args.vary
     if args.jitter is not None:

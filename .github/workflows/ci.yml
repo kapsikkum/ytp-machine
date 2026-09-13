@@ -111,6 +111,12 @@ jobs:
         # the tables are the hardware's rather than a plausible-looking ramp.
         run: python tests/test_screen.py
 
+      - name: The Master System and SNES chips
+        # Dividers, attenuation steps and shift-register periods against
+        # SMSPower's notes; BRR predictors and the interpolation table
+        # against fullsnes. The table's taps must sum to unity gain.
+        run: python tests/test_sms_snes.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.
