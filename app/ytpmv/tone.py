@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.ytpmv import nes, sms, snes, ym2612
+from app.ytpmv import gb, nes, sms, snes, ym2612
 from app.ytpmv.pitch import SR
 
 # Everything a part's tone may be set to, and what to call it. Two machines,
@@ -43,20 +43,24 @@ TONES = {
     "dpcm": "the voice off the NES's delta-modulation channel",
     "psg-pcm": "the voice hammered out of the Master System's volume register",
     "brr": "the voice through the SNES's sampler, grain and echo and all",
+    "gb-pcm": "the voice pushed through a Game Boy's wave table, four bits a step",
     **{name: patch.about for name, patch in ym2612.PATCHES.items()},
     **{name: voice.about for name, voice in nes.VOICES.items()},
     **{name: voice.about for name, voice in sms.VOICES.items()},
+    **{name: voice.about for name, voice in gb.VOICES.items()},
 }
 
 # What these were called when there was one hand-built bass patch and no chip.
 ALIASES = {"slap": "bass", "megadrive": "bass"}
 
 # The tones that replace the voice rather than colour it.
-SYNTH = frozenset(ym2612.PATCHES) | frozenset(nes.VOICES) | frozenset(sms.VOICES)
+SYNTH = (frozenset(ym2612.PATCHES) | frozenset(nes.VOICES) | frozenset(sms.VOICES)
+         | frozenset(gb.VOICES))
 
 # What each machine calls "the voice, played off this machine". The SNES has
 # no other kind: it is a sampler and nothing else, so its only entry is here.
-SAMPLED = {"md": "dac", "nes": "dpcm", "sms": "psg-pcm", "snes": "brr"}
+SAMPLED = {"md": "dac", "nes": "dpcm", "sms": "psg-pcm", "snes": "brr",
+           "gb": "gb-pcm", "gbc": "gb-pcm"}
 
 # How fast the driver managed to feed the DAC. Mega Drive games rarely did
 # better than this, and the graininess is the point.
@@ -110,6 +114,8 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
             x = nes.render_note(nes.VOICES[tone], hz, len(y) / sr, sr, level)
         elif tone in sms.VOICES:
             x = sms.render_note(sms.VOICES[tone], hz, len(y) / sr, sr, level)
+        elif tone in gb.VOICES:
+            x = gb.render_note(gb.VOICES[tone], hz, len(y) / sr, sr, level)
         else:
             x = ym2612.render_note(ym2612.PATCHES[tone], hz, len(y) / sr, sr, level)
         return (x * peak).astype(np.float32)
@@ -118,6 +124,8 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
         return ((nes.dpcm(y / peak, 10, sr) / 64.0 - 1.0) * peak).astype(np.float32)
     if tone == "psg-pcm":
         return (sms.pcm(y / peak, sr) * peak).astype(np.float32)
+    if tone == "gb-pcm":
+        return (gb.pcm(y / peak, sr) * peak).astype(np.float32)
     if tone == "brr":
         # Longer than it went in: the echo rings on past the note, and the
         # mixer is happy to have that overlap whatever comes next.

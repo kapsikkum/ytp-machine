@@ -19,6 +19,10 @@ way the hardware was.
         unlike the NES they are yours to choose
   snes  256x224 and five bits a channel, which after the other three is
         an embarrassment of riches -- thirty-two thousand
+  gb    160x144 and four shades of green, and that is all of it
+  gbc   160x144, five bits a channel like the SNES, but shown on an LCD
+        that bled its colours into each other and never reached full
+        brightness -- which is the whole look, so it is modelled
 
 The palette below is the one FCEUX ships, which is what most people picture
 when they picture NES colours. There is no single correct answer: the 2C02
@@ -63,6 +67,13 @@ SMS_LEVELS = np.array([0, 85, 170, 255], dtype=np.uint8)
 # repeated into the low bits so that all-ones comes out as white.
 SNES_LEVELS = np.array([(v << 3) | (v >> 2) for v in range(32)], dtype=np.uint8)
 
+# The Game Boy's four shades, lightest first, as ares draws them. Nothing on
+# the machine emits RGB -- it is a reflective green LCD -- so these are what
+# one emulator settled on rather than a hardware figure, and they are the
+# pea-soup ones everybody remembers.
+GB_SHADES = np.array([[0xAE, 0xD9, 0x27], [0x58, 0xA0, 0x28],
+                      [0x20, 0x62, 0x29], [0x1A, 0x45, 0x2A]], dtype=np.uint8)
+
 # What each machine could put on a television.
 SCREENS = {
     "none": "as rendered",
@@ -70,6 +81,8 @@ SCREENS = {
     "nes": "256x240, and the 2C02's sixty-four colours",
     "sms": "256x192, six bits of colour",
     "snes": "256x224, fifteen bits of colour",
+    "gb": "160x144, four shades of green",
+    "gbc": "160x144, fifteen bits through the Color's washed-out LCD",
 }
 
 _LEVEL_LUTS: dict[str, np.ndarray] = {}
@@ -106,6 +119,31 @@ def _nes_lut() -> np.ndarray:
     return _NES_LUT
 
 
+def gb_shade(img: np.ndarray) -> np.ndarray:
+    """Each pixel as whichever of the four greens its brightness falls in."""
+    lum = (img[:, :, 0].astype(np.int32) * 299 + img[:, :, 1].astype(np.int32) * 587
+           + img[:, :, 2].astype(np.int32) * 114) // 1000
+    return np.ascontiguousarray(GB_SHADES[3 - np.clip(lum // 64, 0, 3)])
+
+
+def gbc_lcd(img: np.ndarray) -> np.ndarray:
+    """Five bits a channel, then the Color's LCD bleeding them into each other.
+
+    The screen was not a clean RGB panel: each colour leaked into its
+    neighbours and nothing reached full brightness, which is why every Game
+    Boy Color game looks faintly washed out and dim. These weights are ares's
+    model of that; the cap at 960 of 1023 is the dimness.
+    """
+    r = (img[:, :, 0] >> 3).astype(np.int32)
+    g = (img[:, :, 1] >> 3).astype(np.int32)
+    b = (img[:, :, 2] >> 3).astype(np.int32)
+    rr = np.minimum(960, r * 26 + g * 4 + b * 2)
+    gg = np.minimum(960, g * 24 + b * 8)
+    bb = np.minimum(960, r * 6 + g * 4 + b * 22)
+    out = np.stack([rr, gg, bb], axis=-1) * 255 // 1023
+    return np.ascontiguousarray(out.astype(np.uint8))
+
+
 def _shrink(img: np.ndarray, w: int, h: int) -> np.ndarray:
     """Down to *w* x *h*, averaging what falls in each new pixel.
 
@@ -126,7 +164,8 @@ def _shrink(img: np.ndarray, w: int, h: int) -> np.ndarray:
 
 
 # What each machine put on the screen, in its own pixels.
-SIZES = {"md": (320, 224), "nes": (256, 240), "sms": (256, 192), "snes": (256, 224)}
+SIZES = {"md": (320, 224), "nes": (256, 240), "sms": (256, 192), "snes": (256, 224),
+         "gb": (160, 144), "gbc": (160, 144)}
 
 
 def apply(frame: np.ndarray, screen: str) -> np.ndarray:
@@ -142,6 +181,10 @@ def apply(frame: np.ndarray, screen: str) -> np.ndarray:
     small = np.clip(_shrink(frame, w, h), 0, 255).astype(np.uint8)
     if screen in _LEVELS:
         return np.ascontiguousarray(_level_lut(screen)[small])
+    if screen == "gb":
+        return gb_shade(small)
+    if screen == "gbc":
+        return gbc_lcd(small)
     idx = ((small[:, :, 0] >> 3).astype(np.int32) * 1024
            + (small[:, :, 1] >> 3).astype(np.int32) * 32
            + (small[:, :, 2] >> 3).astype(np.int32))

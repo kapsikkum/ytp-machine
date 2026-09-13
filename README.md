@@ -367,6 +367,10 @@ python scripts/ytpmv.py song.mid --chip snes        # him, through a SNES
 | `sms` | the SN76489's three squares and noise; the voice is gone | 256x192, 6-bit colour |
 | `sms-voice` | him, hammered out of the Master System's volume register | 256x192, 6-bit colour |
 | `snes` | him, through the S-DSP's BRR, interpolation and echo | 256x224, 15-bit colour |
+| `gb` | the Game Boy's pulses, wave table and noise; the voice is gone | 160x144, four greens |
+| `gb-voice` | him, pushed through the wave table four bits a step | 160x144, four greens |
+| `gbc` | the same chip as `gb` | 160x144, the Color's washed-out LCD |
+| `gbc-voice` | the same as `gb-voice` | 160x144, the Color's washed-out LCD |
 
 The picture is not a separate choice. A Mega Drive soundtrack over a picture
 the Mega Drive could never have drawn is two machines, and nobody asking for
@@ -408,6 +412,17 @@ every phase. BRR works in fifteen-bit integers; fed floats between -1 and 1 it
 quantises everything to nothing. Most of the famous muffle is not the chip but
 the 64 KB the whole soundtrack had to fit in, which kept samples far below the
 DSP's rate -- `stored_hz` models that practice, and says so.
+
+**`app/ytpmv/gb.py`** -- the Game Boy, which the Color shares unchanged. Formulas
+from the gbdev Pan Docs; the output capacitor from SameBoy. Each channel's DAC
+idles at +1, so a held square sits off centre and the capacitor drags it back
+the whole time -- squares sag, and that is much of the sound. The gbdev wiki
+gives the Color a separate capacitor figure that works out to a 700 Hz
+high-pass, which would take the bass off entirely; SameBoy uses one figure for
+every model, a 28 Hz corner, and so does this. The two machines differ in
+their screens: ares's four greens for the Game Boy, and ares's model of the
+Color's LCD, which bled each colour into the others and never reached full
+brightness.
 
 The octave a part is moved by to suit a speaking voice is not applied when a
 chip synthesises it, since a chip has no trouble with 49 Hz.

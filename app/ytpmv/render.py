@@ -30,7 +30,7 @@ import numpy as np
 
 import app.generate as g
 from app.database import DATA_DIR, active
-from app.ytpmv import (master as mastering, music, nes, recommend, samples,
+from app.ytpmv import (gb, master as mastering, music, nes, recommend, samples,
                         screen as screens, sms, tone as tones, ym2612)
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
@@ -155,6 +155,10 @@ CHIPS = {
     "sms": "the Master System's SN76489: three squares and a shift register",
     "sms-voice": "the voice, hammered out of the Master System's volume register",
     "snes": "the SNES's S-DSP, which only ever plays back a recording",
+    "gb": "the Game Boy's chip: two pulses, a wave table and noise; green screen",
+    "gb-voice": "the voice through a Game Boy's wave table; green screen",
+    "gbc": "the same chip as the Game Boy, on the Color's screen",
+    "gbc-voice": "the voice through the same wave table, on the Color's screen",
 }
 
 # What people typed before the names got shorter, and before there was
@@ -223,6 +227,8 @@ def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False) -> str:
         return nes.voice_for(role, part.program).name
     if machine == "sms":
         return sms.voice_for(role, part.program).name
+    if machine in ("gb", "gbc"):              # one chip; the two differ in their screens
+        return gb.voice_for(role, part.program).name
     return ym2612.patch_for(role, part.program).name
 
 
@@ -232,6 +238,8 @@ def floor_hz(tone: str) -> float:
         return nes.floor_hz(nes.VOICES[tone])
     if tone in sms.VOICES:
         return sms.floor_hz(sms.VOICES[tone])
+    if tone in gb.VOICES:
+        return gb.voice_floor(gb.VOICES[tone])
     return 0.0
 
 

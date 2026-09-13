@@ -232,7 +232,8 @@ check("and never moves more than two steps at once",
 
 print("both machines, each of two minds")
 _r = __import__("app.ytpmv.render", fromlist=["CHIPS"])
-for name in ("md", "md-voice", "nes", "nes-voice", "sms", "sms-voice", "snes"):
+for name in ("md", "md-voice", "nes", "nes-voice", "sms", "sms-voice", "snes",
+             "gb", "gb-voice", "gbc", "gbc-voice"):
     check(f"{name} is a setting we have", name in _r.CHIPS, True)
 check("true still means the Mega Drive, as it did when this was a tickbox",
       _r.which_chip(True), "md")
@@ -260,7 +261,9 @@ check("the SNES is his voice whether or not you ask",
       _r.chip_tone(_part, "snes"), "brr")
 # The picture goes with the sound, not beside it.
 for chip, want in (("md", "md"), ("md-voice", "md"), ("nes", "nes"), ("nes-voice", "nes"),
-                   ("sms", "sms"), ("sms-voice", "sms"), ("snes", "snes"), (None, "none")):
+                   ("sms", "sms"), ("sms-voice", "sms"), ("snes", "snes"),
+                   ("gb", "gb"), ("gb-voice", "gb"), ("gbc", "gbc"), ("gbc-voice", "gbc"),
+                   (None, "none")):
     check(f"{chip} puts the picture through {want}", _r.screen_for(chip), want)
 
 print("a part that cannot go as low as it is written")
@@ -296,6 +299,19 @@ named = Song([tune, _part("b", "bass", [40, 43]), low], 2.0, 120.0, (4, 4), "D m
 check("when a part is already called the bass, nothing is guessed", _r.bass_line(named), None)
 high = Song([tune, _part("h", "rhythm", [67, 69, 71])], 2.0, 120.0, (4, 4), "C", 0.9)
 check("and a line that is not low is not made one", _r.bass_line(high), None)
+
+print("the bot knows every tone there is")
+# The bot keeps its own list so it can be tested without numpy, which means
+# it can fall behind -- it did, and quietly refused every Master System tone.
+import re as _re
+from app.ytpmv import tone as _tone
+_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "app", "matrix_commands.py"), encoding="utf-8").read()
+_block = _src[_src.index("_TONES = {"):_src.index("}", _src.index("_TONES = {"))]
+check("every tone is one the bot will accept",
+      sorted(set(_tone.TONES) - set(_re.findall(r'"([a-z0-9-]+)"', _block))), [])
+_chips = _src[_src.index("_CHIPS = {"):_src.index("}", _src.index("_CHIPS = {"))]
+check("and every chip setting", sorted(set(_r.CHIPS) - set(_re.findall(r'"([a-z0-9-]+)"', _chips))), [])
 
 print("the song-wide switch")
 from app.ytpmv import tone as tones

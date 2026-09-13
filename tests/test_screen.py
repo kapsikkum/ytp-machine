@@ -60,6 +60,14 @@ for name, (w, h) in screen.SIZES.items():
         check(f"{name} comes back at the machine's own size", out.shape, (h, w, 3))
         check(f"{name} comes back as bytes", out.dtype, np.dtype(np.uint8))
     out = screen.apply(photo, name)
+    if name == "gb":
+        seen = {tuple(int(v) for v in c) for c in np.unique(out.reshape(-1, 3), axis=0)}
+        check("every Game Boy pixel is one of its four greens",
+              seen <= {tuple(int(v) for v in g) for g in screen.GB_SHADES}, True)
+        continue
+    if name == "gbc":
+        check("the Color's LCD never reaches full brightness", int(out.max()) <= 239, True)
+        continue
     if name == "nes":
         # The only machine with no say in the matter: its colours are burnt in.
         legal = {tuple(int(v) for v in p) for p in screen.NES_PALETTE}
@@ -72,6 +80,21 @@ for name, (w, h) in screen.SIZES.items():
         most = len(screen._LEVELS[name]) ** 3
         check(f"and no more than {most} colours are available",
               len(np.unique(out.reshape(-1, 3), axis=0)) <= most, True)
+
+print("the Game Boy screens")
+check("four shades", screen.GB_SHADES.shape, (4, 3))
+white = np.full((4, 4, 3), 255, np.uint8)
+black = np.zeros((4, 4, 3), np.uint8)
+check("white is the lightest green", tuple(int(v) for v in screen.gb_shade(white)[0, 0]),
+      tuple(int(v) for v in screen.GB_SHADES[0]))
+check("black is the darkest", tuple(int(v) for v in screen.gb_shade(black)[0, 0]),
+      tuple(int(v) for v in screen.GB_SHADES[3]))
+# The cap at 960 of 1023 is the dimness: full white comes out as 239.
+check("white on the Color comes out dim", tuple(int(v) for v in screen.gbc_lcd(white)[0, 0]),
+      (239, 239, 239))
+red = np.zeros((1, 1, 3), np.uint8); red[..., 0] = 255
+r = screen.gbc_lcd(red)[0, 0]
+check("and pure red bleeds into blue, as that panel did", int(r[2]) > 0, True)
 
 print("leaving it alone")
 for name in ("none", "", "amiga", None):

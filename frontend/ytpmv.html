@@ -236,6 +236,10 @@
         <option value="sms">sms</option>
         <option value="sms-voice">sms-voice</option>
         <option value="snes">snes</option>
+        <option value="gb">gb</option>
+        <option value="gb-voice">gb-voice</option>
+        <option value="gbc">gbc</option>
+        <option value="gbc-voice">gbc-voice</option>
       </select>
     </label>
     <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
@@ -604,7 +608,7 @@
         // only dropped when the chosen chip synthesises.
         parts: song.parts.map(p => {
           const s = Object.assign({}, parts[p.id]);
-          const synth = ['md', 'nes', 'sms'].includes($('opt-chip').value);
+          const synth = ['md', 'nes', 'sms', 'gb', 'gbc'].includes($('opt-chip').value);
           if (s.tone === p.settings.tone) delete s.tone;
           if (synth && s.octave === p.settings.octave) delete s.octave;
           return s;

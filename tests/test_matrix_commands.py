@@ -75,7 +75,13 @@ check("leaving the levels alone", parse("!ytp mv balance=off").options, {"balanc
 check("turning it off again", parse("!ytp mv chip=off").options, {"chip": False})
 check("a machine we do not have is reported",
       parse("!ytp mv chip=amiga").errors,
-      ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes"])
+      ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes, "
+       "gb, gb-voice, gbc, gbc-voice"])
+check("the Game Boy", parse("!ytp mv chip=gb").options, {"chip": "gb"})
+check("the Color, keeping his voice", parse("!ytp mv chip=gbc-voice").options, {"chip": "gbc-voice"})
+check("a Master System tone on one part", parse("!ytp mv tone:lead=psg").parts, {"lead": {"tone": "psg"}})
+check("the Game Boy's wave channel on one part", parse("!ytp mv tone:bass=gb-wave").parts,
+      {"bass": {"tone": "gb-wave"}})
 check("an NES voice on one part", parse("!ytp mv tone:bass=triangle").parts,
       {"bass": {"tone": "triangle"}})
 check("one part through one of the chip's patches",

@@ -117,6 +117,11 @@ jobs:
         # against fullsnes. The table's taps must sum to unity gain.
         run: python tests/test_sms_snes.py
 
+      - name: The Game Boy chip
+        # Channel ranges against the Pan Docs, the capacitor against
+        # SameBoy, and that a held square sags and a note starts clean.
+        run: python tests/test_gb.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

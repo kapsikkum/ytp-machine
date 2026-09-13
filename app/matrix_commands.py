@@ -49,9 +49,15 @@ _TONES = {"clean", "dac", "dpcm",
           # the NES's
           "pulse", "pulse-thin", "pulse-full", "triangle",
           "nes-kick", "nes-snare", "nes-hat", "nes-tom", "nes-cymbal", "nes-perc",
+          # the Master System's and the SNES's
+          "psg", "psg-soft", "psg-bass", "psg-pluck", "psg-pcm", "brr",
+          "sms-kick", "sms-snare", "sms-hat", "sms-tom", "sms-cymbal", "sms-perc",
+          # the Game Boy's
+          "gb-pulse", "gb-pulse-thin", "gb-pulse-full", "gb-pluck", "gb-wave", "gb-pcm",
+          "gb-kick", "gb-snare", "gb-hat", "gb-tom", "gb-cymbal", "gb-perc",
           "megadrive", "slap"}
 _CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
-          "sms", "sms-voice", "snes",
+          "sms", "sms-voice", "snes", "gb", "gb-voice", "gbc", "gbc-voice",
           "megadrive", "megadrive-voice"}      # the longer names still work
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
@@ -80,6 +86,7 @@ HELP = """\
 {p} mv chip=nes          md is four-operator FM, nes is two pulses and a noise
 {p} mv chip=sms          register, sms is three squares and nothing else. All three
 {p} mv chip=snes         throw the voice away -- add -voice to keep him instead,
+{p} mv chip=gb           (gb and gbc share a chip and differ in their screens)
                          played off that machine's own sample channel. snes has no
                          other mode: it is a sampler, so it is always him. The
                          picture goes through the same console's resolution and
@@ -165,8 +172,8 @@ def _mv(args: list[str]) -> Command:
             if conv == "chip":
                 v = value.lower()
                 if v not in _CHIPS:
-                    cmd.errors.append("chip is one of off, md, md-voice, nes, "
-                                      "nes-voice, sms, sms-voice, snes")
+                    cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice, "
+                                      "sms, sms-voice, snes, gb, gb-voice, gbc, gbc-voice")
                     continue
                 cmd.options[name] = False if v in ("off", "no") else v
             elif conv == "vary":
