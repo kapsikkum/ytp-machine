@@ -232,7 +232,7 @@ check("and never moves more than two steps at once",
 
 print("both machines, each of two minds")
 _r = __import__("app.ytpmv.render", fromlist=["CHIPS"])
-for name in ("md", "md-voice", "nes", "nes-voice", "sms", "sms-voice", "snes",
+for name in ("md", "md-voice", "nes", "nes-voice", "sms", "sms-voice", "snes", "snes-voice",
              "gb", "gb-voice", "gbc", "gbc-voice"):
     check(f"{name} is a setting we have", name in _r.CHIPS, True)
 check("true still means the Mega Drive, as it did when this was a tickbox",
@@ -256,12 +256,15 @@ check("the Master System gives the bass a square",
       _r.chip_tone(_part, "sms"), "psg-bass")
 check("and hammers the voice out of its volume register when asked",
       _r.chip_tone(_part, "sms-voice"), "psg-pcm")
-# The SNES has no synthesiser to switch to, so there is nothing to choose.
-check("the SNES is his voice whether or not you ask",
-      _r.chip_tone(_part, "snes"), "brr")
+# The SNES has no synthesiser, but it has instruments: the sample is chosen
+# per note from the part's program, as the OPL's patch is.
+check("the SNES plays the part on its instruments",
+      _r.chip_tone(_part, "snes"), "snes")
+check("and keeps him through its sampler when asked",
+      _r.chip_tone(_part, "snes-voice"), "brr")
 # The picture goes with the sound, not beside it.
 for chip, want in (("md", "md"), ("md-voice", "md"), ("nes", "nes"), ("nes-voice", "nes"),
-                   ("sms", "sms"), ("sms-voice", "sms"), ("snes", "snes"),
+                   ("sms", "sms"), ("sms-voice", "sms"), ("snes", "snes"), ("snes-voice", "snes"),
                    ("gb", "gb"), ("gb-voice", "gb"), ("gbc", "gbc"), ("gbc-voice", "gbc"),
                    (None, "none")):
     check(f"{chip} puts the picture through {want}", _r.screen_for(chip), want)
@@ -385,7 +388,7 @@ for chip in _r.CHIPS:
     machine = _cat["machine_of"].get(chip.split("-")[0])
     for p in (tune, low, kit):
         auto = _r.chip_tone(p, chip)
-        if chip.endswith("-voice") or chip == "snes":
+        if chip.endswith("-voice"):
             ok = auto in dict(_cat["voice"])
         else:
             ok = auto in dict(_cat["machines"][machine]["drums" if p.is_drums else "melodic"])

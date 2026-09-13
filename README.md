@@ -355,7 +355,7 @@ on an emulated console -- sound and picture both:
 
 ```bash
 python scripts/ytpmv.py song.mid --chip md          # four-operator FM
-python scripts/ytpmv.py song.mid --chip snes        # him, through a SNES
+python scripts/ytpmv.py song.mid --chip snes-voice  # him, through a SNES
 ```
 
 | setting | sound | picture |
@@ -366,7 +366,8 @@ python scripts/ytpmv.py song.mid --chip snes        # him, through a SNES
 | `nes-voice` | him, out through the NES's delta-modulation channel | 256x240, the 64-colour palette |
 | `sms` | the SN76489's three squares and noise; the voice is gone | 256x192, 6-bit colour |
 | `sms-voice` | him, hammered out of the Master System's volume register | 256x192, 6-bit colour |
-| `snes` | him, through the S-DSP's BRR, interpolation and echo | 256x224, 15-bit colour |
+| `snes` | a General MIDI bank cut down to SNES-sized BRR samples, through the S-DSP | 256x224, 15-bit colour |
+| `snes-voice` | him, through the S-DSP's BRR, interpolation and echo | 256x224, 15-bit colour |
 | `gb` | the Game Boy's pulses, wave table and noise; the voice is gone | 160x144, four greens |
 | `gb-voice` | him, pushed through the wave table four bits a step | 160x144, four greens |
 | `gbc` | the same chip as `gb` | 160x144, the Color's washed-out LCD |
@@ -433,6 +434,24 @@ quantises everything to nothing. Most of the famous muffle is not the chip but
 the 64 KB the whole soundtrack had to fit in, which kept samples far below the
 DSP's rate -- `stored_hz` models that practice, and says so.
 
+Its instruments are DitherEmotion's ExpressiveSNES, a General MIDI SoundFont
+of samples ripped from SNES games, cut down by `scripts/build_snes_bank.py` to
+what a game carried: one sample per General MIDI program and one per drum key,
+loops on whole 16-sample BRR blocks, kept at the DSP's 32 kHz since they came
+out of the chip's own format in the first place (and so not compressed twice).
+3.8 MB, `app/ytpmv/data/snes_bank.npz`, credited in `SNES-BANK-SOURCE.txt` as
+the font's author asks of edited versions. Each keeps the font's volume
+envelope, tuning and level, and the bank records which font it came from.
+Playback goes through the chip's Gaussian table and the echo, and a note may go
+past the two octaves the pitch register allows, since a game chose its samples
+to fit and a General MIDI part cannot.
+
+Any General MIDI font can replace it -- `python scripts/build_snes_bank.py
+some.sf2`, with `--store-hz 32000 --ripped` for one ripped from games. Fonts
+thrown together from rips are often labelled an octave out; `--fix-octaves`
+corrects a sample whose loop plays a whole octave from its label, but check it
+by ear, since an organ's quiet sub-octave can fool it.
+
 **`app/ytpmv/gb.py`** -- the Game Boy, which the Color shares unchanged. Formulas
 from the gbdev Pan Docs; the output capacitor from SameBoy. Each channel's DAC
 idles at +1, so a held square sits off centre and the capacitor drags it back
@@ -466,6 +485,23 @@ chip-to-chip variation, and the ADSR delay bug.
 
 The octave a part is moved by to suit a speaking voice is not applied when a
 chip synthesises it, since a chip has no trouble with 49 Hz.
+
+### No voice
+
+The last entry in the page's voice dropdown, **none: synthesised**, leaves the
+corpus out entirely. It belongs to that page alone -- choosing it posts
+nothing, so the sentence generator and the bot keep whatever voice they had.
+Every part is played by the chip (off becomes the Mega Drive, and a `-voice`
+setting becomes its machine playing), no part is muted for want of a word,
+and the word controls are hidden. Instruments can still be chosen per part,
+from any machine's synthesised ones.
+
+Each tile is then an oscilloscope of its part (`app/ytpmv/scope.py`): a neon
+red trace on black, triggered on a rising zero crossing so a held note stands
+still, a few cycles of the part's middle note wide. It is drawn in the
+console's own pixels and put through its palette like any other picture, with
+colours picked to land on a real red in each -- except the Game Boy, which has
+none, and draws in its lightest shade. Over the API it is `options.synth`.
 
 ### Balance
 

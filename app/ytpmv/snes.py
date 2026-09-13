@@ -1,10 +1,10 @@
 """The SNES's sound chip, the S-DSP. Nothing here synthesises anything.
 
-The other three machines make sound out of nothing -- squares, shift
-registers, operators modulating each other. This one cannot. It is eight
-channels of sample playback and that is all it is, which is why a SNES
-version of this program keeps his voice by its nature: there is no
-alternative to keeping it.
+The other machines make sound out of nothing -- squares, shift registers,
+operators modulating each other. This one cannot. It is eight channels of
+sample playback and that is all it is: it plays his voice, or it plays the
+instrument samples a game would have carried, which here are a General MIDI
+SoundFont cut down to size (see the bottom of this file).
 
 What makes a SNES sound like a SNES is the damage done on the way through:
 
@@ -34,6 +34,10 @@ numpy only.
 """
 
 from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -242,3 +246,125 @@ def play(y: np.ndarray, sr: int = SR, delay_ms: float = 48.0,
     out = _resample(x, DSP_RATE, sr)
     top = float(np.abs(out).max(initial=0.0))
     return (out / top * peak).astype(np.float32) if top > 0 else out
+
+
+# ── Instruments ───────────────────────────────────────────────────────────────
+# The chip plays back whatever a game carried, so to play a song with no voice
+# it needs something to carry. That is a General MIDI SoundFont cut down to
+# what fits the machine -- one short BRR sample per instrument, loops on block
+# boundaries, 16 kHz at most -- by scripts/build_snes_bank.py, which says how.
+# Which font it was is recorded in the bank: see source().
+
+_BANK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "snes_bank.npz")
+_BANK: dict | None = None
+_PCM: np.ndarray | None = None
+
+# What the pitch register can ask for: 0x3FFF steps against 0x1000 at the
+# sample's own rate, so a sample can go up two octaves and no further.
+MAX_STEP = 0x3FFF / 0x1000
+
+
+@dataclass
+class Instrument:
+    name: str
+    pcm: np.ndarray                  # float32, -1..1, BRR already done
+    rate: float                      # what the sample plays at its root
+    loop: tuple[int, int] | None
+    root: int
+    cents: int
+    scale: float                     # 0 for a drum that plays one pitch whatever the key
+    attenuation_db: float
+    env: tuple[float, float, float, float, float, float]  # delay attack hold decay sustain(dB) release
+
+
+def bank() -> dict:
+    """Everything in the shipped bank, loaded once: {"p0": Instrument, "d36": ...}."""
+    global _BANK, _PCM
+    if _BANK is None:
+        with np.load(_BANK_PATH) as z:
+            _PCM = z["pcm"].astype(np.float32) / 32767.0
+            index = json.loads(bytes(z["index"]).decode())
+        _BANK = {k: Instrument(e["name"], _PCM[e["offset"]:e["offset"] + e["length"]], e["rate"],
+                               tuple(e["loop"]) if e["loop"] else None, e["root"], e["cents"],
+                               e["scale"], e["attenuation_db"], tuple(e["env"]))
+                 for k, e in index.items() if not k.startswith("_")}
+        _BANK["_source"] = index.get("_source", {})
+    return _BANK
+
+
+def source() -> dict:
+    """Which SoundFont the bank was cut from, and what it says about itself."""
+    return bank()["_source"]
+
+
+def instrument_for(program: int | None = None, drum_key: int | None = None) -> Instrument:
+    """The sample a part is played with: its program's, or for a drum its key's."""
+    b = bank()
+    if drum_key is not None:
+        return b.get(f"d{int(drum_key)}") or b["d38"]
+    return b.get(f"p{int(program or 0)}") or b["p0"]
+
+
+def _envelope(n: int, gate: int, env, sr: int) -> np.ndarray:
+    """The font's volume envelope, in the decibels it is written in."""
+    delay, attack, hold, decay, sustain_db, release = env
+    t = np.arange(n) / sr
+    db = np.full(n, -sustain_db)
+    a0, a1 = delay, delay + attack
+    h1 = a1 + hold
+    d1 = h1 + decay * min(1.0, sustain_db / 96.0) if decay > 0 else h1
+    db[t < d1] = -sustain_db * np.clip((t[t < d1] - h1) / max(d1 - h1, 1e-9), 0.0, 1.0)
+    amp = 10.0 ** (db / 20.0)
+    amp[t < a1] = np.clip((t[t < a1] - a0) / max(attack, 1e-9), 0.0, 1.0) if attack > 0 else (t[t < a1] >= a0)
+    # Released: down 96 dB over the release time, from wherever it had got to.
+    if gate < n:
+        start = amp[gate - 1] if gate > 0 else 0.0
+        fall = (t[gate:] - t[gate]) / max(release, 0.01) * 96.0
+        amp[gate:] = start * 10.0 ** (-fall / 20.0)
+    return amp
+
+
+def render_note(inst: Instrument, midi_note: float, dur: float, sr: int = SR,
+                level: float = 1.0, tail: float = 0.35) -> np.ndarray:
+    """One note of *inst*, as the S-DSP plays it: pitched through the Gaussian
+    table, looped if the sample loops, enveloped, and into the echo.
+
+    One liberty: a note more than two octaves over its sample is played anyway,
+    where the pitch register would stop at two. A game chose its samples to fit;
+    a General MIDI part cannot.
+    """
+    semis = (midi_note - inst.root) * inst.scale + inst.cents / 100.0
+    step = 2.0 ** (semis / 12.0) * inst.rate / DSP_RATE
+    release = min(max(inst.env[5], 0.02), 1.0)
+    gate = max(1, int(dur * DSP_RATE))
+    n = gate + int((release + tail) * DSP_RATE)
+    pos = np.arange(n) * step
+    y = inst.pcm
+    if inst.loop:
+        ls, le = inst.loop
+        over = pos >= le
+        pos[over] = ls + np.mod(pos[over] - ls, le - ls)
+        span = le
+    else:
+        span = len(y)
+        n = min(n, int(max(0, span - 1) / step))
+        pos = pos[:n]
+    if n <= 0:
+        return np.zeros(max(1, int(dur * sr)), dtype=np.float32)
+    whole = np.floor(pos).astype(np.int64)
+    phase = ((pos - whole) * 256).astype(np.int64)
+
+    def at(k):
+        # The four points the table blends, reaching back across the loop.
+        k = whole + k
+        if inst.loop:
+            ls, le = inst.loop
+            k = np.where(k >= le, ls + np.mod(k - ls, le - ls), k)
+        return y[np.clip(k, 0, span - 1)]
+
+    out = (_GAUSS[0xFF - phase] * at(-2) + _GAUSS[0x1FF - phase] * at(-1)
+           + _GAUSS[0x100 + phase] * at(0) + _GAUSS[phase] * at(1)) / 2048.0
+    gain = level * 10.0 ** (-0.4 * inst.attenuation_db / 20.0)
+    out = out * _envelope(len(out), min(gate, len(out)), inst.env, DSP_RATE) * gain
+    out = echo(out.astype(np.float32))
+    return _resample(out, DSP_RATE, sr)

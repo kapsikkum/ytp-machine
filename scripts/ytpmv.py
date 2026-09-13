@@ -64,12 +64,12 @@ def main() -> int:
                     help="a hair of level on every hit, and of tuning on drums (default off)")
     ap.add_argument("--chip", nargs="?", const="md", default=None,
                     choices=("md", "md-voice", "nes", "nes-voice",
-                             "sms", "sms-voice", "snes", "gb", "gb-voice", "gbc", "gbc-voice",
+                             "sms", "sms-voice", "snes", "snes-voice", "gb", "gb-voice", "gbc", "gbc-voice",
                              "opl2", "opl2-voice", "opl3", "opl3-voice",
                              "sid", "sid-voice", "sid8580", "sid8580-voice"),
                     help="play the whole song on an emulated sound chip. The plain "
                          "names synthesise it and the voice is gone; the -voice ones "
-                         "keep him, played off that machine's own sample channel. "
+                         "keep the voice, played off that machine's own sample channel. "
                          "The picture goes through the same console")
     ap.add_argument("--balance", action=argparse.BooleanOptionalAction, default=None,
                     help="measure every part and move it to where its job wants it "

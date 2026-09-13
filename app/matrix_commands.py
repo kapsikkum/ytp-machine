@@ -57,12 +57,12 @@ _TONES = {"clean", "voice", "dac", "dpcm",
           "gb-pulse", "gb-pulse-thin", "gb-pulse-full", "gb-pluck", "gb-wave", "gb-pcm",
           "gb-kick", "gb-snare", "gb-hat", "gb-tom", "gb-cymbal", "gb-perc",
           # the PC's and the C64's
-          "opl2", "opl3", "sb-pcm", "sb16-pcm", "sid-digi",
+          "opl2", "opl3", "snes", "sb-pcm", "sb16-pcm", "sid-digi",
           "sid-lead", "sid-bass", "sid-pad", "sid-rhythm", "sid-bell",
           "sid-kick", "sid-snare", "sid-hat", "sid-tom", "sid-cymbal", "sid-perc",
           "megadrive", "slap"}
 _CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
-          "sms", "sms-voice", "snes", "gb", "gb-voice", "gbc", "gbc-voice",
+          "sms", "sms-voice", "snes", "snes-voice", "gb", "gb-voice", "gbc", "gbc-voice",
           "opl2", "opl2-voice", "opl3", "opl3-voice",
           "sid", "sid-voice", "sid8580", "sid8580-voice",
           "megadrive", "megadrive-voice"}      # the longer names still work
@@ -92,14 +92,14 @@ HELP = """\
 {p} mv chip=md         — the whole song on an emulated sound chip, every part of it.
 {p} mv chip=nes          md is four-operator FM, nes is two pulses and a noise
 {p} mv chip=sms          register, sms is three squares and nothing else. All three
-{p} mv chip=snes         throw the voice away -- add -voice to keep him instead,
+{p} mv chip=snes         throw the voice away -- add -voice to keep it instead,
 {p} mv chip=gb           (gb and gbc share a chip and differ in their screens)
 {p} mv chip=opl2         Doom's instrument bank on an AdLib; opl3 on a Sound Blaster
 {p} mv chip=sid          the C64: sid is the 6581, sid8580 the later chip
-                         played off that machine's own sample channel. snes has no
-                         other mode: it is a sampler, so it is always him. The
-                         picture goes through the same console's resolution and
-                         colours
+                         played off that machine's own sample channel. snes plays
+                         a General MIDI bank cut down to what a SNES could carry.
+                         The picture goes through the same console's resolution
+                         and colours
 {p} mv lead=yeah kick=boom max=60 octave:bass=+1 tone:bass=bass
                          vary=rotate|random (several takes of a part's word rather
                          than one) or vary=ultra (a different word every hit, still
@@ -108,7 +108,7 @@ HELP = """\
                          (lead, bass, rhythm, chords, kick, snare, hats, toms, cymbals)
                          or by instrument; tone:<part>= picks what one part is played
                          by, whatever the chip (sid-bell, pulse, triangle, dac...;
-                         voice keeps him as recorded); program:<part>= swaps its
+                         voice leaves the part as recorded); program:<part>= swaps its
                          General MIDI instrument, which picks the OPL patch
                          (program:lead=29 is overdriven guitar); a sound can be a word, a noise (*spew*)
                          or one phoneme cut out of words (/ah/, /s/); max= caps the
@@ -187,7 +187,7 @@ def _mv(args: list[str]) -> Command:
                 v = value.lower()
                 if v not in _CHIPS:
                     cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice, "
-                                      "sms, sms-voice, snes, gb, gb-voice, gbc, gbc-voice, "
+                                      "sms, sms-voice, snes, snes-voice, gb, gb-voice, gbc, gbc-voice, "
                                       "opl2, opl2-voice, opl3, opl3-voice, "
                                       "sid, sid-voice, sid8580, sid8580-voice")
                     continue

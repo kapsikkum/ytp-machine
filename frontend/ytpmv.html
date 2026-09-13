@@ -83,7 +83,7 @@
     #parts { display: flex; flex-direction: column; gap: .6rem; }
     .part {
       display: grid;
-      grid-template-columns: minmax(170px, 1.1fr) minmax(250px, 1.6fr) minmax(260px, 1.5fr);
+      grid-template-columns: minmax(150px, .9fr) minmax(250px, 1.6fr) minmax(270px, 1.4fr);
       gap: .75rem 1rem;
       align-items: start;
       border: 1px solid var(--border);
@@ -119,16 +119,36 @@
     .alts { display: flex; flex-wrap: wrap; gap: .3rem; }
     .alts button { font-size: .7rem; padding: .12rem .45rem; color: #999; background: transparent; }
     .alts button:hover { color: var(--yellow); border-color: var(--yellow); }
-    .knobs label { color: #777; font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
-    .knobs input[type=range] { width: 5.5rem; accent-color: var(--yellow); }
+    .alts .or { color: #555; font-size: .7rem; }
+    .who .play { margin-top: .6rem; }
+    /* Label and control in two aligned columns, one setting a line. */
+    .knobs .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .4rem .6rem; align-items: center; }
+    .knobs .kvrow { display: contents; }
+    .knobs .k { color: #666; font-size: .7rem; text-align: right; white-space: nowrap; }
+    .knobs .v { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+    .knobs .v select { width: 100%; max-width: 15rem; padding: .28rem .45rem; font-size: .8rem; }
+    .knobs .mix input[type=range] { flex: 1; min-width: 3rem; max-width: 7rem; accent-color: var(--yellow); }
+    .knobs .tiny { color: #555; font-size: .68rem; }
+    .knobs .flags { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin-top: .6rem; padding-top: .55rem;
+                    border-top: 1px solid #1e1e1e; }
+    .knobs .flags label { color: #777; font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
     .knobs [hidden] { display: none; }
-    .knobs select[data-k=instrument], .knobs select[data-k=program] { max-width: 12rem; }
-    .oct { display: inline-flex; align-items: center; gap: .2rem; }
+    .oct button { padding: .15rem .5rem; }
     .oct span { min-width: 1.8rem; text-align: center; color: #eee; font-size: .8rem; }
     .err { color: var(--red); font-size: .72rem; margin-top: .35rem; }
+    .err:empty { display: none; }
+
+    /* ── The machine the parts are played on ── */
+    #machine { display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap;
+               margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--border); }
+    #machine label { color: #888; font-size: .78rem; display: inline-flex; gap: .45rem; align-items: center; }
+    #machine select { min-width: 9rem; }
+    #chip-about { color: #666; font-size: .75rem; }
 
     /* ── Options + render ── */
-    #options { display: flex; flex-wrap: wrap; gap: .6rem 1.25rem; align-items: center; color: #888; font-size: .78rem; }
+    #options { display: flex; flex-direction: column; gap: .6rem; color: #888; font-size: .78rem; }
+    #options .group { display: flex; flex-wrap: wrap; gap: .5rem 1.1rem; align-items: center; }
+    #options .gl { color: #555; font-size: .66rem; letter-spacing: 1px; text-transform: uppercase; min-width: 4.2rem; }
     #options label { display: inline-flex; gap: .35rem; align-items: center; }
     #actions { display: flex; gap: .75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
     #render-btn {
@@ -156,9 +176,19 @@
     #result .links a.download:hover { background: #ffd000; }
     .hint { color: #4d4d4d; font-size: .72rem; line-height: 1.6; margin-top: .75rem; }
     .hint b { color: #777; font-weight: 400; }
+    details.hint summary { cursor: pointer; color: #666; list-style: none; }
+    details.hint summary::before { content: '▸ '; }
+    details.hint[open] summary::before { content: '▾ '; }
+    details.hint summary:hover { color: #999; }
+    details.hint p, details.hint #song-noises { margin-top: .5rem; }
+
+    /* ── No voice: nothing about words is any use ── */
+    /* important: #options label and the like set display with more specific selectors */
+    body.synth .voice-only, body.synth .part .sound, body:not(.synth) .synth-only { display: none !important; }
+    body.synth .part { grid-template-columns: minmax(150px, 1fr) minmax(280px, 2fr); }
 
     @media (max-width: 820px) {
-      .part { grid-template-columns: 1fr; }
+      .part, body.synth .part { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -166,7 +196,7 @@
 
 <header>
   <h1>YTPMV</h1>
-  <p>a MIDI file, sung by the corpus — every note pitch perfect</p>
+  <p><span class="voice-only">a MIDI file, sung by the corpus — every note pitch perfect</span><span class="synth-only">a MIDI file, played on the chip — no voice at all</span></p>
 </header>
 <div id="voice">voice:
   <select id="voice-select"><option>loading…</option></select>
@@ -186,25 +216,61 @@
   <h2 id="song-title"></h2>
   <div class="desc" id="song-desc"></div>
   <div class="chips" id="song-chips"></div>
-  <div class="hint" id="song-noises"></div>
-  <div class="hint">
+  <div class="hint synth-only" id="synth-hint">
+    No voice: every part is played by the chip and every tile is a picture of its waveform, drawn
+    the way that console would draw it. Pick what plays each part with <b>instrument</b>.
+  </div>
+  <details class="hint voice-only" id="how">
+    <summary>how parts work, and what this voice has besides words</summary>
+    <div id="song-noises"></div>
+    <p>
     Every part has a suggested word — picked for the <b>kind</b> of sound the part makes (a pop for a
     kick, a hiss for a hi-hat, a long vowel for a tune). Change any of them: type a word or a phrase,
     try another <b>take</b> of the same word, or click an alternative. <b>▶ part</b> plays a few seconds
     of that part on its own. <b>octave</b> moves a part up or down without changing the tune — the
     suggestion puts each part where the voice sounds natural. <b>instrument</b> picks what plays a
     part: <b>auto</b> follows the chip, anything else stays put whatever the chip is — another
-    machine's voice, or <b>voice</b> to keep him as recorded. When an OPL plays a part, <b>patch</b>
-    picks which of Doom's instruments.
-  </div>
+    machine's voice, or <b>voice</b> to keep the voice as recorded. When an OPL or the SNES plays a part,
+    <b>patch</b> picks which instrument.
+    </p>
+  </details>
 </div>
 
 <div class="card" id="parts-card" hidden>
+  <div id="machine">
+    <label title="Play the song on an emulated console, sound and picture both: the picture is cut to that machine's resolution and colours. The plain settings play the notes on the chip; the -voice settings keep the voice, played off that console's sample channel.">chip
+      <select id="opt-chip">
+        <option value="" selected>off</option>
+        <option value="md">md</option>
+        <option value="md-voice">md-voice</option>
+        <option value="nes">nes</option>
+        <option value="nes-voice">nes-voice</option>
+        <option value="sms">sms</option>
+        <option value="sms-voice">sms-voice</option>
+        <option value="snes">snes</option>
+        <option value="snes-voice">snes-voice</option>
+        <option value="gb">gb</option>
+        <option value="gb-voice">gb-voice</option>
+        <option value="gbc">gbc</option>
+        <option value="gbc-voice">gbc-voice</option>
+        <option value="opl2">opl2</option>
+        <option value="opl2-voice">opl2-voice</option>
+        <option value="opl3">opl3</option>
+        <option value="opl3-voice">opl3-voice</option>
+        <option value="sid">sid</option>
+        <option value="sid-voice">sid-voice</option>
+        <option value="sid8580">sid8580</option>
+        <option value="sid8580-voice">sid8580-voice</option>
+      </select>
+    </label>
+    <span id="chip-about"></span>
+  </div>
   <div id="parts"></div>
 </div>
 
 <div class="card" id="render-card" hidden>
   <div id="options">
+    <div class="group"><span class="gl">song</span>
     <label>length
       <select id="opt-len">
         <option value="30">first 30s</option>
@@ -223,7 +289,9 @@
     <label title="Move the whole song up or down, in semitones">key
       <select id="opt-transpose"></select>
     </label>
-    <label title="One recording on every beat sounds like a loop. Rotating plays the best few takes of the same word; ultra picks a different word for every hit, each still sung on its note.">variety
+    </div>
+    <div class="group"><span class="gl">sound</span>
+    <label class="voice-only" title="One recording on every beat sounds like a loop. Rotating plays the best few takes of the same word; ultra picks a different word for every hit, each still sung on its note.">variety
       <select id="opt-vary">
         <option value="off" selected>one take only</option>
         <option value="rotate">rotate takes</option>
@@ -231,36 +299,15 @@
         <option value="ultra">ultra: different words</option>
       </select>
     </label>
-    <label title="Play the song on an emulated console, sound and picture both: the picture is cut to that machine's resolution and colours. md, nes and sms synthesise the notes and the voice is gone; the -voice settings keep him, played off that console's sample channel. snes only plays samples, so it is always him.">chip
-      <select id="opt-chip">
-        <option value="" selected>off</option>
-        <option value="md">md</option>
-        <option value="md-voice">md-voice</option>
-        <option value="nes">nes</option>
-        <option value="nes-voice">nes-voice</option>
-        <option value="sms">sms</option>
-        <option value="sms-voice">sms-voice</option>
-        <option value="snes">snes</option>
-        <option value="gb">gb</option>
-        <option value="gb-voice">gb-voice</option>
-        <option value="gbc">gbc</option>
-        <option value="gbc-voice">gbc-voice</option>
-        <option value="opl2">opl2</option>
-        <option value="opl2-voice">opl2-voice</option>
-        <option value="opl3">opl3</option>
-        <option value="opl3-voice">opl3-voice</option>
-        <option value="sid">sid</option>
-        <option value="sid-voice">sid-voice</option>
-        <option value="sid8580">sid8580</option>
-        <option value="sid8580-voice">sid8580-voice</option>
-      </select>
-    </label>
     <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
     <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
-    <label title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
+    </div>
+    <div class="group"><span class="gl">picture</span>
+    <label class="voice-only" title="Mirror a tile on every other note, the classic YTPMV look"><input type="checkbox" id="opt-flip" checked> flip</label>
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
     <label title="Darken a tile when its part is not playing"><input type="checkbox" id="opt-dim" checked> dim idle</label>
-    <label title="Write each part's word on its tile"><input type="checkbox" id="opt-labels"> labels</label>
+    <label title="Write each part's word on its tile, or what plays it when there is no voice"><input type="checkbox" id="opt-labels"> labels</label>
+    </div>
   </div>
   <div id="actions">
     <button id="render-btn">RENDER</button>
@@ -314,14 +361,23 @@
 
   // ── voice + vocabulary ───────────────────────────────────────────────────
   const voiceSel = $('voice-select');
+  // Not a voice: the corpus left out entirely. It belongs to this page alone,
+  // so choosing it posts nothing and the sentences page keeps its voice.
+  const NO_VOICE = '__none';
+  let synthMode = store.get('ytpmv-synth') === true;
+  let liveVoice = null;           // the voice the app is actually using
 
   async function loadVoices() {
     try {
       const d = await api('/api/corpora');
+      liveVoice = d.active;
       voiceSel.innerHTML = d.corpora.map(c =>
-        `<option value="${esc(c.slug)}"${c.slug === d.active ? ' selected' : ''}>${esc(c.name || c.slug)}` +
-        `${c.words ? ` (${c.words} words)` : ''}</option>`).join('');
-    } catch { voiceSel.innerHTML = '<option>unavailable</option>'; }
+        `<option value="${esc(c.slug)}"${c.slug === d.active && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}` +
+        `${c.words ? ` (${c.words} words)` : ''}</option>`).join('') +
+        `<option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
+    } catch {
+      voiceSel.innerHTML = `<option>unavailable</option><option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
+    }
   }
   loadVoices();
 
@@ -331,10 +387,18 @@
   // words another has.
   voiceSel.addEventListener('change', async () => {
     const slug = voiceSel.value;
+    if (slug === NO_VOICE || synthMode) {
+      setSynth(slug === NO_VOICE);
+      if (slug === NO_VOICE || slug === liveVoice) {
+        $('voice-note').textContent = slug === NO_VOICE ? '(this page only)' : '';
+        return;
+      }
+    }
     voiceSel.disabled = true;
     $('voice-note').textContent = 'switching…';
     try {
       await post('/api/corpus', { slug });
+      liveVoice = slug;
       $('voice-note').textContent = '(changed for everyone)';
       if (song) {
         const data = await api(`/api/ytpmv/midi/${song.midi_id}`);
@@ -420,7 +484,41 @@
     $('song-noises').innerHTML = lines.join('<br>');
     ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
     drawParts();
-    for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
+    if (!synthMode) for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
+  }
+
+  // ── no voice ─────────────────────────────────────────────────────────────
+  // The chip is all there is, so only the settings where the chip plays the
+  // notes make sense: off and the -voice settings go to that machine playing.
+  // Whatever was chosen before comes back on leaving -- unless another chip
+  // was picked in the meantime, which is a choice and stays.
+  let chipWithVoice = null, chipForced = null;
+  function chipsFor(on) {
+    const sel = $('opt-chip');
+    for (const o of sel.options) o.disabled = on && soundsVoice(o.value);
+    if (on && soundsVoice(sel.value)) {
+      chipWithVoice = sel.value;
+      sel.value = chipForced = sel.value ? sel.value.replace(/-voice$/, '') : 'md';
+    } else if (!on && chipWithVoice !== null) {
+      if (sel.value === chipForced) sel.value = chipWithVoice;
+      chipWithVoice = chipForced = null;
+    }
+    sel.dispatchEvent(new Event('change'));
+  }
+  function setSynth(on) {
+    synthMode = on;
+    store.set('ytpmv-synth', on);
+    document.body.classList.toggle('synth', on);
+    chipsFor(on);
+    if (!song) return;
+    for (const p of song.parts) {
+      const s = parts[p.id];
+      // His voice cannot play a part that has no voice to play.
+      if (on && s.instrument && !song.instruments.synth.includes(s.instrument)) s.instrument = '';
+      drawInstrument(p);
+      if (!on && s.text) refreshSample(p.id);
+    }
+    changed();
   }
 
   // ── parts ────────────────────────────────────────────────────────────────
@@ -437,6 +535,10 @@
           <div class="role">${ROLE_ICON[p.role] || '♪'} ${esc(ROLE_TEXT[p.role] || p.role)}</div>
           <div class="name">${esc(p.instrument)}</div>
           <div class="meta">${p.notes} notes · ${esc(range)}${p.polyphony > 1 && !p.is_drums ? ` · up to ${p.polyphony} at once` : ''}</div>
+          <div class="synth-only">
+            <button class="play" data-act="preview" title="hear a few seconds of this part on its own, on the chip">▶ part</button>
+            <div class="err" data-el="err"></div>
+          </div>
         </div>
         <div class="sound">
           <div class="row">
@@ -450,53 +552,76 @@
             <button data-act="clip" title="see and hear the clip it is cut from">clip</button>
             <span data-el="badge"></span>
           </div>
-          ${alts ? `<div class="row alts"><span style="color:#555;font-size:.7rem">or:</span>${alts}</div>` : ''}
+          ${alts ? `<div class="row alts"><span class="or">or:</span>${alts}</div>` : ''}
           <div class="err" data-el="err"></div>
         </div>
         <div class="knobs">
-          <div class="row">
-            <label title="What plays this part. auto is whatever the chip picks; anything else is kept whatever the chip is">instrument
-              <select data-k="instrument" data-el="inst" autocomplete="off"></select></label>
-            ${p.is_drums ? '' : `<label data-el="patch-wrap" title="The General MIDI instrument, which is the patch an OPL plays" hidden>patch
-              <select data-k="program" data-el="patch" autocomplete="off"></select></label>`}
-          </div>
-          <div class="row">
-            ${p.is_drums ? '' : `<label>octave <span class="oct"><button data-act="oct-">−</button><span data-el="oct">${fmtOct(s.octave)}</span><button data-act="oct+">+</button></span></label>`}
-            <label title="How the clip is put on the note">sound
-              <select data-k="mode">${Object.entries(MODE_TEXT).map(([v, t]) =>
-                `<option value="${v}"${s.mode === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
-            </label>
-          </div>
-          <div class="row">
-            <label>volume <input type="range" min="0" max="2" step="0.05" value="${s.volume}" data-k="volume"></label>
-            <label title="Left or right">pan <input type="range" min="-1" max="1" step="0.05" value="${s.pan}" data-k="pan"></label>
-          </div>
-          <div class="row">
-            <label><input type="checkbox" data-k="mute"${s.mute ? ' checked' : ''}> mute</label>
-            <label><input type="checkbox" data-k="visible"${s.visible ? ' checked' : ''}> show tile</label>
-            ${p.is_drums ? `<label title="Cut the word down to a drum sound (the pop of a b, the hiss of an s) instead of saying the whole word"><input type="checkbox" data-k="hit"${s.hit !== false ? ' checked' : ''}> drum hit</label>` : ''}
-            <label title="Cut each sound at the end of its note, or let it ring until the next one">
-              <select data-k="sustain">
+          <div class="kv">
+            <div class="kvrow" title="What plays this part. auto is whatever the chip picks; anything else is kept whatever the chip is">
+              <span class="k">instrument</span>
+              <div class="v"><select data-k="instrument" data-el="inst" autocomplete="off"></select></div>
+            </div>
+            ${p.is_drums ? '' : `<div class="kvrow" data-el="patch-wrap" title="The General MIDI instrument: the patch an OPL plays, and the sample a SNES does" hidden>
+              <span class="k">patch</span>
+              <div class="v"><select data-k="program" data-el="patch" autocomplete="off"></select></div>
+            </div>
+            <div class="kvrow" title="Move the part up or down without changing the tune">
+              <span class="k">octave</span>
+              <div class="v oct"><button data-act="oct-">−</button><span data-el="oct">${fmtOct(s.octave)}</span><button data-act="oct+">+</button></div>
+            </div>`}
+            <div class="kvrow voice-only" data-el="mode-wrap" title="How the clip is put on the note">
+              <span class="k">sound</span>
+              <div class="v"><select data-k="mode">${Object.entries(MODE_TEXT).map(([v, t]) =>
+                `<option value="${v}"${s.mode === v ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+            </div>
+            <div class="kvrow">
+              <span class="k">level</span>
+              <div class="v mix">
+                <input type="range" min="0" max="2" step="0.05" value="${s.volume}" data-k="volume" title="volume">
+                <span class="tiny">pan</span>
+                <input type="range" min="-1" max="1" step="0.05" value="${s.pan}" data-k="pan" title="left or right">
+              </div>
+            </div>
+            <div class="kvrow" title="Cut each sound at the end of its note, or let it ring until the next one">
+              <span class="k">notes</span>
+              <div class="v"><select data-k="sustain">
                 <option value="note"${s.sustain === 'note' ? ' selected' : ''}>stop at note end</option>
                 <option value="ring"${s.sustain === 'ring' ? ' selected' : ''}>let it ring</option>
-              </select>
-            </label>
+              </select></div>
+            </div>
+          </div>
+          <div class="flags">
+            <label><input type="checkbox" data-k="mute"${s.mute ? ' checked' : ''}> mute</label>
+            <label><input type="checkbox" data-k="visible"${s.visible ? ' checked' : ''}> show tile</label>
+            ${p.is_drums ? `<label class="voice-only" title="Cut the word down to a drum sound (the pop of a b, the hiss of an s) instead of saying the whole word"><input type="checkbox" data-k="hit"${s.hit !== false ? ' checked' : ''}> drum hit</label>` : ''}
           </div>
         </div>
       </div>`;
     }).join('');
     for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); }
+    drawChip();
   }
 
   // ── instruments ──────────────────────────────────────────────────────────
   // What plays a part. Nothing chosen is "auto": whatever the chip switch
   // picks for it, which the server has already worked out for every chip.
   const chipNow = () => $('opt-chip').value;
-  const soundsVoice = (chip) => !chip || chip.endsWith('-voice') || chip === 'snes';
+  const soundsVoice = (chip) => !chip || chip.endsWith('-voice');
   const machineOf = (chip) => soundsVoice(chip) ? null : song.instruments.machine_of[chip.split('-')[0]];
   const inMachine = (m, tone) => ['melodic', 'drums'].some(k =>
     song.instruments.machines[m][k].some(([t]) => t === tone));
   const toneOf = (p, s, chip) => s.instrument || (chip ? p.chip_tones[chip] : 'clean');
+  // The octave a part is really played at. The suggestion suits a speaking
+  // voice and a chip does not use it, so until somebody moves it, a part a
+  // chip plays is at the octave it was written in -- and says so.
+  const onChip = (p, s) => song.instruments.synth.includes(toneOf(p, s, chipNow()));
+  const octaveOf = (p, s) => onChip(p, s) && !s.octaveSet ? 0 : s.octave;
+
+  function drawChip() {
+    const chip = chipNow();
+    $('chip-about').textContent = song && chip ? (song.instruments.chips || {})[chip] || ''
+      : 'off: every part is the voice, as recorded';
+  }
 
   function drawInstrument(p) {
     const r = row(p.id); if (!r) return;
@@ -509,17 +634,22 @@
     const auto = chip ? p.chip_tones[chip] : 'voice';
     let html = `<option value=""${s.instrument ? '' : ' selected'}>auto: ${esc(auto)}</option>`;
     if (own) html += group(cat.machines[own].name, cat.machines[own][kind]);
-    html += group('his voice', cat.voice);
+    if (!synthMode) html += group('the voice', cat.voice);
     for (const [m, info] of Object.entries(cat.machines)) if (m !== own) html += group(info.name, info[kind]);
     r.querySelector('[data-el=inst]').innerHTML = html;
+    const oct = r.querySelector('[data-el=oct]');
+    if (oct) oct.textContent = fmtOct(octaveOf(p, s));
+    // How a clip is put on the note means nothing to a chip, which never plays one.
+    r.querySelector('[data-el=mode-wrap]').hidden = onChip(p, s);
 
     const wrap = r.querySelector('[data-el=patch-wrap]');
     if (!wrap) return;
-    wrap.hidden = !['opl2', 'opl3'].includes(toneOf(p, s, chip));
+    wrap.title = 'The General MIDI instrument: the patch an OPL plays, and the sample a SNES does';
+    wrap.hidden = !['opl2', 'opl3', 'snes'].includes(toneOf(p, s, chip));
     const sel = wrap.querySelector('select');
     if (!sel.options.length) {
       sel.innerHTML = cat.programs.map((name, i) =>
-        `<option value="${i}">${esc(name)}${i === p.settings.program ? ' (as written)' : ''}</option>`).join('');
+        `<option value="${i}">${i === p.settings.program ? '• ' : ''}${esc(name)}</option>`).join('');
     }
     sel.value = String(s.program ?? p.settings.program ?? 0);
   }
@@ -532,6 +662,7 @@
     const chip = chipNow(), was = song ? machineOf(lastChip) : null;
     lastChip = chip;
     if (!song) return;
+    drawChip();
     for (const p of song.parts) {
       const s = parts[p.id];
       if (s.instrument && was && was !== machineOf(chip) && inMachine(was, s.instrument)) s.instrument = '';
@@ -548,7 +679,8 @@
     delete s.tone;
     if (s.instrument) s.tone = s.instrument;
     delete s.instrument;
-    if (synth && s.octave === p.settings.octave) delete s.octave;
+    if (synth && !s.octaveSet) delete s.octave;
+    delete s.octaveSet;
     return s;
   }
 
@@ -636,7 +768,9 @@
       s.take = ((s.take + (act === 'next' ? 1 : -1)) % n + n) % n;
       changed(id); refreshSample(id);
     } else if (act === 'oct-' || act === 'oct+') {
-      s.octave = Math.max(-4, Math.min(4, s.octave + (act === 'oct+' ? 1 : -1)));
+      const p = song.parts.find(q => q.id === id);
+      s.octave = Math.max(-4, Math.min(4, octaveOf(p, s) + (act === 'oct+' ? 1 : -1)));
+      s.octaveSet = true;
       r.querySelector('[data-el=oct]').textContent = fmtOct(s.octave);
       changed(id);
     } else if (act === 'clip') {
@@ -645,9 +779,10 @@
       b.disabled = true; const old = b.textContent; b.textContent = '…';
       try {
         const d = await post('/api/ytpmv/preview', { midi_id: song.midi_id, seconds: 6,
-          part: sendable(song.parts.find(p => p.id === id)), chip: chipNow() || null });
+          part: sendable(song.parts.find(p => p.id === id)), chip: chipNow() || null,
+          synth: synthMode });
         const pl = $('player'); pl.src = d.audio_url; pl.play();
-      } catch (err) { r.querySelector('[data-el=err]').textContent = err.message; }
+      } catch (err) { r.querySelectorAll('[data-el=err]').forEach(el => { el.textContent = err.message; }); }
       b.disabled = false; b.textContent = old;
     }
   });
@@ -675,7 +810,7 @@
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
       vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
-      labels: $('opt-labels').checked,
+      labels: $('opt-labels').checked, synth: synthMode,
     };
     if (len) options.max_seconds = len;
     try {
@@ -747,6 +882,7 @@
   }
 
   // ── come back to where we were ───────────────────────────────────────────
+  if (synthMode) setSynth(true);
   const saved = store.get('ytpmv');
   if (saved && saved.midi_id) {
     api(`/api/ytpmv/midi/${saved.midi_id}`).then(d => load(d, saved.parts)).catch(() => {});

@@ -49,6 +49,7 @@ TONES = {
     "sid-digi": "the voice hammered out of the SID's volume register",
     "opl2": "the OPL2 playing Doom's GENMIDI patch for the part's instrument",
     "opl3": "the OPL3 playing the same patches, with all eight waveforms",
+    "snes": "the SNES playing a sampled instrument, one short BRR sample of it",
     **{name: patch.about for name, patch in ym2612.PATCHES.items()},
     **{name: voice.about for name, voice in nes.VOICES.items()},
     **{name: voice.about for name, voice in sms.VOICES.items()},
@@ -62,7 +63,7 @@ ALIASES = {"slap": "bass", "megadrive": "bass", "voice": "clean"}
 
 # The tones that replace the voice rather than colour it.
 SYNTH = (frozenset(ym2612.PATCHES) | frozenset(nes.VOICES) | frozenset(sms.VOICES)
-         | frozenset(gb.VOICES) | frozenset(sid.VOICES) | {"opl2", "opl3"})
+         | frozenset(gb.VOICES) | frozenset(sid.VOICES) | {"opl2", "opl3", "snes"})
 
 # What each machine calls "the voice, played off this machine". The SNES has
 # no other kind: it is a sampler and nothing else, so its only entry is here.
@@ -93,7 +94,7 @@ def overrides_switch(name: str | None) -> bool:
     switch did nothing at all from the web page, for every song, while the
     command line (which sends no parts) worked perfectly.
 
-    Which left no way to keep one part as him, untouched, while the rest of
+    Which left no way to keep one part as the voice, untouched, while the rest of
     the song goes through a chip. "voice" is that: the same sound as "clean",
     and never sent unless somebody picked it.
     """
@@ -107,12 +108,12 @@ def overrides_switch(name: str | None) -> bool:
 # Machines sharing a chip share an entry -- the Game Boy and the Color, the
 # OPL2 and OPL3 (whose patches come from the part's instrument instead), the
 # two SIDs.
-MACHINE_OF = {"md": "md", "nes": "nes", "sms": "sms", "gb": "gb", "gbc": "gb",
+MACHINE_OF = {"md": "md", "nes": "nes", "sms": "sms", "snes": "snes", "gb": "gb", "gbc": "gb",
               "opl2": "opl", "opl3": "opl", "sid": "sid", "sid8580": "sid"}
 _KITS = {"md": (ym2612.PATCHES, ym2612.DRUMS), "nes": (nes.VOICES, nes.DRUMS),
          "sms": (sms.VOICES, sms.DRUMS), "gb": (gb.VOICES, gb.DRUMS),
          "sid": (sid.VOICES, sid.DRUMS)}
-_MACHINE_NAMES = {"md": "Mega Drive", "nes": "NES", "sms": "Master System",
+_MACHINE_NAMES = {"md": "Mega Drive", "nes": "NES", "sms": "Master System", "snes": "SNES",
                   "gb": "Game Boy", "opl": "OPL2 / OPL3", "sid": "SID"}
 
 
@@ -120,8 +121,8 @@ def catalogue() -> dict:
     """What a part can be played by, grouped for choosing from."""
     machines = {}
     for m, name in _MACHINE_NAMES.items():
-        if m == "opl":
-            both = [[t, TONES[t]] for t in ("opl2", "opl3")]
+        if m in ("opl", "snes"):              # one setting; the instrument picks the sound
+            both = [[t, TONES[t]] for t in (("opl2", "opl3") if m == "opl" else ("snes",))]
             machines[m] = {"name": name, "melodic": both, "drums": both}
             continue
         voices, drums = _KITS[m]
@@ -131,7 +132,7 @@ def catalogue() -> dict:
                        "drums": [[t, TONES[t]] for t in voices if t in kit]}
     sampled = list(dict.fromkeys(SAMPLED.values()))
     return {"machines": machines, "machine_of": MACHINE_OF,
-            "voice": [["voice", "him, as recorded, whatever the chip"]]
+            "voice": [["voice", "the voice, as recorded, whatever the chip"]]
                      + [[t, TONES[t]] for t in sampled],
             "synth": sorted(SYNTH)}
 
@@ -152,6 +153,11 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
     if peak <= 0:
         return y
 
+    if tone == "snes":
+        inst = snes.instrument_for(program, key)
+        note = key if key is not None else (69.0 + 12.0 * float(np.log2(hz / 440.0)) if hz else 60.0)
+        x = snes.render_note(inst, note, len(y) / sr, sr, level)
+        return (x * peak).astype(np.float32)
     if tone in ("opl2", "opl3"):
         inst = opl.instrument_for(program, key)
         note = 69.0 + 12.0 * float(np.log2(hz / 440.0)) if hz else 60.0

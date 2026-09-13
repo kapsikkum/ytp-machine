@@ -31,7 +31,7 @@ import numpy as np
 import app.generate as g
 from app.database import DATA_DIR, active
 from app.ytpmv import (gb, master as mastering, music, nes, recommend, samples,
-                        screen as screens, sid, sms, tone as tones, ym2612)
+                        scope, screen as screens, sid, sms, tone as tones, ym2612)
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ VARY = {
     "ultra": "a different word every hit, each sung on the note",
 }
 _ULTRA_POOL = 5          # words a part throws about in the ultra mode
+_RING_MAX = 1.5          # how long a synthesised note left to ring may go on for
 
 # How loud and where each kind of part sits unless told otherwise.
 _VOLUME = {"lead": 1.0, "bass": 1.0, "rhythm": 0.75, "chords": 0.7,
@@ -130,7 +131,7 @@ def analyse(midi_id: str, progress=None) -> dict:
     out["voice"] = active()["name"]
     # What each part can be played by, and what every chip would pick for it
     # if left alone, so the page can say so before anything is rendered.
-    out["instruments"] = {**tones.catalogue(), "programs": music.GM_PROGRAMS}
+    out["instruments"] = {**tones.catalogue(), "programs": music.GM_PROGRAMS, "chips": CHIPS}
     low = bass_line(song)
     for p in out["parts"]:
         rec = recs.get(p["id"], {})
@@ -160,7 +161,8 @@ CHIPS = {
     "nes-voice": "the voice, played off the NES's delta-modulation channel",
     "sms": "the Master System's SN76489: three squares and a shift register",
     "sms-voice": "the voice, hammered out of the Master System's volume register",
-    "snes": "the SNES's S-DSP, which only ever plays back a recording",
+    "snes": "the SNES's S-DSP playing a General MIDI bank cut down to fit it",
+    "snes-voice": "the voice through the SNES's sampler, grain and echo and all",
     "gb": "the Game Boy's chip: two pulses, a wave table and noise; green screen",
     "gb-voice": "the voice through a Game Boy's wave table; green screen",
     "gbc": "the same chip as the Game Boy, on the Color's screen",
@@ -197,6 +199,15 @@ def which_chip(asked) -> str | None:
     name = str(asked).strip().lower()
     name = CHIP_ALIASES.get(name, name)
     return name if name in CHIPS else None
+
+
+def synth_chip(chip: str | None) -> str:
+    """The synthesising setting to play a song on when there is no voice.
+
+    No chip means the Mega Drive, and a -voice setting means the same machine
+    synthesising, since there is nothing to play off its sample channel.
+    """
+    return (chip or "md").partition("-")[0]
 
 
 def screen_for(chip: str | None) -> str:
@@ -239,9 +250,7 @@ def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False,
     """
     machine, _, mode = chip.partition("-")
     program = part.program if program is None or part.is_drums else program
-    # The SNES synthesises nothing at all, so there is only the one way to
-    # play a part on it, and it keeps his voice whether you asked or not.
-    if mode == "voice" or machine == "snes":
+    if mode == "voice":
         return tones.SAMPLED[machine]
     role = "bass" if as_bass and not part.is_drums else part.role
     if machine == "nes":
@@ -250,7 +259,7 @@ def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False,
         return sms.voice_for(role, program).name
     if machine in ("gb", "gbc"):              # one chip; the two differ in their screens
         return gb.voice_for(role, program).name
-    if machine in ("opl2", "opl3"):           # the patch is chosen per note from GENMIDI
+    if machine in ("opl2", "opl3", "snes"):   # the patch or sample is chosen per note
         return machine
     if machine in ("sid", "sid8580"):
         return sid.voice_for(role, program).name
@@ -424,11 +433,13 @@ def _finish_mix(mix: np.ndarray) -> np.ndarray:
 
 
 def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | None,
-                  g_transpose: int = 0) -> None:
+                  g_transpose: int = 0, synth: bool = False) -> None:
     """Put the parts in *settings* through *chip*, in place.
 
     A part that was given a tone of its own keeps it; every other part gets
-    whatever the chip plays that part with.
+    whatever the chip plays that part with. With *synth* there is no voice:
+    only a synthesised tone can be kept, every part plays whether or not a
+    word was found for it, and its label is what it is played by.
     """
     low = bass_line(song) if chip else None
     for p in song.parts:
@@ -439,8 +450,16 @@ def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | Non
         # Every part knows the chip, chosen tone or not: a SID voice asked for
         # by name on a song through the 8580 is played by the 8580.
         s_["chip"] = chip
-        if chip and not tones.overrides_switch(asked.get("tone")):
+        keep = tones.overrides_switch(asked.get("tone"))
+        if synth:
+            keep = keep and tones.resolve(asked.get("tone")) in tones.SYNTH
+        if chip and not keep:
             s_["tone"] = chip_tone(p, chip, as_bass=(p.id == low), program=s_.get("program"))
+        if synth:
+            # Muted for want of a word is not muted: there are no words.
+            s_["text"] = s_["tone"]
+            s_["mute"] = bool(asked.get("mute", False))
+            s_["visible"] = bool(asked.get("visible", True))
         # The octave a part was moved by is there because a mouth cannot
         # go where the score does: a bass line at 49 Hz comes back up an
         # octave, chords come down three. A chip has no such limit, and
@@ -510,16 +529,22 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # colours and no others. Not a separate choice -- a Mega Drive soundtrack
     # over a picture the Mega Drive could never have drawn is two machines,
     # and nobody asking for one of them meant that.
+    # No voice at all: the corpus is left out entirely, every part is played
+    # by the chip, and every tile draws its part's waveform instead of a clip.
+    synth = bool(opts.get("synth", False))
+    if synth:
+        chip = synth_chip(chip)
     screen = screen_for(chip)
 
     given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
-    # Recommendations only for parts the request did not choose a sound for.
-    need = [p for p in song.parts if not (given.get(p.id) or {}).get("text")]
+    # Recommendations only for parts the request did not choose a sound for,
+    # and none at all when nothing is going to be said.
+    need = [] if synth else [p for p in song.parts if not (given.get(p.id) or {}).get("text")]
     recs = recommend.recommend(music.Song(need, song.duration, song.bpm, song.time_signature,
                                           song.key, song.key_confidence)) if need else {}
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
-    _through_chip(song, settings, given, chip, g_transpose)
+    _through_chip(song, settings, given, chip, g_transpose, synth)
 
     T = min(song.duration / speed + _TAIL, max_s)
     n_frames = max(1, int(round(T * FPS)))
@@ -527,8 +552,10 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     N = n_frames * spf
     mix = np.zeros((N, 2), dtype=np.float32)
 
-    playing = [p for p in song.parts if settings[p.id]["text"] and not settings[p.id]["mute"]]
-    shown = [p for p in song.parts if settings[p.id]["text"] and settings[p.id]["visible"]]
+    playing = [p for p in song.parts if settings[p.id]["text"] and not settings[p.id]["mute"]
+               and p.notes]
+    shown = [p for p in song.parts if settings[p.id]["text"] and settings[p.id]["visible"]
+             and p.notes]
     wanted = {p.id: p for p in playing + shown}
     playing_ids = {p.id for p in playing}
 
@@ -538,6 +565,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     for i, part in enumerate(wanted.values()):
         say("samples", i, len(wanted))
         s = settings[part.id]
+        if synth:
+            sample_of[part.id] = []             # the chip needs nothing to play from
+            continue
         if vary == "ultra":
             want = [(e["text"], e["take"]) for e in s["pool"][:_ULTRA_POOL]]
         elif vary == "off":
@@ -557,7 +587,8 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                              "error": str(failed)})
     say("samples", len(wanted), len(wanted))
     if not sample_of:
-        raise YtpmvError("None of the parts has a sound this voice can make.")
+        raise YtpmvError("There is nothing to play." if synth else
+                         "None of the parts has a sound this voice can make.")
 
     hits: dict[str, list[_Hit]] = {}
     total = sum(len(p.notes) for p in wanted.values() if p.id in sample_of)
@@ -572,18 +603,35 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # added to the mix at whatever level the measurement says it wants. One
     # buffer, cleared and used again, rather than one per part: a three minute
     # song is 60 MB of it and there is no need to hold eight at once.
-    scratch = np.zeros_like(mix) if balance else None
+    #
+    # Without a voice every shown part is played into it, muted or not,
+    # because its tile is a picture of the sound it makes.
+    cols, rows, tw, th = grid(len([p for p in shown if p.id in sample_of]) or 1)
+    W, H = cols * tw, rows * th
+    if synth:
+        cw, ch = screens.SIZES[screen]
+        sw, sh = cw // cols, ch // rows            # a tile, in the console's own pixels
+    traces: dict[str, np.ndarray] = {}
+    scratch = np.zeros_like(mix) if balance or synth else None
     levels: dict[str, dict] = {}
     for part in wanted.values():
         if part.id not in sample_of:
             continue
         into = mix if part.id in playing_ids else None
-        if balance and into is not None:
+        if (balance and into is not None) or synth:
             scratch.fill(0.0)
             into = scratch
         hits[part.id] = _play(part, settings[part.id], sample_of[part.id], into,
                               0.0, T, speed, g_transpose, flip, tick, jitter, vary)
-        if balance and into is scratch:
+        if synth and settings[part.id]["visible"]:
+            traces[part.id] = scope.traces(
+                scratch.mean(axis=1), n_frames, spf, max(1, sw - 1),
+                hz=None if part.is_drums else midi_to_hz(
+                    part.median_pitch() + 12 * settings[part.id]["octave"]
+                    + settings[part.id]["transpose"] + g_transpose))
+        if synth and not balance and part.id in playing_ids:
+            mix += scratch
+        if balance and into is scratch and part.id in playing_ids:
             was = mastering.loudness(scratch)
             # What the person asked for over and above the old table, kept:
             # the measurement decides where a part sits on its own, and
@@ -604,11 +652,12 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     del mix
 
     tiles = [p for p in shown if p.id in sample_of]
-    if not tiles:
+    if not tiles and not synth:
         tiles = [p for p in playing if p.id in sample_of][:1]
-    cols, rows, tw, th = grid(len(tiles))
-    W, H = cols * tw, rows * th
-    frames_of = {p.id: [smp.frames(tw, th) for smp in sample_of[p.id]] for p in tiles}
+        cols, rows, tw, th = grid(len(tiles))
+        W, H = cols * tw, rows * th
+    frames_of = {} if synth else {p.id: [smp.frames(tw, th) for smp in sample_of[p.id]]
+                                  for p in tiles}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
     run_id = uuid.uuid4().hex[:10]
@@ -616,6 +665,10 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     out_path = os.path.join("output", f"ytpmv_{run_id}.mp4")
     vf = ["format=yuv420p"]
     src_w, src_h = (screens.SIZES[screen] if screen in screens.SIZES else (W, H))
+    if synth:
+        # Drawn in the console's pixels, so a label goes where its tile is
+        # once they are blown up, not where a full-size tile would have been.
+        tw, th = sw * W // src_w, sh * H // src_h
     font = g.subtitle_font() if labels else None
     if font:
         for i, p in enumerate(tiles):
@@ -644,13 +697,20 @@ def render_ytpmv(params: dict, progress=None) -> dict:
            "-shortest", "-movflags", "+faststart", out_path]
     errlog = open(os.path.join(tmpdir, "ffmpeg.log"), "w+b")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
-    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+    canvas = np.zeros((src_h, src_w, 3) if synth else (H, W, 3), dtype=np.uint8)
     try:
         for f in range(n_frames):
             if f % 25 == 0:
                 say("frames", f, n_frames)
             t = f / FPS
             for i, p in enumerate(tiles):
+                if synth:
+                    # A pixel of black between tiles, so the traces do not run together.
+                    x0, y0 = (i % cols) * sw, (i // cols) * sh
+                    canvas[y0:y0 + sh - 1, x0:x0 + sw - 1] = _scope_tile(
+                        traces[p.id][f], hits.get(p.id, []), starts_of[p.id], t,
+                        sw - 1, sh - 1, flash, dim, screen)
+                    continue
                 x0, y0 = (i % cols) * tw, (i // cols) * th
                 canvas[y0:y0 + th, x0:x0 + tw] = _tile(frames_of[p.id], hits.get(p.id, []),
                                                        starts_of[p.id], t, flash, dim)
@@ -687,7 +747,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         "size": [W, H],
         "song": {k: v for k, v in song.summary().items() if k != "parts"},
         "options": {"vary": vary, "jitter": jitter, "speed": speed, "balance": balance,
-                    "screen": screen,
+                    "screen": screen, "synth": synth, "chip": chip,
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
@@ -697,7 +757,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                    **levels.get(p.id, {}),
                    "played": [smp.text for smp in sample_of.get(p.id, [])],
                    "takes_played": len(sample_of.get(p.id, [])),
-                   "pitch": sample_of[p.id][0].voice.info.as_dict() if p.id in sample_of else None}
+                   "pitch": sample_of[p.id][0].voice.info.as_dict() if sample_of.get(p.id) else None}
                   for p in song.parts],
         "problems": problems,
     }
@@ -715,6 +775,8 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
     *takes* are the Samples to play, rotated between hits (see VARY). Times are
     in the rendered song's clock (after *speed*), and the mix starts at t_from.
     *mix* None still works out the hits, for a tile that is shown but muted.
+    No takes at all is a part with no voice: the chip plays every note from
+    nothing, which it would have done anyway, and there is no clip to warp.
     """
     N = mix.shape[0] if mix is not None else 0
     gl = math.cos((s["pan"] + 1) * math.pi / 4)
@@ -738,23 +800,29 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
         if t0 < t_from:
             continue
         if n.start != last_start:              # a chord is one hit: one take
-            pick = (0 if vary == "off" or len(takes) == 1 else
+            pick = (0 if vary == "off" or len(takes) <= 1 else
                     rng.randrange(len(takes)) if vary in ("random", "ultra") else
                     len(hits) % len(takes))
-        sample = takes[pick]
-        voice = sample.voice
-        mode = s["mode"]
-        if mode == "perfect" and not voice.info.f0:
-            mode = "tape"
         j = bisect.bisect_right(starts, n.start)
         nxt = starts[j] / speed if j < len(starts) else T
-        if s["sustain"] == "ring":
-            dur, stretch = min(voice.duration, nxt - t0), False
+        if not takes:
+            dur = min(_RING_MAX, nxt - t0) if s["sustain"] == "ring" else n.dur / speed
+            dur = min(dur, T - t0)
+            if dur <= 0:
+                continue
         else:
-            dur, stretch = n.dur / speed, True
-        dur = min(dur, T - t0)
-        if dur <= 0:
-            continue
+            sample = takes[pick]
+            voice = sample.voice
+            mode = s["mode"]
+            if mode == "perfect" and not voice.info.f0:
+                mode = "tape"
+            if s["sustain"] == "ring":
+                dur, stretch = min(voice.duration, nxt - t0), False
+            else:
+                dur, stretch = n.dur / speed, True
+            dur = min(dur, T - t0)
+            if dur <= 0:
+                continue
         # A drum hit that is identical every beat is a machine gun. A hair of
         # detune (drums only -- a pitched part is meant to be exactly in tune)
         # and a decibel either way is what a person hitting something sounds
@@ -762,7 +830,10 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
         detune = round(rng.uniform(-0.25, 0.25), 2) if jitter and part.is_drums else 0.0
         loud = 10 ** (rng.uniform(-1.2, 1.2) / 20.0) if jitter else 1.0
         midi = n.pitch + shift
-        if part.is_drums or mode == "raw":
+        if not takes:
+            # Only its length and level reach the chip; see tones.apply.
+            y, warp = np.full(max(1, int(round(dur * SR))), 0.5, dtype=np.float32), None
+        elif part.is_drums or mode == "raw":
             semis = s["transpose"] + detune
             if part.drum_group == "toms":
                 # Toms are tuned: GM gives each its own note, low to high.
@@ -797,7 +868,7 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
 
 
 def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
-                 chip=None) -> dict:
+                 chip=None, synth: bool = False) -> dict:
     """A few seconds of one part, alone, as it will sound -- audio only.
 
     Starts at the part's first note rather than the top of the song, since a
@@ -809,24 +880,28 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
     if part is None:
         raise YtpmvError("No such part.")
     s = _merge(_default_settings_for(part, {}), part_settings)
-    _through_chip(song, {part.id: s}, {part.id: part_settings}, which_chip(chip))
-    if not s["text"]:
-        raise YtpmvError("Give the part a word first.")
-    try:
-        sample = samples.build(s["text"], s["take"], _hit(part, s))
-    except samples.SampleError as exc:
-        raise YtpmvError(str(exc)) from None
+    chip = synth_chip(which_chip(chip)) if synth else which_chip(chip)
+    _through_chip(song, {part.id: s}, {part.id: part_settings}, chip, synth=synth)
+    sample = None
+    if not synth:
+        if not s["text"]:
+            raise YtpmvError("Give the part a word first.")
+        try:
+            sample = samples.build(s["text"], s["take"], _hit(part, s))
+        except samples.SampleError as exc:
+            raise YtpmvError(str(exc)) from None
     s["volume"], s["pan"] = 1.0, 0.0
     t_from = max(0.0, (part.notes[0].start if part.notes else 0.0) - 0.05)
     T = min(t_from + seconds, song.duration + _TAIL)
     mix = np.zeros((int((T - t_from) * SR), 2), dtype=np.float32)
-    _play(part, s, [sample], mix, t_from, T, 1.0, 0, False)
+    _play(part, s, [sample] if sample else [], mix, t_from, T, 1.0, 0, False)
     name = hashlib.sha1(repr((midi_id, sorted(s.items()))).encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     path = os.path.join("output", f"ytpmv_sample_{name}.wav")
     _write_wav(path, _finish_mix(mix))
     return {"audio_url": "/output/" + os.path.basename(path),
-            "from": round(t_from, 2), "settings": s, "sample": sample.describe()}
+            "from": round(t_from, 2), "settings": s,
+            "sample": sample.describe() if sample else None}
 
 
 def _scale(img: np.ndarray, k: float) -> np.ndarray:
@@ -834,6 +909,18 @@ def _scale(img: np.ndarray, k: float) -> np.ndarray:
         return img
     # uint32: 255 * 320 does not fit in 16 bits, and the flash wrapped to cyan.
     return np.minimum(img.astype(np.uint32) * int(k * 256) >> 8, 255).astype(np.uint8)
+
+
+def _scope_tile(trace: np.ndarray, hits: list[_Hit], starts: list[float], t: float,
+                w: int, h: int, flash: bool, dim: bool, screen: str | None = None) -> np.ndarray:
+    """A voiceless part's tile: its waveform, lit on the hit and dimmed after."""
+    i = bisect.bisect_right(starts, t) - 1
+    if i < 0:
+        return scope.draw(trace, w, h, 0.35 if dim else 1.0, screen=screen)
+    h_ = hits[i]
+    since = t - h_.start
+    level = max(0.45, 1.0 - (since - h_.dur) / 0.3 * 0.55) if dim and since > h_.dur else 1.0
+    return scope.draw(trace, w, h, level, hot=flash and since < 2.0 / FPS, screen=screen)
 
 
 def _tile(takes: list, hits: list[_Hit], starts: list[float], t: float,

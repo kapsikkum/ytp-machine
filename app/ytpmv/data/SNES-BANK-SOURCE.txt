@@ -1,0 +1,14 @@
+snes_bank.npz is cut down from ExpressiveSNES.sf2 (dated 06/09/2024) by
+DitherEmotion -- Discord: ditheremotion, YouTube:
+https://www.youtube.com/channel/UCn-elu9bCClVunLThNpgFUw, Twitter: @ditheremotion.
+
+The font is a General MIDI SoundFont of samples ripped from SNES games, mostly
+lesser-known ones. Its author wrote that anyone may do anything with it,
+including editing it into new versions, and asks for credit on those versions.
+This bank is one: one sample per program and drum key, loops on 16-sample
+blocks, built with
+
+    python scripts/build_snes_bank.py ExpressiveSNES.sf2 --store-hz 32000 --ripped
+
+The samples themselves belong to whoever made the games they came from, as the
+font's own copyright field says.

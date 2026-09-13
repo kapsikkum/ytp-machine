@@ -150,6 +150,41 @@ check("a sample kept at a lower rate comes back darker", dark < bright / 3.0, Tr
 check("silence survives it", snes.play(np.zeros(1000, dtype=np.float32)).max(), 0.0)
 check("and so does an empty buffer", snes.play(np.zeros(0, dtype=np.float32)).size, 0)
 
+print("the SNES's instruments")
+# A General MIDI SoundFont cut down to what a SNES game could carry.
+b = snes.bank()
+check("every General MIDI program has a sample", all(f"p{p}" in b for p in range(128)), True)
+check("and the drum keys GM names", all(f"d{k}" in b for k in range(35, 82)), True)
+check("and it says which font it was cut from", bool(snes.source().get("file")), True)
+b = {k: v for k, v in b.items() if not k.startswith("_")}
+cap = float(snes.source().get("built", {}).get("store_hz", 16000.0))
+check("none kept above the rate it was built for, but for a loop too short for one block",
+      max(i.rate for i in b.values() if not i.loop or i.loop[1] - i.loop[0] > 16) <= cap + 0.5, True)
+check("and never above the DSP's own", max(i.rate for i in b.values() if not i.loop or i.loop[1] - i.loop[0] > 16)
+      <= snes.DSP_RATE + 0.5, True)
+looped = [i for i in b.values() if i.loop]
+check("every loop is whole BRR blocks", all((i.loop[1] - i.loop[0]) % 16 == 0 for i in looped), True)
+check("and starts on a block", all(i.loop[0] % 16 == 0 for i in looped), True)
+check("most instruments loop, as a held note needs", len(looped) > 100, True)
+check("a program with no sample falls back to the piano", snes.instrument_for(500).name, b["p0"].name)
+for prog, note in ((0, 60), (33, 40), (56, 64), (73, 79), (80, 69)):
+    inst = snes.instrument_for(prog)
+    hz = midi_to_hz(note)
+    x = snes.render_note(inst, note, 0.8)
+    got = peak_hz(np.pad(x[:int(0.6 * SR)], (0, 1 << 17)), hz * 0.85, hz * 1.18, n=1 << 18)
+    # Within a SNES's own error: a loop ripped from a game is a whole number
+    # of samples, and a short one cannot land nearer its note than this.
+    near(f"{inst.name} plays in tune", 1200 * math.log2(got / hz), 0.0, 12.0)
+held = snes.render_note(snes.instrument_for(48), 55, 2.0)
+check("a looped sample holds a note longer than the sample is",
+      float(np.abs(held[int(1.7 * SR):int(1.9 * SR)]).max()) > 0.05, True)
+check("and stops after its release", float(np.abs(held[-int(0.05 * SR):]).max()) < 0.05, True)
+kick = snes.render_note(snes.instrument_for(None, 36), 36, 0.2)
+check("a drum sounds", bool(np.isfinite(kick).all() and np.abs(kick).max() > 0.1), True)
+from app.ytpmv import tone
+check("and the SNES plays through tone.apply, drums included",
+      bool(np.abs(tone.apply(np.full(4000, 0.5, np.float32), "snes", hz=None, key=38)).max() > 0.01), True)
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f in failures:

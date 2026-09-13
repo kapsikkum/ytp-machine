@@ -69,13 +69,15 @@ check("keeping his voice, off that machine's sample channel",
       parse("!ytp mv chip=md-voice").options, {"chip": "md-voice"})
 check("the other machine", parse("!ytp mv chip=nes").options, {"chip": "nes"})
 check("the Master System", parse("!ytp mv chip=sms").options, {"chip": "sms"})
-check("the SNES, which is only ever his voice",
+check("the SNES, playing its instruments",
       parse("!ytp mv chip=snes").options, {"chip": "snes"})
+check("or him, through its sampler",
+      parse("!ytp mv chip=snes-voice").options, {"chip": "snes-voice"})
 check("leaving the levels alone", parse("!ytp mv balance=off").options, {"balance": False})
 check("turning it off again", parse("!ytp mv chip=off").options, {"chip": False})
 check("a machine we do not have is reported",
       parse("!ytp mv chip=amiga").errors,
-      ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes, "
+      ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes, snes-voice, "
        "gb, gb-voice, gbc, gbc-voice, opl2, opl2-voice, opl3, opl3-voice, "
        "sid, sid-voice, sid8580, sid8580-voice"])
 check("Doom's chip", parse("!ytp mv chip=opl2").options, {"chip": "opl2"})
