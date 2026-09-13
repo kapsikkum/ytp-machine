@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.ytpmv import gb, nes, sms, snes, ym2612
+from app.ytpmv import gb, nes, opl, sid, sms, snes, ym2612
 from app.ytpmv.pitch import SR
 
 # Everything a part's tone may be set to, and what to call it. Two machines,
@@ -44,23 +44,31 @@ TONES = {
     "psg-pcm": "the voice hammered out of the Master System's volume register",
     "brr": "the voice through the SNES's sampler, grain and echo and all",
     "gb-pcm": "the voice pushed through a Game Boy's wave table, four bits a step",
+    "sb-pcm": "the voice off an original Sound Blaster's eight-bit DAC",
+    "sb16-pcm": "the voice off a sixteen-bit Sound Blaster",
+    "sid-digi": "the voice hammered out of the SID's volume register",
+    "opl2": "the OPL2 playing Doom's GENMIDI patch for the part's instrument",
+    "opl3": "the OPL3 playing the same patches, with all eight waveforms",
     **{name: patch.about for name, patch in ym2612.PATCHES.items()},
     **{name: voice.about for name, voice in nes.VOICES.items()},
     **{name: voice.about for name, voice in sms.VOICES.items()},
     **{name: voice.about for name, voice in gb.VOICES.items()},
+    **{name: voice.about for name, voice in sid.VOICES.items()},
 }
 
 # What these were called when there was one hand-built bass patch and no chip.
-ALIASES = {"slap": "bass", "megadrive": "bass"}
+# And "voice", which is "clean" said on purpose: see overrides_switch.
+ALIASES = {"slap": "bass", "megadrive": "bass", "voice": "clean"}
 
 # The tones that replace the voice rather than colour it.
 SYNTH = (frozenset(ym2612.PATCHES) | frozenset(nes.VOICES) | frozenset(sms.VOICES)
-         | frozenset(gb.VOICES))
+         | frozenset(gb.VOICES) | frozenset(sid.VOICES) | {"opl2", "opl3"})
 
 # What each machine calls "the voice, played off this machine". The SNES has
 # no other kind: it is a sampler and nothing else, so its only entry is here.
 SAMPLED = {"md": "dac", "nes": "dpcm", "sms": "psg-pcm", "snes": "brr",
-           "gb": "gb-pcm", "gbc": "gb-pcm"}
+           "gb": "gb-pcm", "gbc": "gb-pcm", "opl2": "sb-pcm", "opl3": "sb16-pcm",
+           "sid": "sid-digi", "sid8580": "sid-digi"}
 
 # How fast the driver managed to feed the DAC. Mega Drive games rarely did
 # better than this, and the graininess is the point.
@@ -84,18 +92,58 @@ def overrides_switch(name: str | None) -> bool:
     exactly as it was given them -- so counting it as a choice meant the
     switch did nothing at all from the web page, for every song, while the
     command line (which sends no parts) worked perfectly.
+
+    Which left no way to keep one part as him, untouched, while the rest of
+    the song goes through a chip. "voice" is that: the same sound as "clean",
+    and never sent unless somebody picked it.
     """
     chosen = resolve(name)
-    return bool(chosen) and chosen != "clean"
+    if chosen == "clean":
+        return str(name).strip().lower() == "voice"
+    return bool(chosen)
+
+
+# Every synthesising machine, as the page lists them: its tunes and its kit.
+# Machines sharing a chip share an entry -- the Game Boy and the Color, the
+# OPL2 and OPL3 (whose patches come from the part's instrument instead), the
+# two SIDs.
+MACHINE_OF = {"md": "md", "nes": "nes", "sms": "sms", "gb": "gb", "gbc": "gb",
+              "opl2": "opl", "opl3": "opl", "sid": "sid", "sid8580": "sid"}
+_KITS = {"md": (ym2612.PATCHES, ym2612.DRUMS), "nes": (nes.VOICES, nes.DRUMS),
+         "sms": (sms.VOICES, sms.DRUMS), "gb": (gb.VOICES, gb.DRUMS),
+         "sid": (sid.VOICES, sid.DRUMS)}
+_MACHINE_NAMES = {"md": "Mega Drive", "nes": "NES", "sms": "Master System",
+                  "gb": "Game Boy", "opl": "OPL2 / OPL3", "sid": "SID"}
+
+
+def catalogue() -> dict:
+    """What a part can be played by, grouped for choosing from."""
+    machines = {}
+    for m, name in _MACHINE_NAMES.items():
+        if m == "opl":
+            both = [[t, TONES[t]] for t in ("opl2", "opl3")]
+            machines[m] = {"name": name, "melodic": both, "drums": both}
+            continue
+        voices, drums = _KITS[m]
+        kit = set(drums.values())
+        machines[m] = {"name": name,
+                       "melodic": [[t, TONES[t]] for t in voices if t not in kit],
+                       "drums": [[t, TONES[t]] for t in voices if t in kit]}
+    sampled = list(dict.fromkeys(SAMPLED.values()))
+    return {"machines": machines, "machine_of": MACHINE_OF,
+            "voice": [["voice", "him, as recorded, whatever the chip"]]
+                     + [[t, TONES[t]] for t in sampled],
+            "synth": sorted(SYNTH)}
 
 
 def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
-          level: float = 1.0) -> np.ndarray:
+          level: float = 1.0, program: int | None = None, key: int | None = None,
+          model: str = "6581") -> np.ndarray:
     """*y* played through *tone*. "clean" and anything unknown pass through.
 
-    *hz* is the note, where the part has one. A patch needs it, because it is
-    synthesising rather than processing; a drum has no note, so it goes to the
-    sample channel instead -- which is where the console put its drums anyway.
+    *hz* is the note, where the part has one. *program* is the part's General
+    MIDI instrument and *key* its drum key, which is how the OPL chips pick a
+    patch. *model* chooses between the SID's two chips.
     """
     tone = resolve(tone) or "clean"
     if tone == "clean" or len(y) == 0:
@@ -104,7 +152,19 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
     if peak <= 0:
         return y
 
-    if tone in SYNTH and hz:
+    if tone in ("opl2", "opl3"):
+        inst = opl.instrument_for(program, key)
+        note = 69.0 + 12.0 * float(np.log2(hz / 440.0)) if hz else 60.0
+        x = opl.render_note(inst, note, len(y) / sr, sr, level, opl3=(tone == "opl3"))
+        return (x * peak).astype(np.float32)
+    if tone in SYNTH:
+        # Drums have no note and do not need one: every drum voice carries its
+        # own pitch. This used to demand a note before synthesising anything,
+        # so every chip's kit quietly fell through to the voice on the Mega
+        # Drive's sample channel below -- on every chip, ever since the kits
+        # were added -- and nothing noticed, because the tests only ever
+        # called the chips directly rather than through here.
+        hz = hz or 220.0
         # The voice is gone here: all that is kept of it is how long it went on
         # for and how loud it was, so the part still sits where it sat before.
         # The Mega Drive's patches are rendered longer than the note on
@@ -116,6 +176,8 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
             x = sms.render_note(sms.VOICES[tone], hz, len(y) / sr, sr, level)
         elif tone in gb.VOICES:
             x = gb.render_note(gb.VOICES[tone], hz, len(y) / sr, sr, level)
+        elif tone in sid.VOICES:
+            x = sid.render_note(sid.VOICES[tone], hz, len(y) / sr, sr, level, model=model)
         else:
             x = ym2612.render_note(ym2612.PATCHES[tone], hz, len(y) / sr, sr, level)
         return (x * peak).astype(np.float32)
@@ -124,6 +186,10 @@ def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
         return ((nes.dpcm(y / peak, 10, sr) / 64.0 - 1.0) * peak).astype(np.float32)
     if tone == "psg-pcm":
         return (sms.pcm(y / peak, sr) * peak).astype(np.float32)
+    if tone in ("sb-pcm", "sb16-pcm"):
+        return (opl.pcm(y / peak, sr, sixteen=(tone == "sb16-pcm")) * peak).astype(np.float32)
+    if tone == "sid-digi":
+        return (sid.digi(y / peak, sr, model=model) * peak).astype(np.float32)
     if tone == "gb-pcm":
         return (gb.pcm(y / peak, sr) * peak).astype(np.float32)
     if tone == "brr":

@@ -121,6 +121,8 @@
     .alts button:hover { color: var(--yellow); border-color: var(--yellow); }
     .knobs label { color: #777; font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
     .knobs input[type=range] { width: 5.5rem; accent-color: var(--yellow); }
+    .knobs [hidden] { display: none; }
+    .knobs select[data-k=instrument], .knobs select[data-k=program] { max-width: 12rem; }
     .oct { display: inline-flex; align-items: center; gap: .2rem; }
     .oct span { min-width: 1.8rem; text-align: center; color: #eee; font-size: .8rem; }
     .err { color: var(--red); font-size: .72rem; margin-top: .35rem; }
@@ -190,7 +192,10 @@
     kick, a hiss for a hi-hat, a long vowel for a tune). Change any of them: type a word or a phrase,
     try another <b>take</b> of the same word, or click an alternative. <b>▶ part</b> plays a few seconds
     of that part on its own. <b>octave</b> moves a part up or down without changing the tune — the
-    suggestion puts each part where the voice sounds natural.
+    suggestion puts each part where the voice sounds natural. <b>instrument</b> picks what plays a
+    part: <b>auto</b> follows the chip, anything else stays put whatever the chip is — another
+    machine's voice, or <b>voice</b> to keep him as recorded. When an OPL plays a part, <b>patch</b>
+    picks which of Doom's instruments.
   </div>
 </div>
 
@@ -240,6 +245,14 @@
         <option value="gb-voice">gb-voice</option>
         <option value="gbc">gbc</option>
         <option value="gbc-voice">gbc-voice</option>
+        <option value="opl2">opl2</option>
+        <option value="opl2-voice">opl2-voice</option>
+        <option value="opl3">opl3</option>
+        <option value="opl3-voice">opl3-voice</option>
+        <option value="sid">sid</option>
+        <option value="sid-voice">sid-voice</option>
+        <option value="sid8580">sid8580</option>
+        <option value="sid8580-voice">sid8580-voice</option>
       </select>
     </label>
     <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
@@ -442,6 +455,12 @@
         </div>
         <div class="knobs">
           <div class="row">
+            <label title="What plays this part. auto is whatever the chip picks; anything else is kept whatever the chip is">instrument
+              <select data-k="instrument" data-el="inst" autocomplete="off"></select></label>
+            ${p.is_drums ? '' : `<label data-el="patch-wrap" title="The General MIDI instrument, which is the patch an OPL plays" hidden>patch
+              <select data-k="program" data-el="patch" autocomplete="off"></select></label>`}
+          </div>
+          <div class="row">
             ${p.is_drums ? '' : `<label>octave <span class="oct"><button data-act="oct-">−</button><span data-el="oct">${fmtOct(s.octave)}</span><button data-act="oct+">+</button></span></label>`}
             <label title="How the clip is put on the note">sound
               <select data-k="mode">${Object.entries(MODE_TEXT).map(([v, t]) =>
@@ -466,7 +485,71 @@
         </div>
       </div>`;
     }).join('');
-    for (const p of song.parts) drawBadge(p.id);
+    for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); }
+  }
+
+  // ── instruments ──────────────────────────────────────────────────────────
+  // What plays a part. Nothing chosen is "auto": whatever the chip switch
+  // picks for it, which the server has already worked out for every chip.
+  const chipNow = () => $('opt-chip').value;
+  const soundsVoice = (chip) => !chip || chip.endsWith('-voice') || chip === 'snes';
+  const machineOf = (chip) => soundsVoice(chip) ? null : song.instruments.machine_of[chip.split('-')[0]];
+  const inMachine = (m, tone) => ['melodic', 'drums'].some(k =>
+    song.instruments.machines[m][k].some(([t]) => t === tone));
+  const toneOf = (p, s, chip) => s.instrument || (chip ? p.chip_tones[chip] : 'clean');
+
+  function drawInstrument(p) {
+    const r = row(p.id); if (!r) return;
+    const s = parts[p.id], chip = chipNow(), cat = song.instruments;
+    const kind = p.is_drums ? 'drums' : 'melodic';
+    const own = machineOf(chip);
+    const option = ([t, about]) =>
+      `<option value="${esc(t)}" title="${esc(about)}"${s.instrument === t ? ' selected' : ''}>${esc(t)}</option>`;
+    const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(option).join('')}</optgroup>` : '';
+    const auto = chip ? p.chip_tones[chip] : 'voice';
+    let html = `<option value=""${s.instrument ? '' : ' selected'}>auto: ${esc(auto)}</option>`;
+    if (own) html += group(cat.machines[own].name, cat.machines[own][kind]);
+    html += group('his voice', cat.voice);
+    for (const [m, info] of Object.entries(cat.machines)) if (m !== own) html += group(info.name, info[kind]);
+    r.querySelector('[data-el=inst]').innerHTML = html;
+
+    const wrap = r.querySelector('[data-el=patch-wrap]');
+    if (!wrap) return;
+    wrap.hidden = !['opl2', 'opl3'].includes(toneOf(p, s, chip));
+    const sel = wrap.querySelector('select');
+    if (!sel.options.length) {
+      sel.innerHTML = cat.programs.map((name, i) =>
+        `<option value="${i}">${esc(name)}${i === p.settings.program ? ' (as written)' : ''}</option>`).join('');
+    }
+    sel.value = String(s.program ?? p.settings.program ?? 0);
+  }
+
+  // A choice that belonged to the machine being switched away from goes back
+  // to auto: a SID bass left behind on an NES song is a leftover, not a pick.
+  // Anything chosen from another machine was chosen on purpose, and stays.
+  let lastChip = chipNow();
+  $('opt-chip').addEventListener('change', () => {
+    const chip = chipNow(), was = song ? machineOf(lastChip) : null;
+    lastChip = chip;
+    if (!song) return;
+    for (const p of song.parts) {
+      const s = parts[p.id];
+      if (s.instrument && was && was !== machineOf(chip) && inMachine(was, s.instrument)) s.instrument = '';
+      drawInstrument(p);
+    }
+    changed();
+  });
+
+  // What the server is sent for a part. A tone goes only when one was picked,
+  // so "auto" can follow the chip; see the render button for the octave.
+  function sendable(p) {
+    const s = Object.assign({}, parts[p.id]);
+    const synth = song.instruments.synth.includes(toneOf(p, s, chipNow()));
+    delete s.tone;
+    if (s.instrument) s.tone = s.instrument;
+    delete s.instrument;
+    if (synth && s.octave === p.settings.octave) delete s.octave;
+    return s;
   }
 
   const fmtOct = (o) => o > 0 ? `+${o}` : `${o}`;
@@ -533,6 +616,8 @@
     } else if (k === 'volume' || k === 'pan') s[k] = parseFloat(e.target.value);
     else if (k === 'mute' || k === 'visible') { s[k] = e.target.checked; r.classList.toggle('muted', s.mute); }
     else if (k === 'hit') { s.hit = e.target.checked; refreshSample(id); }
+    else if (k === 'instrument') { s.instrument = e.target.value; drawInstrument(song.parts.find(p => p.id === id)); }
+    else if (k === 'program') s.program = parseInt(e.target.value);
     else s[k] = e.target.value;
     changed(id);
   });
@@ -559,7 +644,8 @@
     } else if (act === 'preview') {
       b.disabled = true; const old = b.textContent; b.textContent = '…';
       try {
-        const d = await post('/api/ytpmv/preview', { midi_id: song.midi_id, part: s, seconds: 6 });
+        const d = await post('/api/ytpmv/preview', { midi_id: song.midi_id, seconds: 6,
+          part: sendable(song.parts.find(p => p.id === id)), chip: chipNow() || null });
         const pl = $('player'); pl.src = d.audio_url; pl.play();
       } catch (err) { r.querySelector('[data-el=err]').textContent = err.message; }
       b.disabled = false; b.textContent = old;
@@ -605,14 +691,9 @@
         // talks at C5 -- which is right for anything the voice still sings,
         // and wrong for a chip synthesising the note, where it put a lead two
         // octaves down and a bass under the Master System's floor. So it is
-        // only dropped when the chosen chip synthesises.
-        parts: song.parts.map(p => {
-          const s = Object.assign({}, parts[p.id]);
-          const synth = ['md', 'nes', 'sms', 'gb', 'gbc'].includes($('opt-chip').value);
-          if (s.tone === p.settings.tone) delete s.tone;
-          if (synth && s.octave === p.settings.octave) delete s.octave;
-          return s;
-        }),
+        // only dropped for a part a chip synthesises, by the switch or by
+        // choice. And the tone only goes when somebody picked one.
+        parts: song.parts.map(sendable),
       });
       const result = await poll(job.id);
       if (result) show(result);

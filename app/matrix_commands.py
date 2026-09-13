@@ -37,12 +37,13 @@ _PART_KEYS = {
     "pan":       float,
     "sustain":   str,
     "tone":      str,
+    "program":   int,
 }
 _MODES = {"perfect", "tape", "raw"}
 _SUSTAINS = {"note", "ring"}
 # What a part can be played through. "megadrive" and "slap" are what the one
 # hand-built bass patch was called before the chip itself existed.
-_TONES = {"clean", "dac", "dpcm",
+_TONES = {"clean", "voice", "dac", "dpcm",
           # the Mega Drive's
           "bass", "lead", "organ", "brass", "bell", "piano", "strings",
           "md-kick", "md-snare", "md-hat", "md-tom", "md-cymbal", "md-perc",
@@ -55,9 +56,15 @@ _TONES = {"clean", "dac", "dpcm",
           # the Game Boy's
           "gb-pulse", "gb-pulse-thin", "gb-pulse-full", "gb-pluck", "gb-wave", "gb-pcm",
           "gb-kick", "gb-snare", "gb-hat", "gb-tom", "gb-cymbal", "gb-perc",
+          # the PC's and the C64's
+          "opl2", "opl3", "sb-pcm", "sb16-pcm", "sid-digi",
+          "sid-lead", "sid-bass", "sid-pad", "sid-rhythm", "sid-bell",
+          "sid-kick", "sid-snare", "sid-hat", "sid-tom", "sid-cymbal", "sid-perc",
           "megadrive", "slap"}
 _CHIPS = {"off", "no", "md", "md-voice", "nes", "nes-voice",
           "sms", "sms-voice", "snes", "gb", "gb-voice", "gbc", "gbc-voice",
+          "opl2", "opl2-voice", "opl3", "opl3-voice",
+          "sid", "sid-voice", "sid8580", "sid8580-voice",
           "megadrive", "megadrive-voice"}      # the longer names still work
 # Whole-song options.
 _VARY = {"off", "rotate", "random", "ultra"}
@@ -87,6 +94,8 @@ HELP = """\
 {p} mv chip=sms          register, sms is three squares and nothing else. All three
 {p} mv chip=snes         throw the voice away -- add -voice to keep him instead,
 {p} mv chip=gb           (gb and gbc share a chip and differ in their screens)
+{p} mv chip=opl2         Doom's instrument bank on an AdLib; opl3 on a Sound Blaster
+{p} mv chip=sid          the C64: sid is the 6581, sid8580 the later chip
                          played off that machine's own sample channel. snes has no
                          other mode: it is a sampler, so it is always him. The
                          picture goes through the same console's resolution and
@@ -98,8 +107,10 @@ HELP = """\
                          choose a part's word, or tweak it; parts are named by role
                          (lead, bass, rhythm, chords, kick, snare, hats, toms, cymbals)
                          or by instrument; tone:<part>= picks what one part is played
-                         through (clean, dac, bass, lead, organ, brass, bell, piano,
-                         strings); a sound can be a word, a noise (*spew*)
+                         by, whatever the chip (sid-bell, pulse, triangle, dac...;
+                         voice keeps him as recorded); program:<part>= swaps its
+                         General MIDI instrument, which picks the OPL patch
+                         (program:lead=29 is overdriven guitar); a sound can be a word, a noise (*spew*)
                          or one phoneme cut out of words (/ah/, /s/); max= caps the
                          length in seconds
 {p} mv balance=off     — leave the parts at their table levels instead of measuring
@@ -166,6 +177,9 @@ def _mv(args: list[str]) -> Command:
             if setting == "tone" and v not in _TONES:
                 cmd.errors.append(f"tone is one of {', '.join(sorted(_TONES))}")
                 continue
+            if setting == "program" and not 0 <= v <= 127:
+                cmd.errors.append("program is a General MIDI instrument, 0 to 127")
+                continue
             cmd.parts.setdefault(part, {})[setting] = v
         elif key in _OPTIONS:
             name, conv = _OPTIONS[key]
@@ -173,7 +187,9 @@ def _mv(args: list[str]) -> Command:
                 v = value.lower()
                 if v not in _CHIPS:
                     cmd.errors.append("chip is one of off, md, md-voice, nes, nes-voice, "
-                                      "sms, sms-voice, snes, gb, gb-voice, gbc, gbc-voice")
+                                      "sms, sms-voice, snes, gb, gb-voice, gbc, gbc-voice, "
+                                      "opl2, opl2-voice, opl3, opl3-voice, "
+                                      "sid, sid-voice, sid8580, sid8580-voice")
                     continue
                 cmd.options[name] = False if v in ("off", "no") else v
             elif conv == "vary":

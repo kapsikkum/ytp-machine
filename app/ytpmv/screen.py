@@ -74,6 +74,25 @@ SNES_LEVELS = np.array([(v << 3) | (v >> 2) for v in range(32)], dtype=np.uint8)
 GB_SHADES = np.array([[0xAE, 0xD9, 0x27], [0x58, 0xA0, 0x28],
                       [0x20, 0x62, 0x29], [0x1A, 0x45, 0x2A]], dtype=np.uint8)
 
+# IBM's sixteen, as an EGA card powers up: the CGA's RGBI colours with dark
+# yellow pulled down to brown, which is the one everybody remembers. This is
+# what an AdLib-era PC game was drawn in.
+EGA_PALETTE = np.array([[int(h[i:i + 2], 16) for i in (0, 2, 4)] for h in (
+    "000000", "0000aa", "00aa00", "00aaaa", "aa0000", "aa00aa", "aa5500", "aaaaaa",
+    "555555", "5555ff", "55ff55", "55ffff", "ff5555", "ff55ff", "ffff55", "ffffff")],
+    dtype=np.uint8)
+
+# The C64's sixteen, Pepto's Colodore measurements as VICE ships them. Like
+# the NES, the VIC-II emits composite and a television decides the colour,
+# so no palette is the right one; this is the most carefully measured.
+C64_PALETTE = np.array([[int(h[i:i + 2], 16) for i in (0, 2, 4)] for h in (
+    "000000", "ffffff", "96282e", "5bd6ce", "9f2dad", "41b936", "2724c4", "eff347",
+    "9f4815", "5e3500", "da5f66", "474747", "787878", "91ff84", "6864ff", "aeaeae")],
+    dtype=np.uint8)
+
+# VGA's DAC: six bits a channel, repeated into the low bits.
+VGA_LEVELS = np.array([(v << 2) | (v >> 4) for v in range(64)], dtype=np.uint8)
+
 # What each machine could put on a television.
 SCREENS = {
     "none": "as rendered",
@@ -81,6 +100,9 @@ SCREENS = {
     "nes": "256x240, and the 2C02's sixty-four colours",
     "sms": "256x192, six bits of colour",
     "snes": "256x224, fifteen bits of colour",
+    "ega": "320x200, the EGA's sixteen colours",
+    "vga": "320x200, eighteen bits of colour",
+    "c64": "320x200, the VIC-II's sixteen colours",
     "gb": "160x144, four shades of green",
     "gbc": "160x144, fifteen bits through the Color's washed-out LCD",
 }
@@ -89,7 +111,11 @@ _LEVEL_LUTS: dict[str, np.ndarray] = {}
 _NES_LUT: np.ndarray | None = None
 
 # Which machine quantises each channel on its own, and to what.
-_LEVELS = {"md": MD_LEVELS, "sms": SMS_LEVELS, "snes": SNES_LEVELS}
+_LEVELS = {"md": MD_LEVELS, "sms": SMS_LEVELS, "snes": SNES_LEVELS, "vga": VGA_LEVELS}
+
+# Machines with a fixed set of colours and nothing between them.
+_FIXED = {"nes": NES_PALETTE, "ega": EGA_PALETTE, "c64": C64_PALETTE}
+_FIXED_LUTS: dict[str, np.ndarray] = {}
 
 
 def _level_lut(name: str) -> np.ndarray:
@@ -99,6 +125,18 @@ def _level_lut(name: str) -> np.ndarray:
         v = np.arange(256)[:, None]
         _LEVEL_LUTS[name] = levels[np.argmin(np.abs(v - levels[None, :].astype(int)), axis=1)]
     return _LEVEL_LUTS[name]
+
+
+def _fixed_lut(name: str) -> np.ndarray:
+    """The nearest of a fixed palette, for every colour rounded to five bits."""
+    if name not in _FIXED_LUTS:
+        pal = _FIXED[name]
+        step = np.arange(32) * 255.0 / 31.0
+        grid = np.stack(np.meshgrid(step, step, step, indexing="ij"), axis=-1).reshape(-1, 3)
+        w = np.array([0.30, 0.59, 0.11])
+        d = ((grid[:, None, :] - pal[None, :, :].astype(float)) ** 2 * w).sum(axis=2)
+        _FIXED_LUTS[name] = pal[np.argmin(d, axis=1)]
+    return _FIXED_LUTS[name]
 
 
 def _nes_lut() -> np.ndarray:
@@ -165,7 +203,8 @@ def _shrink(img: np.ndarray, w: int, h: int) -> np.ndarray:
 
 # What each machine put on the screen, in its own pixels.
 SIZES = {"md": (320, 224), "nes": (256, 240), "sms": (256, 192), "snes": (256, 224),
-         "gb": (160, 144), "gbc": (160, 144)}
+         "gb": (160, 144), "gbc": (160, 144), "ega": (320, 200), "vga": (320, 200),
+         "c64": (320, 200)}
 
 
 def apply(frame: np.ndarray, screen: str) -> np.ndarray:
@@ -185,6 +224,11 @@ def apply(frame: np.ndarray, screen: str) -> np.ndarray:
         return gb_shade(small)
     if screen == "gbc":
         return gbc_lcd(small)
+    if screen in ("ega", "c64"):
+        idx = ((small[:, :, 0] >> 3).astype(np.int32) * 1024
+               + (small[:, :, 1] >> 3).astype(np.int32) * 32
+               + (small[:, :, 2] >> 3).astype(np.int32))
+        return np.ascontiguousarray(_fixed_lut(screen)[idx])
     idx = ((small[:, :, 0] >> 3).astype(np.int32) * 1024
            + (small[:, :, 1] >> 3).astype(np.int32) * 32
            + (small[:, :, 2] >> 3).astype(np.int32))

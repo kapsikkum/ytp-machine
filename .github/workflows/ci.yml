@@ -122,6 +122,13 @@ jobs:
         # SameBoy, and that a held square sags and a note starts clean.
         run: python tests/test_gb.py
 
+      - name: The OPL and SID chips
+        # The OPL against Nuked-OPL3's ROMs and published envelope timings,
+        # GENMIDI's layout, the SID against reSID -- and every chip's drums
+        # driven through the same path render takes, which is where they
+        # were once silently replaced by the voice.
+        run: python tests/test_opl_sid.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

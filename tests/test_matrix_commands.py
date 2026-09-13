@@ -76,7 +76,10 @@ check("turning it off again", parse("!ytp mv chip=off").options, {"chip": False}
 check("a machine we do not have is reported",
       parse("!ytp mv chip=amiga").errors,
       ["chip is one of off, md, md-voice, nes, nes-voice, sms, sms-voice, snes, "
-       "gb, gb-voice, gbc, gbc-voice"])
+       "gb, gb-voice, gbc, gbc-voice, opl2, opl2-voice, opl3, opl3-voice, "
+       "sid, sid-voice, sid8580, sid8580-voice"])
+check("Doom's chip", parse("!ytp mv chip=opl2").options, {"chip": "opl2"})
+check("the C64's later SID", parse("!ytp mv chip=sid8580").options, {"chip": "sid8580"})
 check("the Game Boy", parse("!ytp mv chip=gb").options, {"chip": "gb"})
 check("the Color, keeping his voice", parse("!ytp mv chip=gbc-voice").options, {"chip": "gbc-voice"})
 check("a Master System tone on one part", parse("!ytp mv tone:lead=psg").parts, {"lead": {"tone": "psg"}})
@@ -90,6 +93,11 @@ check("the old name for the bass patch still works",
       parse("!ytp mv tone:bass=megadrive").parts, {"bass": {"tone": "megadrive"}})
 check("a tone that does not exist is reported",
       len(parse("!ytp mv tone:bass=trombone").errors), 1)
+check("voice keeps one part as him while the rest go through a chip",
+      parse("!ytp mv chip=nes tone:lead=voice").parts, {"lead": {"tone": "voice"}})
+check("a part's General MIDI instrument can be swapped",
+      parse("!ytp mv program:lead=29").parts, {"lead": {"program": 29}})
+check("but only for one that exists", len(parse("!ytp mv program:lead=128").errors), 1)
 check("a variety mode that does not exist is reported",
       parse("!ytp mv vary=sideways").errors, ["vary is one of off, random, rotate, ultra"])
 c = parse("!ytp mv speed=1.5 key=-2 labels=on flip=off")

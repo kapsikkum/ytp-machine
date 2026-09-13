@@ -456,6 +456,7 @@ class YtpmvPreviewRequest(BaseModel):
     midi_id: str
     part: dict
     seconds: float = 6.0
+    chip: str | None = None     # the song's chip switch, so a part previews on it
 
 
 class YtpmvRenderRequest(BaseModel):
@@ -507,7 +508,7 @@ def ytpmv_preview(req: YtpmvPreviewRequest):
     """A few seconds of one part, sung as it will be in the render (audio only)."""
     from app.ytpmv import render
     seconds = max(1.0, min(float(req.seconds), 15.0))
-    return _ytpmv_call(render.preview_part, req.midi_id, req.part, seconds)
+    return _ytpmv_call(render.preview_part, req.midi_id, req.part, seconds, req.chip)
 
 
 @router.post("/ytpmv/render")

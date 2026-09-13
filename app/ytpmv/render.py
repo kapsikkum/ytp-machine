@@ -31,7 +31,7 @@ import numpy as np
 import app.generate as g
 from app.database import DATA_DIR, active
 from app.ytpmv import (gb, master as mastering, music, nes, recommend, samples,
-                        screen as screens, sms, tone as tones, ym2612)
+                        screen as screens, sid, sms, tone as tones, ym2612)
 from app.ytpmv.pitch import SR, Warp, midi_to_hz
 
 log = logging.getLogger(__name__)
@@ -128,10 +128,16 @@ def analyse(midi_id: str, progress=None) -> dict:
     out["units"] = {k: len(v) for k, v in sorted(samples.units().items(),
                                                  key=lambda kv: -len(kv[1]))}
     out["voice"] = active()["name"]
+    # What each part can be played by, and what every chip would pick for it
+    # if left alone, so the page can say so before anything is rendered.
+    out["instruments"] = {**tones.catalogue(), "programs": music.GM_PROGRAMS}
+    low = bass_line(song)
     for p in out["parts"]:
         rec = recs.get(p["id"], {})
+        part = song.part(p["id"])
         p["recommended"] = rec
-        p["settings"] = _default_settings_for(song.part(p["id"]), rec)
+        p["settings"] = _default_settings_for(part, rec)
+        p["chip_tones"] = {c: chip_tone(part, c, as_bass=(part.id == low)) for c in CHIPS}
     return out
 
 
@@ -159,7 +165,18 @@ CHIPS = {
     "gb-voice": "the voice through a Game Boy's wave table; green screen",
     "gbc": "the same chip as the Game Boy, on the Color's screen",
     "gbc-voice": "the voice through the same wave table, on the Color's screen",
+    "opl2": "an AdLib's OPL2 playing Doom's instrument bank; EGA screen",
+    "opl2-voice": "the voice off an original Sound Blaster; EGA screen",
+    "opl3": "a Sound Blaster's OPL3, same bank, eight waveforms; VGA screen",
+    "opl3-voice": "the voice off a sixteen-bit Sound Blaster; VGA screen",
+    "sid": "the C64's 6581 SID, filter and all; C64 screen",
+    "sid-voice": "the voice hammered out of the 6581's volume register; C64 screen",
+    "sid8580": "the later 8580 SID, cleaner filter; C64 screen",
+    "sid8580-voice": "the same trick on an 8580, where it barely works; C64 screen",
 }
+
+# Machines whose picture is not named after them.
+SCREEN_OF = {"opl2": "ega", "opl3": "vga", "sid": "c64", "sid8580": "c64"}
 
 # What people typed before the names got shorter, and before there was
 # anything to choose between.
@@ -187,6 +204,7 @@ def screen_for(chip: str | None) -> str:
     if not chip:
         return "none"
     machine = chip.partition("-")[0]
+    machine = SCREEN_OF.get(machine, machine)
     return machine if machine in screens.SIZES else "none"
 
 
@@ -208,28 +226,35 @@ def bass_line(song: music.Song) -> str | None:
     return low.id if low.role != "lead" and low.median_pitch() < 53 else None
 
 
-def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False) -> str:
+def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False,
+              program: int | None = None) -> str:
     """What *part* is played by when the whole song goes through *chip*.
 
     Every part, drums included. A console usually sampled its kit rather than
     synthesising it, and that is still available per part -- but "through the
     chip" ought to mean through the chip, so the synthesised settings use the
     synthesised kit. *as_bass* plays the part as the bass whatever the
-    analysis called it; see bass_line.
+    analysis called it; see bass_line. *program* stands in for the General
+    MIDI instrument the file gave the part, when another was asked for.
     """
     machine, _, mode = chip.partition("-")
+    program = part.program if program is None or part.is_drums else program
     # The SNES synthesises nothing at all, so there is only the one way to
     # play a part on it, and it keeps his voice whether you asked or not.
     if mode == "voice" or machine == "snes":
         return tones.SAMPLED[machine]
     role = "bass" if as_bass and not part.is_drums else part.role
     if machine == "nes":
-        return nes.voice_for(role, part.program).name
+        return nes.voice_for(role, program).name
     if machine == "sms":
-        return sms.voice_for(role, part.program).name
+        return sms.voice_for(role, program).name
     if machine in ("gb", "gbc"):              # one chip; the two differ in their screens
-        return gb.voice_for(role, part.program).name
-    return ym2612.patch_for(role, part.program).name
+        return gb.voice_for(role, program).name
+    if machine in ("opl2", "opl3"):           # the patch is chosen per note from GENMIDI
+        return machine
+    if machine in ("sid", "sid8580"):
+        return sid.voice_for(role, program).name
+    return ym2612.patch_for(role, program).name
 
 
 def floor_hz(tone: str) -> float:
@@ -281,6 +306,9 @@ def _default_settings_for(part: music.Part, rec: dict) -> dict:
         # swapping the voice for a synthesiser is a decision to be made per
         # song rather than one made on your behalf.
         "tone": "clean",
+        # The General MIDI instrument, which is what picks an OPL patch and
+        # nudges which voice the other chips choose. The file's, until changed.
+        "program": part.program,
         # Drums are cut down to a hit (the "b" of a word, not the word) --
         # a kick that says "bum" on every beat is a person, not a drum.
         "hit": part.is_drums,
@@ -331,6 +359,8 @@ def _merge(defaults: dict, given: dict | None) -> dict:
     asked_tone = tones.resolve(given.get("tone"))
     if asked_tone:
         s["tone"] = asked_tone
+    if defaults.get("program") is not None and given.get("program") is not None:
+        s["program"] = _num(given["program"], defaults["program"], 0, 127, int)
     if "hit" in given:
         s["hit"] = bool(given["hit"])
     if s["text"] and defaults.get("text") is None:
@@ -393,6 +423,50 @@ def _finish_mix(mix: np.ndarray) -> np.ndarray:
     return mix * (0.89 / peak) if peak > 0 else mix
 
 
+def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | None,
+                  g_transpose: int = 0) -> None:
+    """Put the parts in *settings* through *chip*, in place.
+
+    A part that was given a tone of its own keeps it; every other part gets
+    whatever the chip plays that part with.
+    """
+    low = bass_line(song) if chip else None
+    for p in song.parts:
+        if p.id not in settings:
+            continue
+        s_ = settings[p.id]
+        asked = given.get(p.id) or {}
+        # Every part knows the chip, chosen tone or not: a SID voice asked for
+        # by name on a song through the 8580 is played by the 8580.
+        s_["chip"] = chip
+        if chip and not tones.overrides_switch(asked.get("tone")):
+            s_["tone"] = chip_tone(p, chip, as_bass=(p.id == low), program=s_.get("program"))
+        # The octave a part was moved by is there because a mouth cannot
+        # go where the score does: a bass line at 49 Hz comes back up an
+        # octave, chords come down three. A chip has no such limit, and
+        # those shifts are not musical decisions -- applying them to it
+        # spreads parts written in one register across five octaves and
+        # takes the arrangement apart. So a part a chip is playing goes
+        # back to the octave it was written in, unless one was asked for --
+        # whether the switch put the chip there or the part asked for it.
+        if "octave" not in asked and s_["tone"] in tones.SYNTH:
+            s_["octave"] = 0
+
+    # Some machines cannot go as low as a part is written: the Master System
+    # stops at 109 Hz, an NES pulse at 55. Such a part moves up by whole
+    # octaves, all of it together, until its lowest note is playable. Unless
+    # an octave was asked for, in which case the asker has heard it.
+    for p in song.parts:
+        if p.id not in settings:
+            continue
+        s_ = settings[p.id]
+        floor = floor_hz(s_["tone"])
+        if floor <= 0 or p.is_drums or "octave" in (given.get(p.id) or {}):
+            continue
+        shift = 12 * s_["octave"] + s_["transpose"] + g_transpose
+        s_["octave"] += octaves_to_fit(p.notes, floor, shift)
+
+
 def render_ytpmv(params: dict, progress=None) -> dict:
     """Render a song. *params* is what POST /api/ytpmv/render was given:
 
@@ -445,34 +519,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                                           song.key, song.key_confidence)) if need else {}
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
-    if chip:
-        low = bass_line(song)
-        for p in song.parts:
-            asked = given.get(p.id) or {}
-            if tones.overrides_switch(asked.get("tone")):
-                continue
-            settings[p.id]["tone"] = chip_tone(p, chip, as_bass=(p.id == low))
-            # The octave a part was moved by is there because a mouth cannot
-            # go where the score does: a bass line at 49 Hz comes back up an
-            # octave, chords come down three. The chip has no such limit, and
-            # those shifts are not musical decisions -- applying them to it
-            # spreads parts written in one register across five octaves and
-            # takes the arrangement apart. So a part the chip is playing goes
-            # back to the octave it was written in, unless one was asked for.
-            if "octave" not in asked and settings[p.id]["tone"] in tones.SYNTH:
-                settings[p.id]["octave"] = 0
-
-    # Some machines cannot go as low as a part is written: the Master System
-    # stops at 109 Hz, an NES pulse at 55. Such a part moves up by whole
-    # octaves, all of it together, until its lowest note is playable. Unless
-    # an octave was asked for, in which case the asker has heard it.
-    for p in song.parts:
-        s_ = settings[p.id]
-        floor = floor_hz(s_["tone"])
-        if floor <= 0 or p.is_drums or "octave" in (given.get(p.id) or {}):
-            continue
-        shift = 12 * s_["octave"] + s_["transpose"] + g_transpose
-        s_["octave"] += octaves_to_fit(p.notes, floor, shift)
+    _through_chip(song, settings, given, chip, g_transpose)
 
     T = min(song.duration / speed + _TAIL, max_s)
     n_frames = max(1, int(round(T * FPS)))
@@ -644,7 +691,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
-                                                   "tone", "mute", "visible")},
+                                                   "tone", "program", "mute", "visible")},
                    # How loud the part turned out, and how far it had to be
                    # moved to sit where its job wants it.
                    **levels.get(p.id, {}),
@@ -729,8 +776,13 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
             # A patch synthesises the note, so it has to be told which note --
             # and how hard it was struck, since it is not playing a recording
             # of that any more. Drums have no note, and say so.
+            # OPL picks its patch from the GM instrument, or for drums the key;
+            # the SID needs to know which of its two chips it is.
             y = tones.apply(y, s["tone"], hz=None if part.is_drums else midi_to_hz(midi),
-                            level=max(0.2, n.velocity / 127.0))
+                            level=max(0.2, n.velocity / 127.0), program=s.get("program", part.program),
+                            key=n.pitch if part.is_drums else None,
+                            model="8580" if str(s.get("chip") or "").startswith("sid8580")
+                            else "6581")
         if mix is not None and s["volume"] > 0:
             a = int(round((t0 - t_from) * SR))
             k = min(len(y), N - a)
@@ -744,17 +796,20 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
     return hits
 
 
-def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0) -> dict:
+def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
+                 chip=None) -> dict:
     """A few seconds of one part, alone, as it will sound -- audio only.
 
     Starts at the part's first note rather than the top of the song, since a
-    part that comes in at bar 17 would otherwise preview as silence.
+    part that comes in at bar 17 would otherwise preview as silence. *chip*
+    is the song's switch, so the part is heard on the machine it will be.
     """
     song = load_song(midi_id)
     part = song.part(part_settings.get("id", ""))
     if part is None:
         raise YtpmvError("No such part.")
     s = _merge(_default_settings_for(part, {}), part_settings)
+    _through_chip(song, {part.id: s}, {part.id: part_settings}, which_chip(chip))
     if not s["text"]:
         raise YtpmvError("Give the part a word first.")
     try:

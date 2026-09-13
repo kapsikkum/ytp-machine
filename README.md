@@ -371,6 +371,14 @@ python scripts/ytpmv.py song.mid --chip snes        # him, through a SNES
 | `gb-voice` | him, pushed through the wave table four bits a step | 160x144, four greens |
 | `gbc` | the same chip as `gb` | 160x144, the Color's washed-out LCD |
 | `gbc-voice` | the same as `gb-voice` | 160x144, the Color's washed-out LCD |
+| `opl2` | an AdLib's OPL2 playing a Doom-format GENMIDI bank | 320x200, EGA's sixteen colours |
+| `opl2-voice` | him, off an original Sound Blaster's 8-bit DAC | 320x200, EGA's sixteen colours |
+| `opl3` | a Sound Blaster's OPL3, same bank, all eight waveforms | 320x200, VGA |
+| `opl3-voice` | him, off a 16-bit Sound Blaster | 320x200, VGA |
+| `sid` | the C64's 6581 SID: pulse, saw, triangle, noise, and its filter | 320x200, the VIC-II's sixteen |
+| `sid-voice` | him, hammered out of the 6581's volume register | 320x200, the VIC-II's sixteen |
+| `sid8580` | the later 8580 SID | 320x200, the VIC-II's sixteen |
+| `sid8580-voice` | the same trick on an 8580, where it barely works | 320x200, the VIC-II's sixteen |
 
 The picture is not a separate choice. A Mega Drive soundtrack over a picture
 the Mega Drive could never have drawn is two machines, and nobody asking for
@@ -382,8 +390,20 @@ trick -- the clip still pitch-tracked onto the exact note -- and play it out
 through the channel that console used for speech. The SNES has no other mode:
 it synthesises nothing, so it is always him.
 
-A single part can be set with the bot's `tone:<part>=`, to `clean`, `dac`,
-`dpcm`, `psg-pcm`, `brr`, or any patch a machine has.
+Any part can be given its own instrument: the page's **instrument** picker on
+each part, or the bot's `tone:<part>=`. Left on **auto**, a part plays what the
+chip picks for it; anything chosen stays whatever the chip is, so one song can
+mix machines -- an NES triangle bass under a SID lead. `voice` keeps a part as
+him, untouched, while everything else goes through the chip (`clean` cannot
+mean that, because the page used to send it back for every part). Switching
+chip on the page puts a part back to auto only if its choice belonged to the
+machine being left behind.
+
+A part's General MIDI instrument can be swapped too -- the page's **patch**,
+shown when an OPL plays the part, or the bot's `program:<part>=` (0 to 127, so
+`program:lead=29` is overdriven guitar). On an OPL that is the patch. The other
+chips mostly choose by the part's job, and only fall back to the instrument for
+a part with no job they know.
 
 **`app/ytpmv/ym2612.py`** -- the Mega Drive. A model rather than a cycle-exact
 emulator like Nuked-OPN2: the log-domain sine and 14-bit operators, the real
@@ -423,6 +443,26 @@ every model, a 28 Hz corner, and so does this. The two machines differ in
 their screens: ares's four greens for the Game Boy, and ares's model of the
 Color's LCD, which bled each colour into the others and never reached full
 brightness.
+
+**`app/ytpmv/opl.py`** -- the OPL2 and OPL3. Tables from Nuked-OPL3, whose
+log-sine and exponent ROMs turn out to be exact formulas; envelope timing
+measured by running Nuked's counter logic rather than derived (attack rate 1
+comes out at 2.84 s against a published 2.83). Patches are Freedoom's GENMIDI
+(BSD-3-Clause, `app/ytpmv/data/`), in the format Doom read, so a part gets the
+patch for its General MIDI instrument and a drum the patch for its key. DMX,
+Doom's music driver, numbers notes an octave under MIDI and the bank's offsets
+assume it. The OPL2 plays through a YM3014 DAC -- coarse when loud, fine when
+quiet -- and only reads two waveform bits, so patches asking for OPL3
+waveforms fall back to an absolute or half sine, as they did on real cards.
+
+**`app/ytpmv/sid.py`** -- the SID, from reSID: the envelope rates and sustain
+levels, the oscillator and 23-bit noise register, the twelve-bit R-2R DAC (the
+6581's is missing a termination resistor and is not linear), and both measured
+cutoff curves. The 6581's floors at 220 Hz and steps back down as its register
+passes 0x7f; the 8580's is near linear to 12.5 kHz. Filter settings are
+register values, so the same patch sounds different on each chip, as tunes
+did. Not modelled: combined waveforms, the 6581's filter distortion and its
+chip-to-chip variation, and the ADSR delay bug.
 
 The octave a part is moved by to suit a speaking voice is not applied when a
 chip synthesises it, since a chip has no trouble with 49 Hz.

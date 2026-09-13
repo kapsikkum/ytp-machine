@@ -324,6 +324,72 @@ check("nor does something that is not a tone", tones.overrides_switch("trombone"
 check("a chosen patch does", tones.overrides_switch("organ"), True)
 check("so does asking for the voice off the sample channel", tones.overrides_switch("dac"), True)
 check("and so does an old name for one", tones.overrides_switch("megadrive"), True)
+# "clean" cannot mean "keep him" because the page used to echo it; "voice"
+# is the same sound, only ever sent by somebody choosing it.
+check("voice does outrank it", tones.overrides_switch("voice"), True)
+check("and is the voice untouched", tones.resolve("voice"), "clean")
+
+print("choosing a part's instrument")
+_song = Song([tune, low, kit], 2.0, 120.0, (4, 4), "D minor", 0.9)
+def _chipped(given, chip):
+    """Settings for every part of _song after the switch, as the render sees them."""
+    st = {p.id: _r._merge(_r._default_settings_for(p, {"text": "x", "octave": -2}), given.get(p.id))
+          for p in _song.parts}
+    _r._through_chip(_song, st, given, chip)
+    return st
+st = _chipped({}, "sid")
+check("left alone, a part plays what the chip picks", st["tune"]["tone"], "sid-lead")
+check("and a chip-played part goes back to its written octave", st["tune"]["octave"], 0)
+st = _chipped({"tune": {"tone": "pulse"}, "low": {"tone": "voice"}}, "sid")
+check("a chosen instrument outlives the switch, from another machine too", st["tune"]["tone"], "pulse")
+check("voice keeps a part as him on a chipped song", st["low"]["tone"], "clean")
+check("and leaves the octave the voice wanted", st["low"]["octave"], -2)
+check("the kit still follows the chip", st["kit"]["tone"], "sid-kick")
+check("every part knows the chip, chosen or not, so a SID voice gets the right SID",
+      _chipped({"tune": {"tone": "sid-bell"}}, "sid8580")["tune"]["chip"], "sid8580")
+st = _chipped({"tune": {"tone": "organ"}}, None)
+check("with no chip at all, a part can still be given one", st["tune"]["tone"], "organ")
+check("and is put back in its written octave like any chip part", st["tune"]["octave"], 0)
+check("while the rest stay him", st["low"]["tone"], "clean")
+check("an asked octave is kept", _chipped({"tune": {"tone": "organ", "octave": 1}}, None)["tune"]["octave"], 1)
+
+print("a part's program")
+st = _chipped({"low": {"program": 29}}, "opl2")
+check("a program can be swapped", st["low"]["program"], 29)
+check("and is clamped to General MIDI", _chipped({"low": {"program": 400}}, None)["low"]["program"], 127)
+check("drums have none to swap", _chipped({"kit": {"program": 5}}, None)["kit"]["program"], None)
+# Most roles pick their voice outright; a part with none the chips know is
+# chosen by its instrument, and that is where a swapped program shows.
+_prog = _m.Part(id="p", name="p", track=0, channel=0, program=0, notes=[], role="piano")
+check("the program reaches the choice where the chip chooses by it",
+      (_r.chip_tone(_prog, "md"), _r.chip_tone(_prog, "md", program=9)), ("piano", "bell"))
+check("on the NES a bass program is the triangle",
+      (_r.chip_tone(_m.Part(id="p", name="p", track=0, channel=0, program=0, notes=[], role="piano"), "nes", program=33)),
+      "triangle")
+_clip = (0.3 * np.sin(2 * np.pi * 220 * np.arange(8000) / 44100)).astype(np.float32)
+check("and on an OPL it is a different patch, and a different sound",
+      bool(np.allclose(tones.apply(_clip, "opl2", hz=220.0, program=0),
+                       tones.apply(_clip, "opl2", hz=220.0, program=29), atol=1e-3)), False)
+
+print("the page's list of instruments")
+_cat = tones.catalogue()
+for m, info in _cat["machines"].items():
+    for kind in ("melodic", "drums"):
+        check(f"{info['name']} has {kind} to offer, all of them real synth tones",
+              bool(info[kind]) and all(t in tones.SYNTH for t, _ in info[kind]), True)
+check("the voice list is all voice", all(tones.resolve(t) and tones.resolve(t) not in tones.SYNTH
+                                         for t, _ in _cat["voice"]), True)
+# What "auto" says it is has to be on the chip's own list, or the page offers
+# a machine's instruments that do not include the one it is playing.
+for chip in _r.CHIPS:
+    machine = _cat["machine_of"].get(chip.split("-")[0])
+    for p in (tune, low, kit):
+        auto = _r.chip_tone(p, chip)
+        if chip.endswith("-voice") or chip == "snes":
+            ok = auto in dict(_cat["voice"])
+        else:
+            ok = auto in dict(_cat["machines"][machine]["drums" if p.is_drums else "melodic"])
+        check(f"on {chip}, auto for {p.id} ({auto}) is on the list it is offered from", ok, True)
 
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")

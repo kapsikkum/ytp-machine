@@ -68,11 +68,11 @@ for name, (w, h) in screen.SIZES.items():
     if name == "gbc":
         check("the Color's LCD never reaches full brightness", int(out.max()) <= 239, True)
         continue
-    if name == "nes":
-        # The only machine with no say in the matter: its colours are burnt in.
-        legal = {tuple(int(v) for v in p) for p in screen.NES_PALETTE}
+    if name in screen._FIXED:
+        # Machines with a fixed set of colours and nothing in between.
+        legal = {tuple(int(v) for v in p) for p in screen._FIXED[name]}
         seen = {tuple(int(v) for v in c) for c in np.unique(out.reshape(-1, 3), axis=0)}
-        check("every NES colour is one of the sixty-four", seen <= legal, True)
+        check(f"every {name} colour is one of its {len(legal)}", seen <= legal, True)
     else:
         allowed = {int(v) for v in screen._LEVELS[name]}
         check(f"every {name} channel value is a level the hardware has",
@@ -95,6 +95,15 @@ check("white on the Color comes out dim", tuple(int(v) for v in screen.gbc_lcd(w
 red = np.zeros((1, 1, 3), np.uint8); red[..., 0] = 255
 r = screen.gbc_lcd(red)[0, 0]
 check("and pure red bleeds into blue, as that panel did", int(r[2]) > 0, True)
+
+print("the PC and the C64")
+check("the EGA has sixteen colours", screen.EGA_PALETTE.shape, (16, 3))
+check("and its sixth is brown, not dark yellow",
+      tuple(int(v) for v in screen.EGA_PALETTE[6]), (0xAA, 0x55, 0x00))
+check("the C64 has sixteen too", screen.C64_PALETTE.shape, (16, 3))
+check("Colodore's red", tuple(int(v) for v in screen.C64_PALETTE[2]), (0x96, 0x28, 0x2E))
+check("VGA has six bits a channel", len(screen.VGA_LEVELS), 64)
+check("and all-ones is white", int(screen.VGA_LEVELS[63]), 255)
 
 print("leaving it alone")
 for name in ("none", "", "amiga", None):
