@@ -346,7 +346,7 @@ python scripts/ytpmv.py song.mid --part lead=yeah --part kick=boom --max 30
 python scripts/ytpmv.py song.mid --only bass --check     # measure the tuning
 ```
 
-`YTPMV_MAX_SECONDS` caps the length of a render (default 300).
+`YTPMV_MAX_SECONDS` caps the length of a render (default 900, fifteen minutes).
 
 ### On a console
 

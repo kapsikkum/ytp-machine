@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 FPS = samples.FPS
 MIDI_DIR = os.path.join(DATA_DIR, "ytpmv", "midi")
-MAX_SECONDS = float(os.environ.get("YTPMV_MAX_SECONDS", "300"))
+MAX_SECONDS = float(os.environ.get("YTPMV_MAX_SECONDS", "900"))
 MAX_MIDI_BYTES = 2 * 1024 * 1024
 _OUT_W, _OUT_H = 1920, 1080
 _TAIL = 0.8                    # let the last notes ring out after the final note-off
@@ -423,22 +423,36 @@ class _Hit:
 
 
 def _write_wav(path: str, stereo: np.ndarray) -> None:
-    pcm = (np.clip(stereo, -1.0, 1.0) * 32767.0).astype("<i2")
+    # A minute at a time: a fifteen minute song converted in one go is three
+    # more copies of it held at once, a gigabyte for the sake of a file write.
+    step = 60 * SR
     with wave.open(path, "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(SR)
-        w.writeframes(pcm.tobytes())
+        for i in range(0, len(stereo), step):
+            w.writeframes((np.clip(stereo[i:i + step], -1.0, 1.0) * 32767.0).astype("<i2").tobytes())
 
 
 def _finish_mix(mix: np.ndarray) -> np.ndarray:
-    """Loud, never clipped: level the busy parts, then round off the peaks."""
-    ref = float(np.percentile(np.abs(mix), 99.7)) if mix.size else 0.0
+    """Loud, never clipped: level the busy parts, then round off the peaks.
+
+    In place, *mix* included, because a long song is hundreds of megabytes of
+    it and every temporary is another copy.
+    """
+    if not mix.size:
+        return mix
+    mag = np.abs(mix)
+    ref = float(np.percentile(mag, 99.7, overwrite_input=True))
+    del mag
     if ref <= 1e-6:
         return mix
-    mix = np.tanh(mix * (0.8 / ref))
-    peak = float(np.abs(mix).max())
-    return mix * (0.89 / peak) if peak > 0 else mix
+    mix *= 0.8 / ref
+    np.tanh(mix, out=mix)
+    peak = max(float(mix.max()), -float(mix.min()))
+    if peak > 0:
+        mix *= 0.89 / peak
+    return mix
 
 
 def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | None,
