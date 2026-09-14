@@ -4,1244 +4,523 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>YTP Machine</title>
+  <link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Impact&family=VT323&family=Roboto+Mono:wght@400;700&display=swap');
-
-    :root {
-      --yellow: #ffe500;
-      --green:  #00ff88;
-      --red:    #ff3c3c;
-      --dark:   #0d0d0d;
-      --panel:  #141414;
-      --border: #2a2a2a;
+    main {
+      width: min(760px, 100% - 2rem);
+      margin: clamp(1.25rem, 5vh, 3rem) auto 3rem;
+      display: flex; flex-direction: column; gap: 1rem;
     }
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: var(--dark);
-      color: #e8e8e8;
-      font-family: 'Roboto Mono', monospace;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem 4rem;
-    }
-
-    /* ── Header ── */
-    header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
-    header h1 {
-      font-family: Impact, 'Arial Black', sans-serif;
-      font-size: clamp(2.5rem, 8vw, 5rem);
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--yellow);
-      text-shadow:
-        3px  3px 0 #b3a000,
-       -2px -2px 0 #000,
-        2px -2px 0 #000,
-       -2px  2px 0 #000;
-      line-height: 1;
-    }
-    header p {
-      color: #888;
-      font-size: 0.85rem;
-      margin-top: 0.5rem;
-      letter-spacing: 1px;
-    }
-
-    /* ── Stats bar ── */
-    #stats-bar {
-      display: flex;
-      align-items: center;
-      gap: 1.25rem;
-      font-size: 0.75rem;
-      color: #555;
-      margin-bottom: 2rem;
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-    #stats-bar span { color: var(--yellow); }
-    /* The readouts are ambient; the voice picker is the one control up here,
-       so it gets a divider and the stats get pushed back a shade. */
-    /* Each reading wraps as a unit. Without this the row breaks wherever it
-       runs out of width, so on a phone "video sources: 48" split across two
-       lines with the label orphaned from its number. */
-    #stats-bar .stat { color: #4a4a4a; white-space: nowrap; }
-    #corpus-wrap,
-    /* Dressed like the select beside it. A bare number input arrives wearing
-       the operating system's clothes -- a white box with black text, which on
-       this page reads as a hole punched in it -- and its label wrapped onto
-       its own line because the label was not a flex row. */
-    #units-wrap {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      white-space: nowrap;
-    }
-    #units-input {
-      font: inherit;
-      font-size: 0.75rem;
-      color: var(--yellow);
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 0.3rem 0.4rem;
-      width: 3.2rem;
-      text-align: center;
-    }
-    #units-input:hover { border-color: #3d3d3d; }
-    #units-input:focus { outline: none; border-color: var(--yellow); }
-    /* The spinner is another piece of system furniture, and the field is
-       three characters wide. */
-    #units-input::-webkit-inner-spin-button,
-    #units-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
-    #units-input { -moz-appearance: textfield; }
-
-    /* The row wraps on a narrow window; without this the two controls sit on
-       different baselines when it does. */
-    #splice-wrap { flex-wrap: wrap; row-gap: 0.4rem; }
-
-    #splice-wrap {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding-right: 1.25rem;
-      border-right: 1px solid var(--border);
-      color: #777;
-    }
-
-    /* A native select was the one control on the page still wearing the
-       operating system's clothes -- grey, rounded, and obviously bolted on to
-       everything around it. */
-    #corpus-select,
-    #splice-select {
-      appearance: none;
-      -webkit-appearance: none;
-      font: inherit;
-      font-size: 0.75rem;
-      color: var(--yellow);
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 0.3rem 1.75rem 0.3rem 0.6rem;
-      cursor: pointer;
-      /* The arrow, drawn rather than inherited. */
-      background-image:
-        linear-gradient(45deg, transparent 50%, #777 50%),
-        linear-gradient(135deg, #777 50%, transparent 50%);
-      background-position:
-        calc(100% - 14px) calc(50% + 1px),
-        calc(100% - 9px)  calc(50% + 1px);
-      background-size: 5px 5px, 5px 5px;
-      background-repeat: no-repeat;
-    }
-    #corpus-select:hover, #splice-select:hover { border-color: #3d3d3d; }
-    #corpus-select:focus-visible,
-    #splice-select:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
-    #corpus-select:disabled, #splice-select:disabled { opacity: 0.5; cursor: wait; }
-    #corpus-select option, #splice-select option { background: var(--panel); color: #e8e8e8; }
-
-    /* ── Main card ── */
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1.75rem;
-      width: 100%;
-      max-width: 700px;
-    }
-
-    /* ── Input area ── */
-    #form { display: flex; flex-direction: column; gap: 1rem; }
-
+    /* ── Composer ── */
+    .composer { padding: 1rem; }
+    #input-wrap { position: relative; }
     #text-input {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 6px;
-      color: #e8e8e8;
-      font-family: 'Roboto Mono', monospace;
-      font-size: 1.1rem;
-      line-height: 1.6;
-      padding: 0.85rem 1rem;
-      resize: vertical;
-      min-height: 90px;
-      transition: border-color 0.15s;
+      display: block; width: 100%;
+      background: transparent; border: none; resize: none;
+      font-size: clamp(1.15rem, 3.2vw, 1.5rem); line-height: 1.45;
+      padding: .5rem .35rem .25rem; min-height: 5.5rem; max-height: 50vh;
+      caret-color: var(--yellow);
     }
-    #text-input:focus {
-      outline: none;
-      border-color: var(--yellow);
-    }
-    #text-input::placeholder { color: #444; }
+    #text-input:focus-visible { outline: none; }
+    #text-input::placeholder { color: #3e3e45; }
 
-    /* The button used to sit alone against the right edge with a wide empty
-       gap beside it. Pairing it with a live read of the input fills that space
-       with something worth knowing and gives the row a left edge. */
-    #form-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-    #input-meter {
-      font-size: 0.72rem;
-      color: #4a4a4a;
-      letter-spacing: 0.3px;
-      transition: color 0.2s;
-    }
-    #input-meter.warn { color: #ffaa00; }
-    #input-meter b { color: #8a8a8a; font-weight: 400; }
-    #input-meter.warn b { color: #ffaa00; }
-
-    #submit-btn {
-      background: var(--yellow);
-      border: none;
-      border-radius: 6px;
-      color: #000;
-      cursor: pointer;
-      font-family: Impact, sans-serif;
-      font-size: 1.2rem;
-      letter-spacing: 1.5px;
-      padding: 0.65rem 2rem;
-      text-transform: uppercase;
-      transition: transform 0.1s, background 0.15s;
-    }
-    #submit-btn:hover { background: #ffd000; }
-    #submit-btn:active { transform: scale(0.97); }
-    #submit-btn:disabled {
-      background: #555;
-      color: #888;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    /* ── Narrow screens ──
-       There were no media queries at all, so on a phone the stats bar wrapped
-       into a ragged pile, the button kept a desktop-sized gap beside it, and
-       the body padding ate a third of the width. */
-    @media (max-width: 640px) {
-      body { padding: 1.25rem 0.75rem 3rem; }
-      header { margin-bottom: 1.5rem; }
-      .card { padding: 1rem; border-radius: 8px; }
-
-      /* Stack the picker above the readouts and drop the divider, which only
-         makes sense when the two sit side by side. */
-      #stats-bar {
-        flex-direction: column;
-        gap: 0.6rem;
-        align-items: stretch;
-        margin-bottom: 1.25rem;
-      }
-      #corpus-wrap {
-        border-right: none;
-        padding-right: 0;
-        justify-content: space-between;
-      }
-      #corpus-select { flex: 1; min-width: 0; }
-      #stats-row {
-        display: flex;
-        /* Wrapping belongs here, not on the bar outside it: the bar wraps its
-           own children, but all three readings live in this one row, so
-           without it they are a single unwrappable item and the row simply
-           runs off both edges of a phone. */
-        flex-wrap: wrap;
-        justify-content: center;
-        min-width: 0;
-        gap: 0.35rem 0.75rem;
-      }
-
-      /* Full-width target: a 2rem-padded button is a small thing to hit with a
-         thumb, and there is nothing to sit beside it at this width. */
-      #form-footer { flex-direction: column-reverse; align-items: stretch; }
-      #submit-btn { width: 100%; padding: 0.85rem 1rem; }
-      #input-meter { text-align: center; }
-
-      #text-input { font-size: 1rem; min-height: 120px; }
-      #word-check { max-height: 6rem; }
-    }
-
-    /* Landscape phones and small tablets: keep the row, tighten it. */
-    @media (min-width: 641px) and (max-width: 900px) {
-      body { padding: 1.5rem 1rem 3rem; }
-      #stats-bar { gap: 0.9rem; font-size: 0.7rem; }
-    }
-
-    /* Someone who prefers less motion gets no sliding bar and no spinner. */
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-      }
-    }
-
-    /* ── Autocomplete ── */
-    #input-wrap { position: relative; width: 100%; }
-    #input-wrap #text-input { display: block; width: 100%; }
-
-    #suggest-box {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      z-index: 10;
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-top: none;
-      border-radius: 0 0 6px 6px;
-      max-height: 240px;
-      overflow-y: auto;
-      display: none;
-    }
-    #suggest-box.open { display: block; }
-
-    .suggest-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 1rem;
-      padding: 0.4rem 1rem;
-      font-size: 0.9rem;
-      cursor: pointer;
-    }
-    .suggest-item:hover, .suggest-item.active { background: #262626; }
-    .suggest-item .s-word { color: #e8e8e8; }
-    .suggest-item .s-meta {
-      font-size: 0.7rem;
-      border-radius: 3px;
-      padding: 0.1rem 0.45rem;
+    /* Live read of what will be said, word by word, as it is typed. */
+    .chips { display: flex; flex-wrap: wrap; gap: .3rem; padding: .35rem .35rem .75rem; min-height: 1.9rem; }
+    .chip {
+      display: inline-flex; align-items: center; gap: .3rem;
+      font-size: .74rem; line-height: 1; padding: .3rem .5rem; border-radius: 999px;
+      border: 1px solid var(--line-2); color: var(--muted); background: var(--raised);
+      animation: pop .18s var(--ease);
       white-space: nowrap;
     }
-    .suggest-item.phrase .s-meta { background: #06263a; color: #7dd3fc; border: 1px solid #0e4a6e; }
-    .suggest-item.vocab  .s-meta { background: #003d1f; color: var(--green); border: 1px solid #005a2c; }
+    .chip.found   { color: var(--green); border-color: #1d4d39; background: #0e1f18; }
+    .chip.splice  { color: var(--amber); border-color: #5a4210; background: #211909; }
+    .chip.noise   { color: var(--violet); border-color: #463763; background: #1a1526; }
+    .chip.missing { color: var(--red); border-color: #5a1f1f; background: #220f0f; }
+    .chip .mark { opacity: .7; font-size: .7rem; }
+    .chip.more { color: var(--dim); border-style: dashed; }
+    @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
 
-    /* ── Live word check ── */
-    #word-check {
-      margin-top: 0.5rem;
-      font-size: 0.75rem;
-      color: #555;
-      min-height: 1.1em;
-      letter-spacing: 0.3px;
-      /* Hard ceiling. Expanding the full list on a long passage must not be
-         able to push the button and the progress bar off the bottom of the
-         page -- it scrolls inside itself instead. */
-      max-height: 8.5rem;
-      overflow-y: auto;
-      overscroll-behavior: contain;
+    .bar {
+      display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap;
+      border-top: 1px solid var(--line); padding-top: .75rem;
     }
-    #word-check .unknown { color: #ffaa00; }
-    .more-words {
-      font: inherit;
-      font-size: inherit;
-      background: none;
-      border: none;
-      padding: 0;
-      color: #777;
-      text-decoration: underline dotted;
-      cursor: pointer;
+    .bar .left { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .ghost {
+      display: inline-flex; align-items: center; gap: .4rem; cursor: pointer;
+      background: transparent; border: 1px solid var(--line-2); border-radius: 999px;
+      padding: .38rem .8rem; font-size: .78rem; color: var(--muted);
+      transition: color .15s, border-color .15s, background .15s;
     }
-    .more-words:hover { color: var(--yellow); }
+    .ghost:hover { color: var(--text); border-color: #4a4a52; }
+    .ghost[aria-expanded="true"] { color: #000; background: var(--yellow); border-color: var(--yellow); }
+    .ghost .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); display: none; }
+    .ghost.changed .dot { display: inline-block; }
+    .ghost[aria-expanded="true"] .dot { background: #000; }
 
-    /* ── Status ── */
-    #status {
-      margin-top: 1.25rem;
-      font-size: 0.85rem;
-      color: #888;
-      min-height: 1.2em;
-      letter-spacing: 0.5px;
+
+    .meter { color: var(--dim); font-size: .72rem; padding-left: .25rem; }
+    .meter b { color: var(--muted); font-weight: 500; }
+    .meter.warn, .meter.warn b { color: var(--amber); }
+
+    .go {
+      display: inline-flex; align-items: center; cursor: pointer;
+      background: var(--yellow); color: #000; border: none; border-radius: 999px;
+      font-family: Impact, 'Arial Black', sans-serif; font-size: 1.1rem; letter-spacing: 1.5px;
+      padding: .6rem 1.4rem .55rem;
+      box-shadow: 0 6px 20px rgba(255, 229, 0, .18);
+      transition: transform .12s var(--ease), background .15s, box-shadow .15s, opacity .15s;
     }
+    .go:hover { background: var(--yellow-2); box-shadow: 0 8px 26px rgba(255, 229, 0, .28); }
+    .go:active { transform: scale(.97); }
+    .go:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; transform: none; }
+
+    /* ── Tweaks ── */
+    .tweaks {
+      display: grid; grid-template-rows: 0fr; transition: grid-template-rows .28s var(--ease);
+    }
+    .tweaks.open { grid-template-rows: 1fr; }
+    .tweaks > .inner { overflow: hidden; min-height: 0; }
+    .tweaks .body { padding: 1rem .35rem .25rem; display: flex; flex-direction: column; gap: 1rem; }
+    .presets { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .presets button {
+      cursor: pointer; background: var(--raised); border: 1px solid var(--line-2); border-radius: 999px;
+      padding: .32rem .75rem; font-size: .75rem; color: var(--muted); transition: all .15s;
+    }
+    .presets button:hover { color: var(--text); border-color: #4a4a52; }
+    .presets button.on { color: #000; background: var(--yellow); border-color: var(--yellow); }
+    .sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem 1.4rem; }
+    .slider { display: grid; grid-template-columns: 1fr auto; gap: .35rem .5rem; align-items: center; }
+    .slider .name { color: var(--muted); font-size: .75rem; }
+    .slider output { color: var(--text); font-size: .75rem; font-variant-numeric: tabular-nums; }
+    .slider input { grid-column: 1 / -1; }
+    .toggles { display: flex; flex-wrap: wrap; gap: .6rem 1.4rem; }
+    .voice-settings {
+      display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
+      border-top: 1px dashed var(--line); padding-top: .9rem; color: var(--dim); font-size: .72rem;
+    }
+    .voice-settings label { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .75rem; }
+    #units-input {
+      width: 3.6rem; background: var(--raised); border: 1px solid var(--line-2); border-radius: 8px;
+      padding: .35rem .4rem; text-align: center; font-size: .8rem; -moz-appearance: textfield;
+    }
+    #units-input::-webkit-inner-spin-button, #units-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+    .linkish { background: none; border: none; padding: 0; color: var(--dim); cursor: pointer; font-size: .72rem; text-decoration: underline dotted; }
+    .linkish:hover { color: var(--yellow); }
+    .voice-settings .linkish { margin-left: auto; }
+
+    .helpers { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; padding: .8rem .35rem 0; color: var(--dim); font-size: .72rem; }
+    .helpers button {
+      cursor: pointer; background: none; border: 1px solid var(--line); border-radius: 6px;
+      padding: .12rem .45rem; font-size: .72rem; color: var(--muted); transition: all .15s;
+    }
+    .helpers button:hover { color: var(--yellow); border-color: var(--yellow); }
+    .helpers button.linkish { border: none; text-decoration: underline dotted; }
+    .helpers button b { color: var(--dim); font-weight: 400; }
+
+    /* ── Suggestions ── */
+    #suggest-box {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+      background: #18181b; border: 1px solid var(--line-2); border-radius: 10px;
+      box-shadow: 0 16px 40px rgba(0,0,0,.55); max-height: 250px; overflow-y: auto;
+      opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .12s, transform .12s var(--ease);
+    }
+    #suggest-box.open { opacity: 1; transform: none; pointer-events: auto; }
+    .suggest-item { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem .8rem; cursor: pointer; font-size: .9rem; }
+    .suggest-item:hover, .suggest-item.active { background: #24242a; }
+    .suggest-item .s-meta { font-size: .68rem; border-radius: 999px; padding: .1rem .5rem; align-self: center; }
+    .suggest-item.phrase .s-meta { color: var(--blue); background: #0b2230; }
+    .suggest-item.vocab .s-meta { color: var(--green); background: #0e1f18; }
+
+    /* ── Progress ── */
+    .progress { margin-top: .9rem; }
+    .progress .track { height: 3px; background: var(--line); border-radius: 999px; overflow: hidden; }
+    #progress-bar { height: 100%; width: 0; background: var(--yellow); border-radius: 999px; transition: width .35s var(--ease); }
+    .progress.indeterminate #progress-bar { width: 30%; animation: slide 1.3s ease-in-out infinite; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+    #status { margin-top: .5rem; font-size: .76rem; color: var(--muted); min-height: 1.1em; }
     #status.error { color: var(--red); }
 
-    /* Progress. There is real per-word and per-chunk data behind this now, so
-       showing a bar is honest rather than decorative -- it moves because work
-       happened, not on a timer. */
-    #progress {
-      display: none;
-      margin-top: 0.75rem;
+    /* ── Result ── */
+    .result { padding: .75rem; overflow: hidden; animation: rise .35s var(--ease); }
+    @keyframes rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .result video { display: block; width: 100%; border-radius: 8px; background: #000; aspect-ratio: 16 / 9; }
+    .words { display: flex; flex-wrap: wrap; gap: .3rem; padding: .8rem .15rem .2rem; }
+    .word {
+      position: relative; display: inline-flex; align-items: center; gap: .25rem;
+      font-size: .8rem; padding: .28rem .55rem; border-radius: 7px; cursor: pointer;
+      border: 1px solid var(--line-2); background: var(--raised); color: var(--muted);
+      transition: transform .12s var(--ease), background .15s, color .15s, border-color .15s, box-shadow .15s;
     }
-    #progress.on { display: block; }
-    #progress-track {
-      height: 4px;
-      background: #1f1f1f;
-      border-radius: 2px;
-      overflow: hidden;
+    .word:hover { transform: translateY(-1px); }
+    .word.found   { color: var(--green); border-color: #1d4d39; }
+    .word.run     { color: var(--blue); border-color: #164560; }
+    .word.spliced { color: var(--amber); border-color: #5a4210; }
+    .word.spliced.approx { border-style: dashed; }
+    .word.missing { color: var(--red); border-color: #5a1f1f; cursor: default; }
+    .word.now { background: var(--yellow); color: #000; border-color: var(--yellow); box-shadow: 0 0 0 3px rgba(255,229,0,.15); }
+    .word .acts { display: inline-flex; gap: .1rem; max-width: 0; overflow: hidden; opacity: 0; transition: max-width .2s var(--ease), opacity .15s; }
+    .word:hover .acts, .word:focus-within .acts { max-width: 5rem; opacity: 1; }
+    .word .acts > * {
+      background: none; border: none; cursor: pointer; font-size: .72rem; line-height: 1; padding: 0 .12rem;
+      color: inherit; text-decoration: none; opacity: .65;
     }
-    #progress-bar {
-      height: 100%;
-      width: 0;
-      background: var(--yellow);
-      border-radius: 2px;
-      transition: width 0.25s ease-out;
-    }
-    /* Queued work has no measurable progress, so the bar says "something is
-       happening" rather than claiming a percentage it does not have. */
-    #progress.indeterminate #progress-bar {
-      width: 35%;
-      animation: slide 1.4s ease-in-out infinite;
-    }
-    @keyframes slide {
-      0%   { transform: translateX(-100%); }
-      100% { transform: translateX(340%); }
-    }
-    #progress-note {
-      margin-top: 0.4rem;
-      font-size: 0.7rem;
-      color: #555;
-      letter-spacing: 0.3px;
-    }
+    .word .acts > *:hover { opacity: 1; }
+    .word .acts .on { opacity: 1; }
+    .word.voted-down { opacity: .55; }
+    @media (hover: none) { .word .acts { max-width: 5rem; opacity: 1; } }
+    .result-bar { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding: .6rem .15rem .1rem; }
+    #summary { color: var(--dim); font-size: .74rem; }
+    .result-bar .acts2 { display: flex; gap: .4rem; }
+    .legend { display: flex; flex-wrap: wrap; gap: .8rem; padding: .3rem .15rem 0; color: var(--dim); font-size: .68rem; }
+    .legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: .3rem; vertical-align: middle; }
 
-    /* ── Spinner ── */
-    .spinner {
-      display: inline-block;
-      width: 14px; height: 14px;
-      border: 2px solid #444;
-      border-top-color: var(--yellow);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      vertical-align: middle;
-      margin-right: 6px;
+    /* ── History ── */
+    .history h3 { font-size: .7rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); font-weight: 500; margin: .5rem .25rem .5rem; }
+    #history-list { display: flex; flex-direction: column; gap: .3rem; }
+    .past {
+      display: flex; align-items: center; gap: .75rem; width: 100%; text-align: left; cursor: pointer;
+      background: transparent; border: 1px solid transparent; border-radius: 10px; padding: .55rem .7rem;
+      color: var(--muted); transition: background .15s, border-color .15s, color .15s;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .past:hover { background: var(--surface); border-color: var(--line); color: var(--text); }
+    .past.current { border-color: var(--line-2); color: var(--text); }
+    .past .play { color: var(--yellow); font-size: .8rem; }
+    .past .said { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; }
+    .past .when { color: var(--dim); font-size: .7rem; white-space: nowrap; }
 
-    /* ── Word tags ── */
-    #word-results {
-      margin-top: 1.5rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.4rem;
-    }
-    /* Before the first generation this is empty but still laid out, and a
-       margin on an empty flex box is real space -- the neighbouring panels are
-       display:none so theirs collapse, which is why this was the only one
-       leaving a gap under the button. */
-    #word-results:empty { margin-top: 0; }
-    .word-tag {
-      border-radius: 4px;
-      font-size: 0.8rem;
-      font-weight: 700;
-      padding: 0.25rem 0.6rem;
-      text-transform: lowercase;
-      letter-spacing: 0.5px;
-    }
-    .word-tag.found   { background: #003d1f; color: var(--green);  border: 1px solid #005a2c; }
-    .word-tag.run     { background: #06263a; color: #7dd3fc;       border: 1px solid #0e4a6e; }
-    .word-tag.spliced { background: #3d2800; color: #ffaa00;       border: 1px solid #5a3d00; }
-    .word-tag.missing { background: #3d0000; color: var(--red);    border: 1px solid #5a0000; }
-    /* Approximated: a splice that had to substitute or drop a sound, or
-       guess the pronunciation outright. Same family as a splice because
-       that is what it is; dashed because it is not the word you asked
-       for so much as the nearest one the corpus can manage. */
-    .word-tag.spliced.approx { border-style: dashed; border-color: #8a6a00; }
+    footer { text-align: center; color: #3c3c43; font-size: .7rem; padding: 0 1rem 2rem; line-height: 1.9; }
+    footer b { color: var(--dim); font-weight: 500; }
 
-    /* Underlined only on hover: every word carrying a link would read as a
-       page of links rather than a sentence. */
-    /* Beside GENERATE rather than adrift in the middle of the footer: it is
-       an option for what that button does, and space-between had put the whole
-       width of the form between them. */
-    #form-actions { display: flex; align-items: center; gap: 0.9rem; }
-    #subs-toggle {
-      display: flex; align-items: center; gap: 0.35rem;
-      color: #777; font-size: 0.8rem; cursor: pointer; user-select: none;
-      white-space: nowrap;
+    @media (max-width: 640px) {
+      .bar { flex-direction: column-reverse; align-items: stretch; }
+      .go { justify-content: center; padding: .8rem; }
+      .go kbd { display: none; }
     }
-    #subs-toggle:hover { color: #aaa; }
-    #subs-toggle input { accent-color: var(--yellow); cursor: pointer; }
-
-    .word-tag .open { color: inherit; text-decoration: none; cursor: pointer; }
-    .word-tag .open:hover { text-decoration: underline; }
-
-    .word-tag .vote {
-      margin-left: 0.3rem;
-      padding: 0;
-      border: none;
-      background: none;
-      color: inherit;
-      font-size: 0.75rem;
-      line-height: 1;
-      cursor: pointer;
-      opacity: 0.35;
-      transition: opacity 0.12s, transform 0.12s;
-    }
-    .word-tag .vote:hover  { opacity: 1; transform: scale(1.25); }
-    .word-tag .vote:disabled { cursor: default; }
-
-    /* The vote that is currently in force stays lit; the other stays dim, so a
-       glance over the row shows what has been rated without a tooltip. */
-    .word-tag .vote.active { opacity: 1; }
-    .word-tag.voted-down { opacity: 0.5; }
-    .word-tag.voted-up   { box-shadow: 0 0 0 1px currentColor inset; }
-
-    @media (prefers-reduced-motion: reduce) {
-      .word-tag .vote { transition: none; }
-      .word-tag .vote:hover { transform: none; }
-    }
-
-    /* Touch pointers get no hover to reveal the controls, so keep them legible
-       and comfortably tappable rather than 12px targets at 35% opacity. */
-    @media (hover: none) {
-      .word-tag .vote { opacity: 0.7; font-size: 0.85rem; padding: 0.15rem; }
-    }
-
-    /* ── Legend ── */
-    #legend {
-      margin-top: 0.75rem;
-      font-size: 0.7rem;
-      color: #555;
-      display: flex;
-      gap: 1rem;
-    }
-    #legend .dot {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      margin-right: 4px;
-      vertical-align: middle;
-    }
-    #syntax-hint {
-      text-align: center;
-      font-size: 0.7rem;
-      color: #666;
-      margin-top: 0.6rem;
-    }
-    /* Which noises this voice actually has. The markup was documented and its
-       vocabulary was not, so the only way to find one was to guess a word and
-       see whether anything came out. */
-    #noise-box { text-align: center; font-size: 0.7rem; color: #666; margin-top: 0.35rem; }
-    #noise-box button {
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      color: #999;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 0.7rem;
-      margin: 0 0.15rem;
-      padding: 0.05rem 0.45rem;
-    }
-    #noise-box button:hover { color: var(--yellow); border-color: var(--yellow); }
-    #noise-box button b { color: #555; font-weight: 400; }
-
-    #syntax-hint code {
-      color: #999;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 3px;
-      padding: 0.05rem 0.3rem;
-    }
-    #legend .dot.found   { background: var(--green); }
-    #legend .dot.run     { background: #7dd3fc; }
-    #legend .dot.spliced { background: #ffaa00; }
-    #legend .dot.missing { background: var(--red); }
-
-    /* ── Video player ── */
-    #video-container {
-      margin-top: 2rem;
-      display: none;
-    }
-    #video-container.visible { display: block; }
-
-    #video-container h2 {
-      font-family: Impact, sans-serif;
-      font-size: 1.1rem;
-      color: var(--yellow);
-      letter-spacing: 1px;
-      margin-bottom: 0.75rem;
-      text-transform: uppercase;
-    }
-
-    #output-video {
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: #000;
-      display: block;
-    }
-
-    #download-link {
-      display: inline-block;
-      margin-top: 0.75rem;
-      font-size: 0.8rem;
-      color: var(--yellow);
-      text-decoration: none;
-      border: 1px solid var(--yellow);
-      border-radius: 4px;
-      padding: 0.3rem 0.8rem;
-      transition: background 0.15s;
-    }
-    #download-link:hover { background: rgba(255,229,0,0.1); }
-
-    /* ── Footer ── */
-    footer {
-      margin-top: 3rem;
-      color: #333;
-      font-size: 0.7rem;
-      text-align: center;
-      line-height: 1.8;
-    }
-    footer a { color: #555; }
   </style>
 </head>
 <body>
 
-<header>
-  <h1>YTP Machine</h1>
+<header class="top">
+  <a class="brand" href="/">YTP<span>MACHINE</span></a>
+  <nav aria-label="Pages">
+    <a class="on" href="/">say</a>
+    <a href="/ytpmv.html">ytpmv</a>
+    <a href="/splice.html">splice</a>
+    <a href="/editor.html">corpus</a>
+  </nav>
+  <div class="spacer"></div>
+  <label class="pill-select" id="corpus-wrap" hidden>voice <select id="corpus-select"></select></label>
 </header>
 
-<div id="stats-bar">
-  <div id="corpus-wrap" style="display:none">voice:
-    <select id="corpus-select"></select>
-  </div>
-  <div id="splice-wrap" style="display:none">effort:
-    <select id="splice-select">
-      <option value="strict">strict — real clips only</option>
-      <option value="loose">loose — near-enough sounds</option>
-      <option value="desperate">desperate — say it regardless</option>
-    </select>
-    <label id="units-wrap" title="How many pieces a word may be built from
-when the corpus has no recording of it. Every piece is a join, and a join is
-where a splice sounds like one -- but a small corpus has to take a sound at a
-time or say nothing at all.">pieces:
-      <input id="units-input" type="number" min="2" max="24" step="1">
-    </label>
-  </div>
-  <div id="stats-row">
-    <div class="stat">clips in database: <span id="stat-clips">—</span></div>
-    <div class="stat">unique words: <span id="stat-words">—</span></div>
-    <div class="stat">video sources: <span id="stat-sources">—</span></div>
-  </div>
-</div>
+<main>
+  <section class="card composer">
+    <form id="form" autocomplete="off">
+      <div id="input-wrap">
+        <textarea id="text-input" rows="2" spellcheck="false" aria-label="What should be said"
+                  placeholder="type something for the voice to say…"></textarea>
+        <div id="suggest-box" role="listbox"></div>
+      </div>
+      <div id="chips" class="chips" aria-live="polite"></div>
 
-<div class="card">
-  <form id="form" autocomplete="off">
-    <div id="input-wrap">
-      <textarea
-        id="text-input"
-        name="text"
-        rows="3"
-        placeholder="nice rice … or perhaps some chocolate cake"
-        spellcheck="false"
-        autocomplete="off"
-      ></textarea>
-      <div id="suggest-box"></div>
+      <div class="bar">
+        <div class="left">
+          <button type="button" class="ghost" id="tweak-btn" aria-expanded="false" aria-controls="tweaks">
+            <span aria-hidden="true">⚙</span> tweak <span class="dot" title="changed from the defaults"></span>
+          </button>
+          <label class="switch" title="Burn each word onto the picture as it is said">
+            <input type="checkbox" id="subtitles" checked><span class="track"></span> captions
+          </label>
+          <span id="input-meter" class="meter"></span>
+        </div>
+        <button type="submit" id="submit-btn" class="go">SAY IT<kbd>Ctrl ↵</kbd></button>
+      </div>
+
+      <div class="tweaks" id="tweaks">
+        <div class="inner">
+          <div class="body">
+            <div class="presets" id="presets" role="group" aria-label="Presets"></div>
+            <div class="sliders" id="sliders"></div>
+            <div class="toggles" id="toggles"></div>
+            <div class="voice-settings" id="splice-wrap" hidden>
+              <span>for this voice</span>
+              <label title="How hard to try for a word the voice never said">effort
+                <select id="splice-select">
+                  <option value="strict">strict — real clips only</option>
+                  <option value="loose">loose — near-enough sounds</option>
+                  <option value="desperate">desperate — say it regardless</option>
+                </select>
+              </label>
+              <label title="How many pieces a word may be built from. Every piece is a join, and a join is where a splice sounds like one.">pieces
+                <input id="units-input" type="number" min="2" max="24" step="1">
+              </label>
+              <button type="button" class="linkish" id="tweak-reset">reset tweaks</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="helpers">
+        <span><button type="button" data-insert="~word~">~backwards~</button></span>
+        <span><button type="button" data-insert="sooooo">loooong</button> holds a letter</span>
+        <span id="noise-box" hidden>· noises: <span id="noise-list"></span></span>
+      </div>
+    </form>
+
+    <div class="progress" id="progress" hidden>
+      <div class="track"><div id="progress-bar"></div></div>
     </div>
-    <div id="word-check"></div>
-    <div id="form-footer">
-      <div id="input-meter"></div>
-      <div id="form-actions">
-        <label id="subs-toggle" title="Burn the words onto the picture as it
-plays. Each clip is one word, so the caption is on screen for exactly as long
-as the word is heard.">
-          <input type="checkbox" id="subtitles" checked> subtitles
-        </label>
-        <button type="submit" id="submit-btn">GENERATE</button>
+    <div id="status" role="status"></div>
+  </section>
+
+  <section class="card result" id="result" hidden>
+    <video id="output-video" controls playsinline></video>
+    <div class="words" id="word-results"></div>
+    <div class="legend">
+      <span><i style="background:var(--blue)"></i>real phrase</span>
+      <span><i style="background:var(--green)"></i>clip</span>
+      <span><i style="background:var(--amber)"></i>spliced</span>
+      <span><i style="background:var(--red)"></i>missing</span>
+      <span>click a word to jump to it</span>
+    </div>
+    <div class="result-bar">
+      <span id="summary"></span>
+      <div class="acts2">
+        <button type="button" class="btn" id="again-btn" title="Same words, picked again">↻ again</button>
+        <a class="btn primary" id="download-link" download>⤓ download</a>
       </div>
     </div>
-  </form>
+  </section>
 
-  <div id="status"></div>
-  <div id="progress">
-    <div id="progress-track"><div id="progress-bar"></div></div>
-    <div id="progress-note"></div>
-  </div>
-  <div id="word-results"></div>
-  <div id="editor-link" style="text-align:center;margin-top:0.9rem;font-size:0.7rem">
-    <a href="/editor.html" style="color:#666;text-decoration:none">corpus editor →</a>
-    <a href="/splice.html" style="color:#666;text-decoration:none">splice editor →</a>
-    <a href="/ytpmv.html" style="color:#666;text-decoration:none">YTPMV: sing a MIDI →</a>
-  </div>
+  <section class="history" id="history" hidden>
+    <h3>recent</h3>
+    <div id="history-list"></div>
+  </section>
+</main>
 
-  <div id="syntax-hint"><code>~word~</code> plays it backwards · <code>*noise*</code> for a non-verbal clip</div>
-  <div id="noise-box" hidden>this voice also makes: <span id="noise-list"></span></div>
-
-  <div id="legend" style="display:none">
-    <span><span class="dot run"></span> real phrase</span>
-    <span><span class="dot found"></span> direct match</span>
-    <span><span class="dot spliced"></span> phoneme splice</span>
-    <span><span class="dot missing"></span> missing</span>
-  </div>
-
-  <div id="video-container">
-    <h2>Result</h2>
-    <video id="output-video" controls playsinline></video>
-    <br>
-    <a id="download-link" download>Download .mp4</a>
-  </div>
-</div>
-
+<footer>
+  <span id="stats"></span>
+</footer>
 
 <script>
-  const form       = document.getElementById('form');
-  const textInput  = document.getElementById('text-input');
-  const submitBtn  = document.getElementById('submit-btn');
-  const statusEl   = document.getElementById('status');
-  const subsEl     = document.getElementById('subtitles');
-  const wordRes    = document.getElementById('word-results');
-  const legendEl   = document.getElementById('legend');
-  const videoBox   = document.getElementById('video-container');
-  const videoEl    = document.getElementById('output-video');
-  const dlLink     = document.getElementById('download-link');
-
-  // ── Load stats ──────────────────────────────────────────────────────────────
-  async function loadStats() {
-    try {
-      const r = await fetch('/api/stats');
-      if (!r.ok) return;
-      const d = await r.json();
-      document.getElementById('stat-clips').textContent   = d.total_clips.toLocaleString();
-      document.getElementById('stat-words').textContent   = d.unique_words.toLocaleString();
-      document.getElementById('stat-sources').textContent = d.sources.toLocaleString();
-    } catch { /* ignore */ }
-  }
-  loadStats();
-
-  // ── Corpora ─────────────────────────────────────────────────────────────────
-  // The selector only appears when there is more than one installed: a single
-  // corpus needs no choosing, and an empty dropdown is worse than none.
-  const corpusWrap   = document.getElementById('corpus-wrap');
-  const corpusSelect = document.getElementById('corpus-select');
-
-  async function loadCorpora() {
-    try {
-      const r = await fetch('/api/corpora');
-      if (!r.ok) return;
-      const d = await r.json();
-      if (!d.corpora || d.corpora.length < 2) return;
-      corpusSelect.innerHTML = '';
-      for (const c of d.corpora) {
-        const opt = document.createElement('option');
-        opt.value = c.slug;
-        opt.textContent = c.error ? `${c.name} (unreadable)` : `${c.name} — ${(c.words || 0).toLocaleString()} words`;
-        opt.disabled = !!c.error;
-        if (c.active) opt.selected = true;
-        corpusSelect.appendChild(opt);
-      }
-      corpusWrap.style.display = '';
-    } catch { /* ignore */ }
-  }
-
-  // The mode belongs to the corpus, not the page, so it is re-read on every
-  // switch -- otherwise the selector would keep showing the previous voice's
-  // setting while the server used the new one's.
-  const spliceWrap   = document.getElementById('splice-wrap');
-  const spliceSelect = document.getElementById('splice-select');
-  const unitsInput   = document.getElementById('units-input');
-
-  async function loadSpliceMode() {
-    try {
-      const r = await fetch('/api/splice-mode');
-      if (!r.ok) return;
-      const d = await r.json();
-      if (d.mode) spliceSelect.value = d.mode;
-      spliceWrap.style.display = '';
-    } catch { /* ignore */ }
-  }
-
-  spliceSelect.addEventListener('change', async () => {
-    spliceSelect.disabled = true;
-    try {
-      const r = await fetch('/api/splice-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: spliceSelect.value }),
-      });
-      if (!r.ok) throw new Error('could not set the mode');
-    } catch {
-      await loadSpliceMode();       // put it back where it really is
-    } finally {
-      spliceSelect.disabled = false;
-    }
-  });
-
-  // How many pieces a spliced word may be built from. Beside the effort
-  // setting because it is the same question asked twice: how far to go for a
-  // word the corpus cannot say. Thirty clips of Morshu cannot spare eight.
-  async function loadMaxUnits() {
-    try {
-      const r = await fetch('/api/max-units');
-      if (!r.ok) return;
-      const d = await r.json();
-      unitsInput.min = d.min;
-      unitsInput.max = d.max;
-      unitsInput.value = d.units;
-      unitsInput.title = `${d.min}-${d.max}, normally ${d.default}`;
-    } catch { /* ignore */ }
-  }
-
-  unitsInput.addEventListener('change', async () => {
-    const units = parseInt(unitsInput.value, 10);
-    if (!Number.isFinite(units)) return loadMaxUnits();
-    unitsInput.disabled = true;
-    try {
-      const r = await fetch('/api/max-units', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ units }),
-      });
-      if (!r.ok) throw new Error('could not set it');
-    } catch {
-      await loadMaxUnits();         // put it back where it really is
-    } finally {
-      unitsInput.disabled = false;
-    }
-  });
-
-  loadSpliceMode();
-  loadMaxUnits();
-
-  corpusSelect.addEventListener('change', async () => {
-    const slug = corpusSelect.value;
-    corpusSelect.disabled = true;
-    try {
-      const r = await fetch('/api/corpus', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug }),
-      });
-      if (!r.ok) throw new Error('switch failed');
-      // The vocabulary belongs to the old corpus; everything derived from it
-      // has to be rebuilt or the word checker will lie about what is available.
-      await loadStats();
-      await loadWords();
-      loadNoises();      // a different voice makes different noises
-      await loadSpliceMode();
-    } catch {
-      await loadCorpora();   // put the selector back where it really is
-    } finally {
-      corpusSelect.disabled = false;
-    }
-  });
-
-  loadCorpora();
-
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-  function setStatus(msg, isError = false) {
-    statusEl.className = isError ? 'error' : '';
-    statusEl.innerHTML = msg;
-  }
-
-  // Render the exact spoken words in order, coloured by status.  Uses the
-  // backend's token list so expanded numbers ("42" → forty two) and every
-  // splice/miss are shown accurately rather than guessed from the input.
-  const TITLES = {
-    run:     'spoken as one continuous clip',
-    found:   'direct match',
-    spliced: 'built from phoneme segments',
-    missing: 'not in the corpus',
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const textInput = $('text-input'), submitBtn = $('submit-btn'), statusEl = $('status');
+  const store = {
+    get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
   };
-  const APPROX_TITLE =
-    'approximated — a sound was substituted or dropped, or the pronunciation guessed';
-  function renderWords(tokens) {
-    wordRes.innerHTML = '';
-    if (!tokens || !tokens.length) return;
-    tokens.forEach(t => {
-      const cls = ['run', 'found', 'spliced', 'missing'].includes(t.status) ? t.status : 'missing';
-      const tag = document.createElement('span');
-      const approx = cls === 'spliced' && t.approx;
-      tag.className = 'word-tag ' + cls + (approx ? ' approx' : '');
-      tag.title = approx ? APPROX_TITLE : TITLES[cls];
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-      // The word itself is the link, and where it goes depends on what the
-      // word is. A spliced word is made of several clips, so a link to one of
-      // them reaches a piece rather than the problem -- its plan lives in the
-      // splice editor. Anything that came from a single clip opens that clip.
-      //
-      // One link, and nothing beside it. The marker used to be a small fork
-      // glyph, which Roboto Mono does not have: every spliced word in a
-      // sentence therefore carried a character borrowed from whatever font
-      // did, at the wrong width and weight.
-      const first = Array.isArray(t.clips) ? t.clips[0] : null;
-      const toPlan = (cls === 'spliced' || approx);
-      const href = toPlan
-        ? `/splice.html?word=${encodeURIComponent(t.word)}`
-        : (first ? `/editor.html?clip=${first}`
-                 + `&word=${encodeURIComponent(t.word)}` : null);
-      const label = document.createElement(href ? 'a' : 'span');
-      label.textContent = t.word;
-      if (href) {
-        label.href = href;
-        label.target = '_blank';
-        label.rel = 'noopener';
-        label.className = 'open';
-        label.title = toPlan
-          ? 'see how this word is built, and change it'
-          : 'open this clip in the corpus editor';
-      }
-      tag.appendChild(label);
-
-      // Any word that came from a clip can be rated, not just phoneme splices:
-      // a plain found clip can be just as bad a take, and rating it down used
-      // to be impossible because the backend never sent an id for one.
-      if (cls !== 'missing' && Array.isArray(t.clips) && t.clips.length) {
-        tag.appendChild(voteButton(t, tag, +1, '👍', 'Use these clips more for this word'));
-        tag.appendChild(voteButton(t, tag, -1, '👎', 'Use these clips less for this word'));
-      }
-      wordRes.appendChild(tag);
-    });
-    legendEl.style.display = 'flex';
-  }
-
-  function voteButton(token, tag, dir, glyph, title) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'vote';
-    btn.dataset.dir = String(dir);
-    btn.textContent = glyph;
-    btn.title = title;
-    btn.setAttribute('aria-label', `${dir > 0 ? 'Upvote' : 'Downvote'} ${token.word}`);
-    btn.addEventListener('click', () => castVote(token, tag, btn, dir));
-    return btn;
-  }
-
-  // Votes are a weighting, not a ban — a downvoted clip becomes rare rather
-  // than forbidden, so the word can still be produced when it is the only clip
-  // there is. Clicking the same arrow again clears the vote.
-  async function castVote(token, tag, btn, dir) {
-    const current = Number(tag.dataset.vote || 0);
-    const rating  = current === dir ? 0 : dir;
-    const buttons = tag.querySelectorAll('.vote');
-
-    buttons.forEach(b => { b.disabled = true; });
-    try {
-      const r = await fetch('/api/rate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word: token.word, clips: token.clips, rating }),
-      });
-      if (!r.ok) throw new Error(String(r.status));
-
-      tag.dataset.vote = String(rating);
-      tag.classList.toggle('voted-up',   rating > 0);
-      tag.classList.toggle('voted-down', rating < 0);
-      buttons.forEach(b => {
-        b.classList.toggle('active', rating !== 0 && Number(b.dataset.dir) === rating);
-      });
-      tag.title = rating > 0 ? 'Preferred — picked more often from now on'
-                : rating < 0 ? 'Rated down — picked less often from now on'
-                : TITLES[[...tag.classList].find(c => TITLES[c])] || tag.title;
-    } catch {
-      /* leave the tag as it was; the buttons are re-enabled below */
-    } finally {
-      buttons.forEach(b => { b.disabled = false; });
-    }
-  }
-
-  // ── Submit ───────────────────────────────────────────────────────────────────
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const text = textInput.value.trim();
-    if (!text) return;
-
-    // Reset UI
-    generating = true;
-    submitBtn.disabled = true;
-    videoBox.classList.remove('visible');
-    wordRes.innerHTML = '';
-    legendEl.style.display = 'none';
-    // The suggestion dropdown is absolutely positioned under the textarea, so
-    // left open it sits on top of the word-check line underneath and hides
-    // half of it while the job runs.
-    closeSuggest();
-    setStatus('<span class="spinner"></span>Generating… (this may take a minute)');
-
-    try {
-      // Submitting queues the job and returns immediately. Generation used to
-      // run inside this request; a long sentence outlasted the proxy, which
-      // answered 504 while the work carried on where nobody could collect it.
-      const res = await fetchJson('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, subtitles: subsEl.checked }),
-      });
-      if (res.error) { setStatus(`Error: ${res.error}`, true); return; }
-      if (!res.ok) {
-        const detail = res.data.detail;
-        const msg = typeof detail === 'object' ? detail.message
-                                               : (detail || `Server error ${res.status}`);
-        setStatus(`Error: ${msg}`, true);
-        if (typeof detail === 'object' && detail.missing) {
-          renderWords(detail.missing.map(w => ({ word: w, status: 'missing' })));
-        }
-        return;
-      }
-
-      const data = await pollJob(res.data.id, res.data.position ?? 0);
-      if (data === null) return;   // pollJob has already reported why
-
-      // Success — count by actual per-token status (numbers expand, so the
-      // input-word counts would be wrong).
-      const { runs = [], tokens = [], video_url } = data;
-      const count = (s) => tokens.filter(t => t.status === s).length;
-      const parts = [];
-      if (runs.length)        parts.push(`${runs.length} real phrase${runs.length > 1 ? 's' : ''} 🎯`);
-      if (count('found'))     parts.push(`${count('found')} direct`);
-      if (count('spliced'))   parts.push(`${count('spliced')} phoneme-spliced 🔀`);
-      if (count('missing'))   parts.push(`${count('missing')} missing`);
-      setStatus(`Done — ${parts.join(', ')}`);
-
-      renderWords(tokens);
-
-      // Show video
-      videoEl.src = video_url;
-      dlLink.href = video_url;
-      // Named after what was said, not after the id alone. A folder of
-      // 7a7849d6ed.mp4 tells you nothing about which one is which; the id
-      // stays on the end so two goes at the same sentence do not collide.
-      dlLink.download = downloadName(text, video_url);
-      videoBox.classList.add('visible');
-      videoEl.load();
-      videoEl.play().catch(() => {});   // autoplay may be blocked — that's fine
-
-      loadStats(); // refresh stats after generation
-
-    } catch (err) {
-      setStatus(`Network error: ${err.message}`, true);
-    } finally {
-      generating = false;
-      updateMeter();   // re-enables the button, unless the box is now empty
-    }
-  });
-
-  // ── Talking to the queue ────────────────────────────────────────────────────
-  // Every response goes through here so a non-JSON body -- a proxy timeout, a
-  // gateway error page -- is reported as what it is rather than surfacing as
-  // "JSON.parse: unexpected character at line 1 column 1".
+  // Every response through here, so a proxy's HTML error page is reported as
+  // what it is rather than as a JSON parse error.
   async function fetchJson(url, opts) {
     let r;
-    try {
-      r = await fetch(url, opts);
-    } catch (e) {
-      return { error: `could not reach the server (${e.message})` };
-    }
+    try { r = await fetch(url, opts); } catch (e) { return { error: `could not reach the server (${e.message})` }; }
     const raw = await r.text();
-    try {
-      return { ok: r.ok, status: r.status, data: JSON.parse(raw) };
-    } catch {
-      return {
-        error: `the server replied with ${r.status} and something that isn't JSON` +
-               (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : ''),
-      };
+    try { return { ok: r.ok, status: r.status, data: JSON.parse(raw) }; }
+    catch { return { error: `the server replied ${r.status} with something that isn't JSON` + (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : '') }; }
+  }
+  const postJson = (url, body) => fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  // ── Settings ──────────────────────────────────────────────────────────────
+  // What app/generate.py's OPTIONS accepts. Kept in this browser, sent with
+  // every sentence.
+  const SLIDERS = [
+    { key: 'speed', name: 'speed', min: 0.5, max: 2, step: 0.05, def: 1, fmt: v => `${v.toFixed(2)}×`,
+      hint: 'The whole video faster or slower. The voice keeps its pitch.' },
+    { key: 'pitch', name: 'pitch', min: -12, max: 12, step: 1, def: 0, fmt: v => v === 0 ? 'as recorded' : `${v > 0 ? '+' : ''}${v} semitones`,
+      hint: 'Higher or lower, at the same speed.' },
+    { key: 'word_gap', name: 'gap between words', min: 0, max: 0.6, step: 0.01, def: 0.03, fmt: v => `${Math.round(v * 1000)} ms`,
+      hint: 'A held frame and a moment of silence between separate words.' },
+    { key: 'sentence_pause', name: 'pause at a full stop', min: 0, max: 2, step: 0.05, def: 0.5, fmt: v => `${v.toFixed(2)} s`,
+      hint: 'How long a . ! or ? waits before the next sentence.' },
+    { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
+      hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
+  ];
+  const TOGGLES = [
+    { key: 'clean_takes', name: 'clean takes', def: true,
+      hint: 'Prefer recordings of a word said before a pause. Far fewer clipped endings and bits of the next word, at the cost of some variety.' },
+    { key: 'phrases', name: 'real phrases', def: true,
+      hint: 'When several words were said together somewhere, play that recording instead of cutting word by word. Off is choppier.' },
+  ];
+  const DEFAULTS = Object.fromEntries([...SLIDERS, ...TOGGLES].map(o => [o.key, o.def]));
+  const PRESETS = [
+    { name: 'natural', opts: {} },
+    { name: 'choppy', opts: { phrases: false, clean_takes: false, word_gap: 0.12, sentence_pause: 0.3 } },
+    { name: 'rapid fire', opts: { speed: 1.35, word_gap: 0, sentence_pause: 0.15 } },
+    { name: 'chipmunk', opts: { pitch: 7, speed: 1.2 } },
+    { name: 'slow and low', opts: { pitch: -5, speed: 0.75, sentence_pause: 0.9 } },
+    { name: 'drawn out', opts: { stretch: 0.2, word_gap: 0.08, speed: 0.9 } },
+  ];
+  let opts = Object.assign({}, DEFAULTS, store.get('ytp-opts', {}));
+
+  function drawSettings() {
+    $('sliders').innerHTML = SLIDERS.map(o => `
+      <label class="slider" title="${esc(o.hint)}">
+        <span class="name">${esc(o.name)}</span><output data-out="${o.key}"></output>
+        <input type="range" data-opt="${o.key}" min="${o.min}" max="${o.max}" step="${o.step}">
+      </label>`).join('');
+    $('toggles').innerHTML = TOGGLES.map(o => `
+      <label class="switch" title="${esc(o.hint)}">
+        <input type="checkbox" data-opt="${o.key}"><span class="track"></span> ${esc(o.name)}
+      </label>`).join('');
+    $('presets').innerHTML = PRESETS.map((p, i) => `<button type="button" data-preset="${i}">${esc(p.name)}</button>`).join('');
+    syncSettings();
+  }
+  function syncSettings() {
+    for (const o of SLIDERS) {
+      const el = document.querySelector(`input[data-opt="${o.key}"]`);
+      el.value = opts[o.key];
+      el.style.setProperty('--p', `${(opts[o.key] - o.min) / (o.max - o.min) * 100}%`);
+      document.querySelector(`output[data-out="${o.key}"]`).textContent = o.fmt(Number(opts[o.key]));
     }
+    for (const o of TOGGLES) document.querySelector(`input[data-opt="${o.key}"]`).checked = !!opts[o.key];
+    const same = (p) => Object.keys(DEFAULTS).every(k => (k in p.opts ? p.opts[k] : DEFAULTS[k]) === opts[k]);
+    document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', same(PRESETS[b.dataset.preset])));
+    $('tweak-btn').classList.toggle('changed', !same(PRESETS[0]));
+    store.set('ytp-opts', opts);
   }
+  $('sliders').addEventListener('input', (e) => {
+    const k = e.target.dataset.opt; if (!k) return;
+    opts[k] = Number(e.target.value); syncSettings();
+  });
+  $('toggles').addEventListener('change', (e) => {
+    const k = e.target.dataset.opt; if (!k) return;
+    opts[k] = e.target.checked; syncSettings();
+  });
+  $('presets').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-preset]'); if (!b) return;
+    opts = Object.assign({}, DEFAULTS, PRESETS[b.dataset.preset].opts); syncSettings();
+  });
+  $('tweak-reset').addEventListener('click', () => { opts = Object.assign({}, DEFAULTS); syncSettings(); });
+  drawSettings();
 
-  const STAGE_TEXT = {
-    waiting:   'waiting to start',
-    loading:   'loading the corpus',
-    resolving: 'finding clips',
-    encoding:  'encoding video',
-    joining:   'joining the parts',
-    finished:  'finishing up',
-  };
-
-  const progressEl  = document.getElementById('progress');
-  const progressBar = document.getElementById('progress-bar');
-  const progressNote = document.getElementById('progress-note');
-
-  function showProgress(fraction, note) {
-    progressEl.classList.add('on');
-    if (fraction === null) {
-      progressEl.classList.add('indeterminate');
-      progressBar.style.width = '';
-    } else {
-      progressEl.classList.remove('indeterminate');
-      progressBar.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
-    }
-    progressNote.textContent = note || '';
+  const tweaks = $('tweaks'), tweakBtn = $('tweak-btn');
+  function openTweaks(on) {
+    tweaks.classList.toggle('open', on);
+    tweakBtn.setAttribute('aria-expanded', String(on));
+    store.set('ytp-tweaks-open', on);
   }
+  tweakBtn.addEventListener('click', () => openTweaks(!tweaks.classList.contains('open')));
+  openTweaks(store.get('ytp-tweaks-open', false));
+  $('subtitles').checked = store.get('ytp-captions', true);
+  $('subtitles').addEventListener('change', () => store.set('ytp-captions', $('subtitles').checked));
 
-  function hideProgress() {
-    progressEl.classList.remove('on', 'indeterminate');
-    progressBar.style.width = '0';
-    progressNote.textContent = '';
+  // ── The voice, and its own settings ──────────────────────────────────────
+  async function loadStats() {
+    const r = await fetchJson('/api/stats');
+    if (!r.ok) return;
+    const d = r.data;
+    $('stats').innerHTML = `<b>${d.total_clips.toLocaleString()}</b> clips · <b>${d.unique_words.toLocaleString()}</b> words · <b>${d.sources.toLocaleString()}</b> videos`;
   }
-
-  // What a downloaded video should be called: the words, then the id that
-  // made it.
-  function downloadName(said, url) {
-    const stem = (said || '')
-      .replace(/[~*]/g, '')                   // markup is not part of the name
-      .replace(/[^\w\-. ]+/g, ' ')
-      .replace(/\s+/g, ' ').trim().slice(0, 60) || 'ytp';
-    const id = (url.match(/([0-9a-f]{6,})\.mp4$/) || [])[1] || '';
-    return `${stem}${id ? ' ' + id : ''}.mp4`;
+  async function loadCorpora() {
+    const r = await fetchJson('/api/corpora');
+    if (!r.ok || !r.data.corpora || r.data.corpora.length < 2) return;
+    $('corpus-select').innerHTML = r.data.corpora.map(c =>
+      `<option value="${esc(c.slug)}"${c.active ? ' selected' : ''}${c.error ? ' disabled' : ''}>${esc(c.name)}${c.error ? ' (unreadable)' : ''}</option>`).join('');
+    $('corpus-wrap').hidden = false;
   }
-
-  // Poll until the job resolves. Backs off from a quarter second to two, so a
-  // short job feels instant and a long one is not asking every 250ms for
-  // minutes on end.
-  async function pollJob(id, position) {
-    let delay = 250;
-    if (position > 0) setStatus(`<span class="spinner"></span>Queued — ${position} ahead`);
-    for (;;) {
-      await new Promise(r => setTimeout(r, delay));
-      delay = Math.min(delay * 1.4, 2000);
-
-      const res = await fetchJson(`/api/jobs/${id}`);
-      if (res.error) { hideProgress(); setStatus(`Error: ${res.error}`, true); return null; }
-      if (!res.ok) {
-        hideProgress();
-        const d = res.data.detail;
-        setStatus(`Error: ${(typeof d === 'object' ? d.message : d) || 'job lost'}`, true);
-        return null;
-      }
-
-      const j = res.data;
-      if (j.status === 'error') {
-        hideProgress();
-        setStatus(`Error: ${j.error}`, true);
-        if (j.missing) renderWords(j.missing.map(w => ({ word: w, status: 'missing' })));
-        return null;
-      }
-      if (j.status === 'done') { hideProgress(); return j.result; }
-
-      if (j.status === 'queued') {
-        // One job runs at a time, so a queued job is usually waiting on
-        // somebody else's. Saying only "Queued" left you watching a spinner
-        // with no idea whether anything was happening at all.
-        const ahead = j.position ?? 0;
-        const waited = j.queued_for ? ` · waiting ${Math.round(j.queued_for)}s` : '';
-        setStatus(
-          `<span class="spinner"></span>Queued${ahead ? ` — ${ahead} ahead of you` : ' behind another job'}`
-        );
-        showProgress(null, `one job runs at a time${waited}`);
-      } else {
-        const label = STAGE_TEXT[j.stage] || j.stage;
-        const secs = j.running_for ? ` · ${Math.round(j.running_for)}s` : '';
-        setStatus(`<span class="spinner"></span>${label}${secs}`);
-
-        // Resolving is per word and encoding is per chunk, so the two stages
-        // get their own share of the bar rather than each restarting it at 0.
-        if (j.stage === 'resolving' && j.total > 0) {
-          showProgress(0.1 + 0.7 * (j.done / j.total), `${j.done} of ${j.total} words`);
-        } else if (j.stage === 'encoding' || j.stage === 'joining') {
-          const within = j.total > 1 ? j.done / j.total : 0.5;
-          showProgress(0.8 + 0.2 * within,
-                       j.total > 1 ? `part ${j.done + 1} of ${j.total}` : 'encoding');
-        } else {
-          showProgress(0.05, STAGE_TEXT[j.stage] || '');
-        }
-      }
-    }
+  async function loadSpliceMode() {
+    const r = await fetchJson('/api/splice-mode');
+    if (!r.ok) return;
+    if (r.data.mode) $('splice-select').value = r.data.mode;
+    $('splice-wrap').hidden = false;
   }
-
-  // ── Allow Ctrl+Enter to submit ───────────────────────────────────────────────
-  textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      form.dispatchEvent(new Event('submit'));
-    }
+  async function loadMaxUnits() {
+    const r = await fetchJson('/api/max-units');
+    if (!r.ok) return;
+    const u = $('units-input');
+    u.min = r.data.min; u.max = r.data.max; u.value = r.data.units;
+    u.title = `${r.data.min}-${r.data.max}, normally ${r.data.default}`;
+  }
+  $('splice-select').addEventListener('change', async () => {
+    const el = $('splice-select'); el.disabled = true;
+    const r = await postJson('/api/splice-mode', { mode: el.value });
+    if (!r.ok) await loadSpliceMode();
+    el.disabled = false;
+  });
+  $('units-input').addEventListener('change', async () => {
+    const el = $('units-input'), units = parseInt(el.value, 10);
+    if (!Number.isFinite(units)) return loadMaxUnits();
+    el.disabled = true;
+    const r = await postJson('/api/max-units', { units });
+    if (!r.ok) await loadMaxUnits();
+    el.disabled = false;
+  });
+  // Switching the voice switches it for everyone, the bot included; the
+  // vocabulary and noises belong to it and come with it.
+  $('corpus-select').addEventListener('change', async () => {
+    const el = $('corpus-select'); el.disabled = true;
+    const r = await postJson('/api/corpus', { slug: el.value });
+    if (!r.ok) await loadCorpora();
+    else { await Promise.all([loadStats(), loadWords(), loadNoises(), loadSpliceMode(), loadMaxUnits()]); }
+    el.disabled = false;
   });
 
-  // ── Autocomplete: pull words & real phrases from the corpus ─────────────────
-  const suggestBox = document.getElementById('suggest-box');
-  const wordCheck  = document.getElementById('word-check');
-
-  let vocab = null;                 // word → clip count (active corpus)
-  let generating = false;           // a job of ours is in flight
-
-  // A named declaration, not an inline fetch, because switching corpus has to
-  // be able to pull the vocabulary again -- the old one describes a different
-  // set of videos and would report words as available that this corpus has
-  // never heard. Hoisted, so the corpus selector above can call it.
+  // ── What the voice can say ───────────────────────────────────────────────
+  let vocab = null, noises = {};
   async function loadWords() {
-    try {
-      const r = await fetch('/api/words');
-      if (!r.ok) return;
-      const d = await r.json();
-      vocab = d.words;
-      checkWords();
-      updateMeter();   // the splice count needs the vocabulary to mean anything
-    } catch { /* ignore */ }
+    const r = await fetchJson('/api/words');
+    if (r.ok) { vocab = r.data.words; drawChips(); }
   }
-  loadWords();
-
-  // The noises this voice has, as buttons that type themselves into the box.
-  // Reloaded with the vocabulary, because they belong to the corpus too.
   async function loadNoises() {
-    const box = document.getElementById('noise-box');
-    const list = document.getElementById('noise-list');
-    try {
-      const r = await fetch('/api/noises');
-      if (!r.ok) return;
-      const kinds = Object.entries((await r.json()).noises || {});
-      box.hidden = !kinds.length;
-      list.innerHTML = kinds.map(([k, n]) =>
-        `<button type="button" data-noise="*${k}*">*${k}* <b>${n}</b></button>`).join('');
-    } catch { box.hidden = true; }
+    const r = await fetchJson('/api/noises');
+    noises = (r.ok && r.data.noises) || {};
+    drawNoises(false);
   }
-  loadNoises();
+  // The commonest few, and the rest behind a button: a voice with twenty
+  // kinds of noise otherwise buries the box under them.
+  function drawNoises(all) {
+    const kinds = Object.entries(noises).sort((a, b) => b[1] - a[1]);
+    $('noise-box').hidden = !kinds.length;
+    const shown = all ? kinds : kinds.slice(0, 5);
+    $('noise-list').innerHTML = shown.map(([k, n]) => `<button type="button" data-insert="*${esc(k)}*">*${esc(k)}* <b>${n}</b></button>`).join(' ')
+      + (kinds.length > shown.length ? ` <button type="button" class="linkish" data-more-noises>+${kinds.length - shown.length} more</button>` : '');
+  }
 
-  document.getElementById('noise-list').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const token = b.dataset.noise;
-    const at = textInput.selectionStart ?? textInput.value.length;
-    const before = textInput.value.slice(0, at);
-    const after = textInput.value.slice(at);
-    const lead = before && !before.endsWith(' ') ? ' ' : '';
-    const tail = after.startsWith(' ') ? '' : ' ';
-    textInput.value = before + lead + token + tail + after;
-    const caret = (before + lead + token + tail).length;
-    textInput.focus();
-    textInput.setSelectionRange(caret, caret);
-    textInput.dispatchEvent(new Event('input'));
-  });
-
-  // Mirror the backend tokeniser: strip non-word chars, lowercase.
-  const cleanWord = (t) => t.replace(/[^\w]/g, '').toLowerCase();
-
-  // Mirrors _expand_token in app/generate.py, minus the number spelling:
-  // numeric parts are skipped here, exactly as they were before, because they
-  // always expand to ordinary counting words the corpus has.
-  //
-  // Duplicated on purpose. This runs on every keystroke to say how much
-  // splicing is coming, and a round trip per keystroke would cost more than
-  // it is worth. If it drifts from the backend the symptom is a wrong count
-  // on one line -- the video is tokenised server-side and is unaffected.
-  const UNIT_WORDS = {
-    km: 'kilometers', kmh: 'kilometers per hour', kph: 'kilometers per hour',
-    mph: 'miles per hour', kg: 'kilograms', hp: 'horsepower', kw: 'kilowatts',
-    nm: 'newton metres', mm: 'millimeters', cm: 'centimeters', ml: 'millilitres',
-  };
-  // No 's' for seconds: "80s" is a decade far more often than eighty seconds.
-  const UNITS_AFTER_NUM = {
-    l: 'litres', m: 'meters', g: 'grams', k: 'thousand', t: 'tonnes',
-  };
-  const DECADES = {
-    20: 'twenties', 30: 'thirties', 40: 'forties', 50: 'fifties',
-    60: 'sixties', 70: 'seventies', 80: 'eighties', 90: 'nineties',
-  };
-  const PER_UNITS = {
-    h: 'hour', hr: 'hour', s: 'second', sec: 'second', min: 'minute',
-    km: 'kilometre', '100km': 'hundred kilometers', l: 'litre', kg: 'kilogram', m: 'metre',
-  };
+  // Mirrors the server's tokeniser closely enough to preview it. The video is
+  // always tokenised server-side; a drift here is a wrong colour on a chip.
+  const UNIT_WORDS = { km: 'kilometers', kmh: 'kilometers per hour', kph: 'kilometers per hour', mph: 'miles per hour',
+    kg: 'kilograms', hp: 'horsepower', kw: 'kilowatts', nm: 'newton metres', mm: 'millimeters', cm: 'centimeters', ml: 'millilitres' };
+  const UNITS_AFTER_NUM = { l: 'litres', m: 'meters', g: 'grams', k: 'thousand', t: 'tonnes' };
+  const DECADES = { 20: 'twenties', 30: 'thirties', 40: 'forties', 50: 'fifties', 60: 'sixties', 70: 'seventies', 80: 'eighties', 90: 'nineties' };
   const ABBREV = { mk: 'mark' };
   const STRIP = /^[.,!?;:'"()\[\]]+|[.,!?;:'"()\[\]]+$/g;
 
-  function checkableWords(tok) {
-    const out = [];
-    // What the corpus says beats what the rules would make of it: it holds
-    // clips labelled "v8" and "80s", and expanding those walks away from a
-    // recording of the exact thing being asked for.
-    const raw = tok.replace(/[^\w]/g, '').toLowerCase();
-    if (raw && vocab && (raw in vocab)) return [raw];
-
-    const rate = tok.replace(STRIP, '').toLowerCase().match(/^([a-z]+)\/(\d*[a-z]+)$/);
-    if (rate && PER_UNITS[rate[2]] && (UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]])) {
-      const top = UNIT_WORDS[rate[1]] || UNITS_AFTER_NUM[rate[1]];
-      return [...top.split(' '), 'per', ...PER_UNITS[rate[2]].split(' ')]
-        .filter(w => !/^\d+$/.test(w));
+  // "loooong" -> "long": the spelling the corpus has heard most, as the server picks it.
+  function unstretch(tok) {
+    const m = tok.match(/^([A-Za-z]+)[.,!?;:'"()\]]*$/);
+    if (!m) return null;
+    const raw = m[1].toLowerCase();
+    const known = vocab && raw in vocab;
+    if (known) return null;
+    const runs = [];
+    raw.replace(/([a-z])\1+/g, (s, _c, off) => { runs.push([off, s.length]); return s; });
+    const use = runs.filter(([, n]) => n >= 3 || n === 2);
+    if (!use.length || use.length > 6) return null;
+    let best = null, bestCount = -1;
+    for (let mask = 0; mask < (1 << use.length); mask++) {
+      let w = '', at = 0;
+      use.forEach(([p, n], k) => { w += raw.slice(at, p) + raw[p].repeat((mask >> k) & 1 ? 2 : 1); at = p + n; });
+      w += raw.slice(at);
+      const c = (vocab && vocab[w]) || 0;
+      if (c > bestCount || (c === bestCount && w.length < best.length)) { best = w; bestCount = c; }
     }
+    return best === raw ? null : best;
+  }
+
+  function spokenWords(tok) {
+    const raw = tok.replace(/[^\w]/g, '').toLowerCase();
+    if (raw && vocab && raw in vocab) return [raw];
+    const out = [];
     for (let atom of tok.split(/[/–—-]+/)) {
       atom = atom.replace(/^[$£€]/, '').replace(/%$/, '').replace(STRIP, '').toLowerCase();
       if (!atom) continue;
-      if (/^\d+(\.\d+)?$/.test(atom)) continue;          // a number: always expands
-      if (/^\d+(st|nd|rd|th)$/.test(atom)) continue;      // an ordinal: likewise
-      if (/^\d+x\d+$/.test(atom)) { out.push('by'); continue; }   // 4x4 -> four by four
-      const dec = atom.match(/^(?:19|20)?(\d0)s$/);               // 80s -> eighties
+      if (/^\d+(\.\d+)?$/.test(atom) || /^\d+(st|nd|rd|th)$/.test(atom)) { out.push({ number: atom }); continue; }
+      const dec = atom.match(/^(?:19|20)?(\d0)s$/);
       if (dec && DECADES[dec[1]]) { out.push(DECADES[dec[1]]); continue; }
       if (UNIT_WORDS[atom]) { out.push(...UNIT_WORDS[atom].split(' ')); continue; }
       if (ABBREV[atom]) { out.push(ABBREV[atom]); continue; }
@@ -1249,11 +528,8 @@ as the word is heard.">
       if (parts.length > 1) {
         let afterNum = false;
         for (const p of parts) {
-          if (/^\d+$/.test(p)) { afterNum = true; continue; }
-          if (UNIT_WORDS[p]) out.push(...UNIT_WORDS[p].split(' '));
-          else if (afterNum && UNITS_AFTER_NUM[p]) out.push(...UNITS_AFTER_NUM[p].split(' '));
-          else if (ABBREV[p]) out.push(ABBREV[p]);
-          else out.push(p);
+          if (/^\d+$/.test(p)) { out.push({ number: p }); afterNum = true; continue; }
+          out.push(...(UNIT_WORDS[p] || (afterNum && UNITS_AFTER_NUM[p]) || ABBREV[p] || p).split(' '));
           afterNum = false;
         }
         continue;
@@ -1264,208 +540,359 @@ as the word is heard.">
     return out;
   }
 
-  // Split the text before the caret into (context words, partial word, start
-  // offset of the partial word) for suggestion queries and acceptance.
+  // Each typed token as the chips that preview it.
+  function preview(text) {
+    const chips = [];
+    for (let tok of text.split(/\s+/)) {
+      if (!tok) continue;
+      let rev = false;
+      const r = tok.match(/^~(.+?)~([.!?"')\]]*)$/);
+      if (r) { rev = true; tok = r[1] + r[2]; }
+      const nz = tok.match(/^\*([A-Za-z]+)\*[.!?]*$/);
+      if (nz) {
+        const k = nz[1].toLowerCase();
+        chips.push({ label: `*${k}*`, cls: k in noises ? 'noise' : 'splice', rev, title: k in noises ? 'a noise this voice makes' : 'no such noise — the word is said instead' });
+        continue;
+      }
+      const held = unstretch(tok);
+      if (held) {
+        chips.push({ label: held, cls: vocab && held in vocab ? 'found' : 'splice', rev, held: true, title: `said as "${held}", held` });
+        continue;
+      }
+      for (const w of spokenWords(tok)) {
+        if (typeof w === 'object') { chips.push({ label: w.number, cls: '', rev, title: 'a number, said in words' }); continue; }
+        const found = vocab ? w in vocab : null;
+        chips.push({ label: w, cls: found === null ? '' : found ? 'found' : 'splice', rev,
+                     title: found === null ? '' : found ? `${vocab[w]} recording${vocab[w] === 1 ? '' : 's'}` : 'no recording — built from sounds' });
+      }
+    }
+    return chips;
+  }
+
+  const SHOWN = 60;
+  function drawChips() {
+    const chips = preview(textInput.value);
+    const el = $('chips');
+    el.innerHTML = chips.slice(0, SHOWN).map(c =>
+      `<span class="chip ${c.cls}" title="${esc(c.title)}">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}</span>`).join('')
+      + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
+    // Roughly how long it will take: clips are quick, spliced words are not.
+    const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;
+    const secs = Math.round(n * 0.15 + splice * 1.6);
+    const meter = $('input-meter');
+    meter.innerHTML = n ? `<b>${n}</b> word${n === 1 ? '' : 's'}${splice ? ` · <b>${splice}</b> to splice` : ''} · ${secs < 5 ? 'a moment' : secs < 90 ? `~${secs}s` : `~${Math.round(secs / 60)} min`}` : '';
+    meter.classList.toggle('warn', secs > 45);
+    submitBtn.disabled = !textInput.value.trim() || busy;
+  }
+
+  // The box grows with what is in it.
+  function fit() { textInput.style.height = 'auto'; textInput.style.height = `${textInput.scrollHeight}px`; }
+
+  let chipTimer = null;
+  textInput.addEventListener('input', () => {
+    fit();
+    clearTimeout(chipTimer); chipTimer = setTimeout(drawChips, 60);
+    queueSuggest();
+    store.set('ytp-draft', textInput.value);
+  });
+  textInput.value = store.get('ytp-draft', '');
+  fit();
+
+  document.querySelector('.helpers').addEventListener('click', (e) => {
+    if (e.target.closest('[data-more-noises]')) return drawNoises(true);
+    const b = e.target.closest('button[data-insert]'); if (!b) return;
+    insertAtCaret(b.dataset.insert);
+  });
+  function insertAtCaret(token) {
+    const at = textInput.selectionStart ?? textInput.value.length;
+    const before = textInput.value.slice(0, at), after = textInput.value.slice(at);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const tail = /^\s/.test(after) ? '' : ' ';
+    textInput.value = before + lead + token + tail + after;
+    const caret = (before + lead + token).length;
+    textInput.focus();
+    textInput.setSelectionRange(caret, caret);
+    textInput.dispatchEvent(new Event('input'));
+  }
+
+  // ── Suggestions: the voice's words, and what it said next ────────────────
+  const suggestBox = $('suggest-box');
+  let items = [], active = -1, fetchSeq = 0, suggestTimer = null;
   function caretParts() {
-    const pos    = textInput.selectionStart;
-    const before = textInput.value.slice(0, pos);
-    const m      = before.match(/[^\s]*$/);
-    const partial = m ? m[0] : '';
-    return {
-      context: before.slice(0, before.length - partial.length),
-      partial,
-      start: pos - partial.length,
-      pos,
-    };
+    const pos = textInput.selectionStart, before = textInput.value.slice(0, pos);
+    const partial = (before.match(/[^\s]*$/) || [''])[0];
+    return { context: before.slice(0, before.length - partial.length), partial, start: pos - partial.length, pos };
   }
-
-  let items = [];        // current suggestions [{word, kind, meta}]
-  let active = -1;       // keyboard-highlighted row (-1 = none)
-  let fetchSeq = 0;      // discard stale responses
-  let debounceTimer = null;
-
-  function closeSuggest() {
-    suggestBox.classList.remove('open');
-    suggestBox.innerHTML = '';
-    items = [];
-    active = -1;
-  }
-
-  function renderSuggest() {
-    if (!items.length) { closeSuggest(); return; }
-    suggestBox.innerHTML = '';
-    items.forEach((it, i) => {
-      const row = document.createElement('div');
-      row.className = `suggest-item ${it.kind}` + (i === active ? ' active' : '');
-      row.innerHTML =
-        `<span class="s-word"></span><span class="s-meta">${it.meta}</span>`;
-      row.querySelector('.s-word').textContent = it.word;
-      row.addEventListener('mousedown', (e) => {  // mousedown: before blur
-        e.preventDefault();
-        accept(i);
-      });
-      suggestBox.appendChild(row);
-    });
+  function closeSuggest() { suggestBox.classList.remove('open'); items = []; active = -1; }
+  function drawSuggest() {
+    if (!items.length) return closeSuggest();
+    suggestBox.innerHTML = items.map((it, i) =>
+      `<div class="suggest-item ${it.kind}${i === active ? ' active' : ''}" data-i="${i}" role="option"><span>${esc(it.word)}</span><span class="s-meta">${esc(it.meta)}</span></div>`).join('');
     suggestBox.classList.add('open');
   }
-
-  function accept(i) {
-    const it = items[i];
-    if (!it) return;
-    const { start, pos } = caretParts();
-    const val = textInput.value;
-    textInput.value = val.slice(0, start) + it.word + ' ' + val.slice(pos);
-    const newPos = start + it.word.length + 1;
-    textInput.setSelectionRange(newPos, newPos);
-    closeSuggest();
-    checkWords();
-    queueSuggest();          // immediately offer the next continuation
-  }
-
-  function queueSuggest() {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(fetchSuggest, 120);
-  }
-
-  async function fetchSuggest() {
-    const { context, partial } = caretParts();
-    const prefix = cleanWord(partial);
-    const ctxWords = context.trim();
-    if (!prefix && !ctxWords) { closeSuggest(); return; }
-
-    const seq = ++fetchSeq;
-    try {
-      const params = new URLSearchParams({ context: ctxWords, prefix, limit: 8 });
-      const r = await fetch('/api/suggest?' + params);
-      if (!r.ok || seq !== fetchSeq) return;
-      const d = await r.json();
-
-      const next = [];
-      (d.continuations || []).forEach(c => next.push({
-        word: c.word, kind: 'phrase',
-        meta: `phrase ×${c.sources}`,
-      }));
-      (d.words || []).forEach(w => next.push({
-        word: w.word, kind: 'vocab',
-        meta: `${w.clips} clip${w.clips > 1 ? 's' : ''}`,
-      }));
-      // Without a prefix only phrase continuations are useful noise-free.
-      items = next.slice(0, 8);
-      active = -1;
-      renderSuggest();
-    } catch { /* ignore */ }
-  }
-
-  // Words typed so far that have no direct clip (will splice or go missing).
-  function checkWords() {
-    if (!vocab) return;
-    const { context } = caretParts();
-    const unknown = [];
-    for (const tok of context.split(/\s+/)) {
-      if (!tok || /^\*[A-Za-z]+\*$/.test(tok)) continue;   // *noise* tokens
-      for (const w of checkableWords(tok)) {
-        if (!(w in vocab) && !unknown.includes(w)) unknown.push(w);
-      }
-    }
-    // Cap what is listed. A paragraph can put several hundred words in here,
-    // and printing all of them turned this line into a wall of text that grew
-    // the card past the height of the screen. Past a couple of dozen the count
-    // is the useful part anyway -- it says how much splicing is coming, and so
-    // roughly how long the job will take -- while the words themselves are
-    // there to be skimmed.
-    const SHOWN = 24;
-    wordCheck.innerHTML = '';
-    if (!unknown.length) return;
-
-    const head = document.createElement('span');
-    head.textContent =
-      `${unknown.length} word${unknown.length === 1 ? '' : 's'} with no direct clip ` +
-      `(will try phoneme splice): `;
-    wordCheck.appendChild(head);
-
-    const listEl = document.createElement('span');
-    const render = (all) => {
-      listEl.innerHTML = '';
-      const shown = all ? unknown : unknown.slice(0, SHOWN);
-      shown.forEach((w, i) => {
-        const el = document.createElement('span');
-        el.className = 'unknown';
-        el.textContent = w;
-        listEl.appendChild(el);
-        if (i < shown.length - 1) listEl.appendChild(document.createTextNode(', '));
-      });
-      if (!all && unknown.length > SHOWN) {
-        const more = document.createElement('button');
-        more.type = 'button';
-        more.className = 'more-words';
-        more.textContent = ` … and ${unknown.length - SHOWN} more`;
-        more.addEventListener('click', () => render(true));
-        listEl.appendChild(more);
-      }
-    };
-    render(false);
-    wordCheck.appendChild(listEl);
-  }
-
-  // ── Live read of the input ──────────────────────────────────────────────────
-  // The button sat beside empty space and nothing responded until you pressed
-  // it. This reacts as you type: how much there is to say, how much of it has
-  // to be built out of phonemes, and roughly how long that will take -- a
-  // spliced word costs a forced-alignment pass, which is where the seconds go.
-  const meterEl = document.getElementById('input-meter');
-
-  function updateMeter() {
-    const text = textInput.value.trim();
-    submitBtn.disabled = !text || generating;
-    if (!text) { meterEl.textContent = ''; meterEl.classList.remove('warn'); return; }
-
-    const words = text.split(/\s+/).filter(Boolean);
-    let unknown = 0;
-    if (vocab) {
-      for (const tok of words) {
-        for (const w of checkableWords(tok)) if (!(w in vocab)) unknown++;
-      }
-    }
-    // Roughly: direct clips are quick, spliced ones are not. Calibrated on the
-    // real thing rather than guessed -- 46 words with 17 splices took ~36s.
-    const secs = Math.round(words.length * 0.15 + unknown * 1.6);
-    const eta = secs < 5 ? 'a moment' : secs < 90 ? `~${secs}s` : `~${Math.round(secs / 60)} min`;
-    const slow = secs > 45;
-
-    meterEl.innerHTML =
-      `<b>${words.length}</b> word${words.length === 1 ? '' : 's'}` +
-      (vocab ? ` · <b>${unknown}</b> to splice` : '') +
-      ` · ${eta}`;
-    meterEl.classList.toggle('warn', slow);
-  }
-
-  textInput.addEventListener('input', () => { queueSuggest(); checkWords(); updateMeter(); });
-
-  // Run once now the elements exist, so an empty box starts with the button
-  // disabled rather than inviting a click that only produces an error.
-  updateMeter();
-  textInput.addEventListener('blur', () => setTimeout(closeSuggest, 150));
-
-  textInput.addEventListener('keydown', (e) => {
-    if (!items.length || !suggestBox.classList.contains('open')) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      active = (active + 1) % items.length;
-      renderSuggest();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      active = (active - 1 + items.length) % items.length;
-      renderSuggest();
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      accept(active >= 0 ? active : 0);     // Tab takes the top suggestion
-    } else if (e.key === 'Enter' && active >= 0 && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();                   // Enter only when explicitly chosen
-      accept(active);
-    } else if (e.key === 'Escape') {
-      closeSuggest();
-    }
+  suggestBox.addEventListener('mousedown', (e) => {
+    const row = e.target.closest('.suggest-item'); if (!row) return;
+    e.preventDefault(); accept(Number(row.dataset.i));
   });
+  function accept(i) {
+    const it = items[i]; if (!it) return;
+    const { start, pos } = caretParts(), val = textInput.value;
+    textInput.value = val.slice(0, start) + it.word + ' ' + val.slice(pos);
+    const at = start + it.word.length + 1;
+    textInput.setSelectionRange(at, at);
+    closeSuggest();
+    textInput.dispatchEvent(new Event('input'));
+  }
+  function queueSuggest() { clearTimeout(suggestTimer); suggestTimer = setTimeout(fetchSuggest, 140); }
+  async function fetchSuggest() {
+    if (document.activeElement !== textInput) return;
+    const { context, partial } = caretParts();
+    const prefix = partial.replace(/[^\w]/g, '').toLowerCase();
+    if (!prefix && !context.trim()) return closeSuggest();
+    const seq = ++fetchSeq;
+    const r = await fetchJson('/api/suggest?' + new URLSearchParams({ context: context.trim(), prefix, limit: 8 }));
+    if (!r.ok || seq !== fetchSeq) return;
+    items = [
+      ...(r.data.continuations || []).map(c => ({ word: c.word, kind: 'phrase', meta: `said next ×${c.sources}` })),
+      ...(r.data.words || []).map(w => ({ word: w.word, kind: 'vocab', meta: `${w.clips} clip${w.clips > 1 ? 's' : ''}` })),
+    ].slice(0, 8);
+    active = -1;
+    drawSuggest();
+  }
+  textInput.addEventListener('blur', () => setTimeout(closeSuggest, 150));
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); return submit(); }
+    if (!items.length || !suggestBox.classList.contains('open')) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; drawSuggest(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; drawSuggest(); }
+    else if (e.key === 'Tab') { e.preventDefault(); accept(active >= 0 ? active : 0); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); accept(active); }
+    else if (e.key === 'Escape') closeSuggest();
+  });
+
+  // ── Generating ────────────────────────────────────────────────────────────
+  let busy = false, lastText = '';
+  const STAGE = { waiting: 'waiting to start', loading: 'loading the voice', resolving: 'finding the words',
+                  encoding: 'making the video', joining: 'joining it together', finished: 'finishing' };
+
+  function setStatus(msg, error = false) { statusEl.textContent = msg; statusEl.className = error ? 'error' : ''; }
+  function progress(fraction) {
+    const el = $('progress');
+    if (fraction === undefined) { el.hidden = true; return; }
+    el.hidden = false;
+    el.classList.toggle('indeterminate', fraction === null);
+    $('progress-bar').style.width = fraction === null ? '' : `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+  }
+
+  $('form').addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+  $('again-btn').addEventListener('click', () => submit(lastText));
+
+  async function submit(text = textInput.value.trim()) {
+    if (!text || busy) return;
+    busy = true; lastText = text;
+    submitBtn.disabled = true; $('again-btn').disabled = true;
+    closeSuggest();
+    setStatus('sending…'); progress(null);
+    try {
+      const res = await postJson('/api/generate', { text, subtitles: $('subtitles').checked, options: opts });
+      if (res.error) return setStatus(`Error: ${res.error}`, true);
+      if (!res.ok) {
+        const d = res.data.detail;
+        return setStatus(`Error: ${typeof d === 'object' ? d.message : (d || `server said ${res.status}`)}`, true);
+      }
+      const result = await poll(res.data.id, res.data.position ?? 0);
+      if (!result) return;
+      if (!result.video_url) return setStatus('Nothing in that could be said with this voice.', true);
+      const entry = { text, url: result.video_url, tokens: result.tokens || [], timeline: result.timeline || [], at: Date.now() };
+      show(entry, true);
+      remember(entry);
+      loadStats();
+    } finally {
+      busy = false; progress(undefined);
+      $('again-btn').disabled = false;
+      drawChips();
+    }
+  }
+
+  async function poll(id, position) {
+    let delay = 250;
+    if (position > 0) setStatus(`queued — ${position} ahead of you`);
+    for (;;) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 1.4, 1500);
+      const res = await fetchJson(`/api/jobs/${id}`);
+      if (res.error) { setStatus(`Error: ${res.error}`, true); return null; }
+      if (!res.ok) { const d = res.data.detail; setStatus(`Error: ${(typeof d === 'object' ? d.message : d) || 'job lost'}`, true); return null; }
+      const j = res.data;
+      if (j.status === 'error') { setStatus(`Error: ${j.error}`, true); return null; }
+      if (j.status === 'done') { setStatus(''); return j.result; }
+      if (j.status === 'queued') {
+        const ahead = j.position ?? 0;
+        setStatus(ahead ? `queued — ${ahead} ahead of you` : 'queued behind another job');
+        progress(null);
+      } else {
+        const secs = j.running_for ? ` · ${Math.round(j.running_for)}s` : '';
+        if (j.stage === 'resolving' && j.total > 0) {
+          setStatus(`${STAGE.resolving}: ${j.done} of ${j.total}${secs}`);
+          progress(0.05 + 0.7 * (j.done / j.total));
+        } else if (j.stage === 'encoding' || j.stage === 'joining') {
+          setStatus(`${STAGE[j.stage]}${j.total > 1 ? ` (part ${Math.min(j.done + 1, j.total)} of ${j.total})` : ''}${secs}`);
+          progress(0.75 + 0.25 * (j.total > 1 ? j.done / j.total : 0.5));
+        } else {
+          setStatus(`${STAGE[j.stage] || j.stage}${secs}`);
+          progress(0.03);
+        }
+      }
+    }
+  }
+
+  // ── The result ────────────────────────────────────────────────────────────
+  const video = $('output-video');
+  let current = null, marks = [];
+
+  function show(entry, play) {
+    current = entry;
+    $('result').hidden = false;
+    video.src = entry.url;
+    const a = $('download-link');
+    a.href = entry.url;
+    a.download = downloadName(entry.text, entry.url);
+    drawWords(entry);
+    const t = entry.tokens, count = (s) => t.filter(x => x.status === s).length;
+    const parts = [];
+    if (count('run')) parts.push(`${count('run')} in real phrases`);
+    if (count('found')) parts.push(`${count('found')} clips`);
+    if (count('spliced')) parts.push(`${count('spliced')} spliced`);
+    if (count('missing')) parts.push(`${count('missing')} missing`);
+    $('summary').textContent = parts.join(' · ');
+    drawHistory();
+    if (play) {
+      video.play().catch(() => {});
+      $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  const TITLES = { run: 'part of a phrase the voice really said', found: 'a recording of this word',
+                   spliced: 'built from pieces of other words', missing: 'not something this voice can say' };
+  function drawWords(entry) {
+    const when = Object.fromEntries((entry.timeline || []).map(w => [w.i, w]));
+    const el = $('word-results');
+    el.innerHTML = '';
+    marks = [];
+    entry.tokens.forEach((t, i) => {
+      const cls = ['run', 'found', 'spliced', 'missing'].includes(t.status) ? t.status : 'missing';
+      const w = document.createElement('span');
+      w.className = `word ${cls}${t.approx ? ' approx' : ''}`;
+      w.title = t.approx ? 'approximated — a sound was swapped, dropped, or guessed' : TITLES[cls];
+      w.tabIndex = cls === 'missing' ? -1 : 0;
+      const label = document.createElement('span');
+      label.textContent = t.stretched || t.word;
+      w.appendChild(label);
+      if (cls !== 'missing') {
+        const acts = document.createElement('span');
+        acts.className = 'acts';
+        const first = Array.isArray(t.clips) ? t.clips[0] : null;
+        const href = (cls === 'spliced' || t.approx) ? `/splice.html?word=${encodeURIComponent(t.word)}`
+                   : first ? `/editor.html?clip=${first}&word=${encodeURIComponent(t.word)}` : null;
+        if (href) {
+          const open = document.createElement('a');
+          open.href = href; open.target = '_blank'; open.rel = 'noopener'; open.textContent = '↗';
+          open.title = cls === 'spliced' ? 'see how this word is built' : 'open this clip in the corpus editor';
+          open.addEventListener('click', (e) => e.stopPropagation());
+          acts.appendChild(open);
+        }
+        if (Array.isArray(t.clips) && t.clips.length) {
+          acts.appendChild(voteButton(t, w, +1, '▲', 'use these clips more for this word'));
+          acts.appendChild(voteButton(t, w, -1, '▼', 'use these clips less for this word'));
+        }
+        w.appendChild(acts);
+      }
+      const span = when[i];
+      if (span) {
+        marks.push({ el: w, start: span.start, end: span.end });
+        const seek = () => { video.currentTime = span.start + 0.001; video.play().catch(() => {}); };
+        w.addEventListener('click', seek);
+        w.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); seek(); } });
+      }
+      el.appendChild(w);
+    });
+  }
+
+  // The word being said, lit as the video plays.
+  function lightWord() {
+    const t = video.currentTime;
+    for (const m of marks) m.el.classList.toggle('now', !video.paused && t >= m.start && t < m.end + 0.04);
+  }
+  video.addEventListener('timeupdate', lightWord);
+  video.addEventListener('pause', lightWord);
+  video.addEventListener('seeked', lightWord);
+  // timeupdate fires a few times a second; a frame loop keeps the highlight on the beat.
+  (function tick() { if (!video.paused) lightWord(); requestAnimationFrame(tick); })();
+
+  function voteButton(token, tag, dir, glyph, title) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = glyph; b.title = title;
+    b.setAttribute('aria-label', `${dir > 0 ? 'Upvote' : 'Downvote'} ${token.word}`);
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const now = Number(tag.dataset.vote || 0), rating = now === dir ? 0 : dir;
+      const r = await postJson('/api/rate', { word: token.word, clips: token.clips, rating });
+      if (!r.ok) return;
+      tag.dataset.vote = String(rating);
+      tag.classList.toggle('voted-down', rating < 0);
+      tag.querySelectorAll('.acts button').forEach(x => x.classList.toggle('on', rating !== 0 && x === b));
+    });
+    return b;
+  }
+
+  function downloadName(said, url) {
+    const stem = (said || '').replace(/[~*]/g, '').replace(/[^\w\-. ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'ytp';
+    const id = (url.match(/([0-9a-f]{6,})\.mp4$/) || [])[1] || '';
+    return `${stem}${id ? ' ' + id : ''}.mp4`;
+  }
+
+  // ── Recent ────────────────────────────────────────────────────────────────
+  // The last few videos made in this browser, to go back to. Old ones may
+  // have been cleared off the server, in which case they are dropped.
+  const KEEP = 8;
+  function remember(entry) {
+    const list = store.get('ytp-history', []).filter(h => h.url !== entry.url);
+    list.unshift(entry);
+    store.set('ytp-history', list.slice(0, KEEP));
+    drawHistory();
+  }
+  function ago(ms) {
+    const s = Math.round((Date.now() - ms) / 1000);
+    return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+  }
+  function drawHistory() {
+    const list = store.get('ytp-history', []);
+    $('history').hidden = !list.length;
+    $('history-list').innerHTML = list.map((h, i) =>
+      `<button type="button" class="past${current && current.url === h.url ? ' current' : ''}" data-i="${i}">
+         <span class="play">▶</span><span class="said">${esc(h.text)}</span><span class="when">${ago(h.at)}</span>
+       </button>`).join('');
+  }
+  $('history-list').addEventListener('click', (e) => {
+    const b = e.target.closest('.past'); if (!b) return;
+    const h = store.get('ytp-history', [])[Number(b.dataset.i)];
+    if (!h) return;
+    lastText = h.text;
+    show(h, true);
+  });
+  video.addEventListener('error', () => {
+    if (!current) return;
+    store.set('ytp-history', store.get('ytp-history', []).filter(h => h.url !== current.url));
+    setStatus('That video is no longer on the server.', true);
+    $('result').hidden = true; current = null;
+    drawHistory();
+  });
+
+  // ── Start ─────────────────────────────────────────────────────────────────
+  loadStats(); loadCorpora(); loadSpliceMode(); loadMaxUnits(); loadNoises(); loadWords();
+  drawChips(); drawHistory();
+  textInput.focus();
+})();
 </script>
 </body>
 </html>

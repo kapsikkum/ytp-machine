@@ -4,182 +4,113 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>YTPMV — YTP Machine</title>
+  <link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
-
-    :root {
-      --yellow: #ffe500;
-      --green:  #00ff88;
-      --red:    #ff3c3c;
-      --dark:   #0d0d0d;
-      --panel:  #141414;
-      --field:  #1a1a1a;
-      --border: #2a2a2a;
-      --dim:    #666;
-    }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--dark);
-      color: #e8e8e8;
-      font-family: 'Roboto Mono', monospace;
-      font-size: 14px;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2rem 1rem 4rem;
-    }
-    a { color: var(--dim); }
-    header { text-align: center; margin-bottom: 1.5rem; }
-    header h1 {
-      font-family: Impact, 'Arial Black', sans-serif;
-      font-size: clamp(2.5rem, 8vw, 4.5rem);
-      letter-spacing: 2px;
-      color: var(--yellow);
-      text-shadow: 3px 3px 0 #b3a000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
-      line-height: 1;
-    }
-    header p { color: #888; font-size: 0.85rem; margin-top: 0.5rem; letter-spacing: 1px; }
-    #voice { font-size: 0.75rem; color: #555; margin-bottom: 1.5rem;
-             display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; justify-content: center; }
-    #voice span { color: var(--yellow); }
-    #voice-select { font-size: .75rem; padding: .15rem .35rem; }
+    .card { width: calc(100% - 2rem); max-width: 1000px; margin: 0 auto 1rem; padding: 1.25rem; }
+    body > .card:first-of-type { margin-top: 1.25rem; }
+    .lede { color: var(--muted); font-size: .8rem; margin-bottom: .9rem; }
+    .lede b { font-family: Impact, 'Arial Black', sans-serif; font-weight: 400; letter-spacing: 1px; color: var(--yellow); font-size: 1.05rem; margin-right: .5rem; }
     #voice-select:disabled { opacity: .5; cursor: wait; }
-
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1.5rem;
-      width: 100%;
-      max-width: 980px;
-      margin-bottom: 1rem;
-    }
+    #voice-note { color: var(--dim); font-size: .72rem; }
 
     /* ── Drop zone ── */
     #drop {
-      border: 2px dashed #333;
-      border-radius: 8px;
-      padding: 2.25rem 1rem;
-      text-align: center;
-      color: #777;
-      cursor: pointer;
+      border: 2px dashed var(--line-2); border-radius: 10px; padding: 2.25rem 1rem;
+      text-align: center; color: var(--muted); cursor: pointer;
       transition: border-color .15s, color .15s, background .15s;
     }
-    #drop:hover, #drop.over { border-color: var(--yellow); color: #ddd; background: #181600; }
-    #drop b { color: var(--yellow); font-weight: 400; }
-    #drop small { display: block; margin-top: .5rem; color: #4a4a4a; font-size: .72rem; }
+    #drop:hover, #drop.over { border-color: var(--yellow); color: var(--text); background: rgba(255, 229, 0, .04); }
+    #drop b { color: var(--yellow); font-weight: 500; }
+    #drop small { display: block; margin-top: .5rem; color: var(--dim); font-size: .72rem; }
 
     /* ── Song summary ── */
-    #song h2 { font-family: Impact, sans-serif; font-weight: 400; letter-spacing: 1px;
-               font-size: 1.6rem; color: var(--yellow); }
-    #song .desc { color: #bbb; margin: .35rem 0 .75rem; line-height: 1.5; }
-    .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
-    .chip { border: 1px solid var(--border); border-radius: 999px; padding: .15rem .6rem;
-            font-size: .72rem; color: #999; white-space: nowrap; }
-    .chip b { color: #eee; font-weight: 400; }
+    #song h2 { font-family: Impact, 'Arial Black', sans-serif; font-weight: 400; letter-spacing: 1px; font-size: 1.7rem; color: var(--yellow); }
+    #song .desc { color: var(--muted); margin: .35rem 0 .8rem; line-height: 1.5; }
+    .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .chip { border: 1px solid var(--line-2); border-radius: 999px; padding: .2rem .65rem; font-size: .72rem; color: var(--muted); white-space: nowrap; background: var(--raised); }
+    .chip b { color: var(--text); font-weight: 500; }
 
     /* ── Parts ── */
     #parts { display: flex; flex-direction: column; gap: .6rem; }
     .part {
       display: grid;
       grid-template-columns: minmax(150px, .9fr) minmax(250px, 1.6fr) minmax(270px, 1.4fr);
-      gap: .75rem 1rem;
-      align-items: start;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: .8rem .9rem;
-      background: #111;
+      gap: .75rem 1rem; align-items: start;
+      border: 1px solid var(--line); border-radius: 10px; padding: .85rem .95rem; background: #101012;
+      transition: border-color .15s, opacity .2s;
     }
-    .part.muted { opacity: .55; }
-    .who .role { font-size: .68rem; letter-spacing: 1px; text-transform: uppercase; color: var(--yellow); }
-    .who .name { color: #eee; margin: .1rem 0; }
-    .who .meta { color: #555; font-size: .72rem; line-height: 1.5; }
-    .sound .row, .knobs .row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
-    .sound .row + .row, .knobs .row + .row { margin-top: .45rem; }
-    input[type=text], select, input[type=number] {
-      background: var(--field); border: 1px solid #333; border-radius: 5px; color: #e8e8e8;
-      font-family: inherit; font-size: .85rem; padding: .35rem .5rem;
-    }
-    input[type=text] { flex: 1; min-width: 7rem; }
-    input[type=text]:focus, select:focus { outline: none; border-color: var(--yellow); }
-    select { cursor: pointer; }
-    button {
-      background: #222; border: 1px solid #333; border-radius: 5px; color: #ddd; cursor: pointer;
-      font-family: inherit; font-size: .8rem; padding: .32rem .55rem; white-space: nowrap;
-    }
-    button:hover { border-color: #555; color: #fff; }
-    button:disabled { opacity: .4; cursor: default; }
+    .part:hover { border-color: var(--line-2); }
+    .part.muted { opacity: .5; }
+    .who .role { font-size: .66rem; letter-spacing: 1.2px; text-transform: uppercase; color: var(--yellow); }
+    .who .name { color: var(--text); margin: .15rem 0; }
+    .who .meta { color: var(--dim); font-size: .72rem; line-height: 1.5; }
+    .sound .row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+    .sound .row + .row { margin-top: .45rem; }
+    .sound input[type=text] { flex: 1; min-width: 7rem; }
     button.play { color: var(--green); }
-    .take { color: #777; font-size: .75rem; min-width: 3.5rem; text-align: center; }
-    .badge { font-size: .72rem; border-radius: 4px; padding: .12rem .45rem; background: #1d1d1d; color: #aaa; }
-    .badge.good { color: var(--green); }
-    .badge.meh  { color: #ffcc55; }
-    .badge.bad  { color: var(--red); }
+    .take { color: var(--muted); font-size: .74rem; min-width: 3.5rem; text-align: center; }
+    .badge { font-size: .7rem; border-radius: 999px; padding: .15rem .5rem; background: var(--raised); color: var(--muted); border: 1px solid var(--line); }
+    .badge.good { color: var(--green); border-color: #1d4d39; }
+    .badge.meh  { color: var(--amber); border-color: #5a4210; }
+    .badge.bad  { color: var(--red); border-color: #5a1f1f; }
     .alts { display: flex; flex-wrap: wrap; gap: .3rem; }
-    .alts button { font-size: .7rem; padding: .12rem .45rem; color: #999; background: transparent; }
-    .alts button:hover { color: var(--yellow); border-color: var(--yellow); }
-    .alts .or { color: #555; font-size: .7rem; }
+    .alts button { font-size: .7rem; padding: .12rem .5rem; color: var(--muted); background: transparent; border-radius: 999px; }
+    .alts button:hover:not(:disabled) { color: var(--yellow); border-color: var(--yellow); background: transparent; }
+    .alts .or { color: var(--dim); font-size: .7rem; }
     .who .play { margin-top: .6rem; }
     /* Label and control in two aligned columns, one setting a line. */
     .knobs .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .4rem .6rem; align-items: center; }
     .knobs .kvrow { display: contents; }
-    .knobs .k { color: #666; font-size: .7rem; text-align: right; white-space: nowrap; }
+    .knobs .k { color: var(--dim); font-size: .7rem; text-align: right; white-space: nowrap; }
     .knobs .v { display: flex; align-items: center; gap: .4rem; min-width: 0; }
-    .knobs .v select { width: 100%; max-width: 15rem; padding: .28rem .45rem; font-size: .8rem; }
-    .knobs .mix input[type=range] { flex: 1; min-width: 3rem; max-width: 7rem; accent-color: var(--yellow); }
-    .knobs .tiny { color: #555; font-size: .68rem; }
-    .knobs .flags { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin-top: .6rem; padding-top: .55rem;
-                    border-top: 1px solid #1e1e1e; }
-    .knobs .flags label { color: #777; font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
+    .knobs .v select { width: 100%; max-width: 15rem; padding-top: .28rem; padding-bottom: .28rem; font-size: .78rem; }
+    .knobs .mix input[type=range] { flex: 1; min-width: 3rem; max-width: 7rem; }
+    .knobs .tiny { color: var(--dim); font-size: .68rem; }
+    .knobs .flags { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin-top: .6rem; padding-top: .55rem; border-top: 1px solid var(--line); }
+    .knobs .flags label { color: var(--muted); font-size: .72rem; display: inline-flex; align-items: center; gap: .3rem; }
     .knobs [hidden] { display: none; }
-    .oct button { padding: .15rem .5rem; }
-    .oct span { min-width: 1.8rem; text-align: center; color: #eee; font-size: .8rem; }
-    .err { color: var(--red); font-size: .72rem; margin-top: .35rem; }
+    .oct button { padding: .12rem .5rem; }
+    .oct span { min-width: 1.8rem; text-align: center; color: var(--text); font-size: .8rem; }
+    .err { font-size: .72rem; margin-top: .35rem; }
     .err:empty { display: none; }
 
     /* ── The machine the parts are played on ── */
-    #machine { display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap;
-               margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--border); }
-    #machine label { color: #888; font-size: .78rem; display: inline-flex; gap: .45rem; align-items: center; }
+    #machine { display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap; margin-bottom: 1rem; padding-bottom: .9rem; border-bottom: 1px solid var(--line); }
+    #machine label { color: var(--muted); font-size: .78rem; display: inline-flex; gap: .45rem; align-items: center; }
     #machine select { min-width: 9rem; }
-    #chip-about { color: #666; font-size: .75rem; }
+    #chip-about { color: var(--dim); font-size: .75rem; }
 
     /* ── Options + render ── */
-    #options { display: flex; flex-direction: column; gap: .6rem; color: #888; font-size: .78rem; }
+    #options { display: flex; flex-direction: column; gap: .65rem; color: var(--muted); font-size: .78rem; }
     #options .group { display: flex; flex-wrap: wrap; gap: .5rem 1.1rem; align-items: center; }
-    #options .gl { color: #555; font-size: .66rem; letter-spacing: 1px; text-transform: uppercase; min-width: 4.2rem; }
-    #options label { display: inline-flex; gap: .35rem; align-items: center; }
-    #actions { display: flex; gap: .75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+    #options .gl { color: var(--dim); font-size: .66rem; letter-spacing: 1.2px; text-transform: uppercase; min-width: 4.2rem; }
+    #options label { display: inline-flex; gap: .4rem; align-items: center; }
+    #actions { display: flex; gap: .75rem; align-items: center; margin-top: 1.1rem; flex-wrap: wrap; }
     #render-btn {
-      background: var(--yellow); color: #000; border: none; border-radius: 6px;
-      font-family: Impact, sans-serif; font-size: 1.2rem; letter-spacing: 1.5px;
-      padding: .6rem 2rem; text-transform: uppercase;
+      background: var(--yellow); color: #000; border: none; border-radius: 999px;
+      font-family: Impact, 'Arial Black', sans-serif; font-size: 1.15rem; letter-spacing: 1.5px;
+      padding: .6rem 1.8rem .55rem; text-transform: uppercase;
+      box-shadow: 0 6px 20px rgba(255, 229, 0, .18);
     }
-    #render-btn:hover { background: #ffd000; color: #000; }
-    #render-btn:disabled { background: #555; color: #888; }
-    #status { color: #aaa; font-size: .8rem; }
+    #render-btn:hover:not(:disabled) { background: var(--yellow-2); color: #000; }
+    #render-btn:disabled { opacity: .35; box-shadow: none; }
+    #reset-btn { border-radius: 999px; }
+    #status { color: var(--muted); font-size: .8rem; }
     #status.error { color: var(--red); }
-    #progress { height: 6px; background: #222; border-radius: 3px; overflow: hidden; margin-top: .75rem; display: none; }
+    #progress { height: 3px; background: var(--line); border-radius: 999px; overflow: hidden; margin-top: .8rem; display: none; }
     #progress.on { display: block; }
-    #progress div { height: 100%; width: 0; background: var(--yellow); transition: width .3s; }
-    #result video { width: 100%; border-radius: 6px; margin-top: 1rem; background: #000; }
-    #result .links { margin-top: .5rem; font-size: .75rem; display: flex;
-                     align-items: center; gap: .75rem; flex-wrap: wrap; }
-    #result .links a.download {
-      background: var(--yellow);
-      border-radius: 5px;
-      color: #000;
-      padding: .3rem .7rem;
-      text-decoration: none;
-    }
-    #result .links a.download:hover { background: #ffd000; }
-    .hint { color: #4d4d4d; font-size: .72rem; line-height: 1.6; margin-top: .75rem; }
-    .hint b { color: #777; font-weight: 400; }
-    details.hint summary { cursor: pointer; color: #666; list-style: none; }
-    details.hint summary::before { content: '▸ '; }
-    details.hint[open] summary::before { content: '▾ '; }
-    details.hint summary:hover { color: #999; }
+    #progress div { height: 100%; width: 0; background: var(--yellow); border-radius: 999px; transition: width .35s var(--ease); }
+    #result video { width: 100%; border-radius: 8px; margin-top: 1rem; background: #000; }
+    #result .links { margin-top: .6rem; font-size: .75rem; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; color: var(--dim); }
+    #result .links a { color: var(--muted); }
+    #result .links a.download { background: var(--yellow); border-radius: 999px; color: #000; padding: .38rem .85rem; text-decoration: none; }
+    #result .links a.download:hover { background: var(--yellow-2); }
+    .hint { margin-top: .75rem; }
+    details.hint summary { cursor: pointer; color: var(--muted); list-style: none; }
+    details.hint summary::before { content: '\25B8  '; }
+    details.hint[open] summary::before { content: '\25BE  '; }
+    details.hint summary:hover { color: var(--text); }
     details.hint p, details.hint #song-noises { margin-top: .5rem; }
 
     /* ── No voice: nothing about words is any use ── */
@@ -194,16 +125,21 @@
 </head>
 <body>
 
-<header>
-  <h1>YTPMV</h1>
-  <p><span class="voice-only">a MIDI file, sung by the corpus — every note pitch perfect</span><span class="synth-only">a MIDI file, played on the chip — no voice at all</span></p>
+<header class="top">
+  <a class="brand" href="/">YTP<span>MACHINE</span></a>
+  <nav aria-label="Pages">
+    <a href="/">say</a>
+    <a class="on" href="/ytpmv.html">ytpmv</a>
+    <a href="/splice.html">splice</a>
+    <a href="/editor.html">corpus</a>
+  </nav>
+  <div class="spacer"></div>
+  <span id="voice-note"></span>
+  <label class="pill-select">voice <select id="voice-select"><option>loading…</option></select></label>
 </header>
-<div id="voice">voice:
-  <select id="voice-select"><option>loading…</option></select>
-  <span id="voice-note"></span> · <a href="/">back to sentences</a>
-</div>
 
 <div class="card">
+  <div class="lede"><b>YTPMV</b><span class="voice-only">a MIDI file, sung by the corpus — every note pitch perfect</span><span class="synth-only">a MIDI file, played on the chip — no voice at all</span></div>
   <div id="drop" tabindex="0">
     <b>drop a .mid file here</b> or click to pick one
     <small>each instrument becomes a tile; each note replays its clip, tuned to the note</small>

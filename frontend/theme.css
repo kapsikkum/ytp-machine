@@ -1,0 +1,191 @@
+/* The look every page of the machine shares: colours, type, the top bar, and
+   the plain controls. Page-specific layout stays in each page.
+
+   Base element styles are wrapped in :where() so they carry no specificity:
+   anything a page styles with a class wins outright, instead of having to
+   out-specify a rule it cannot see. */
+
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap');
+
+:root {
+  --bg: #0b0b0c;
+  --surface: #131315;
+  --raised: #1a1a1d;
+  --line: #25252a;
+  --line-2: #33333a;
+  --text: #ececec;
+  --muted: #8d8d96;
+  --dim: #5a5a62;
+  --yellow: #ffe500;
+  --yellow-2: #ffd000;
+  --green: #3ddc97;
+  --blue: #7dd3fc;
+  --amber: #ffb020;
+  --red: #ff5a5a;
+  --violet: #c4a1ff;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --radius: 12px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { color-scheme: dark; }
+body {
+  background: radial-gradient(1200px 500px at 50% -200px, #1c1a08 0%, var(--bg) 60%) no-repeat, var(--bg);
+  color: var(--text);
+  font-family: 'Roboto Mono', ui-monospace, monospace;
+  font-size: 14px;
+  min-height: 100vh;
+}
+:where(a) { color: inherit; }
+:where(button, input, select, textarea) { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+kbd {
+  font-size: .66rem; border: 1px solid rgba(0,0,0,.25); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 .3rem; margin-left: .5rem; opacity: .55; font-family: inherit;
+}
+::selection { background: rgba(255, 229, 0, .3); }
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 999px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Top bar ── */
+.top {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: .6rem 1rem; flex-wrap: wrap;
+  padding: .7rem clamp(1rem, 4vw, 2rem);
+  background: rgba(11, 11, 12, .82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-family: Impact, 'Arial Black', sans-serif; font-size: 1.45rem; letter-spacing: 1px;
+  color: var(--yellow); text-decoration: none; line-height: 1; white-space: nowrap;
+  text-shadow: 2px 2px 0 #7a6d00;
+}
+.brand span { color: var(--text); text-shadow: 2px 2px 0 #333; margin-left: .3rem; }
+.top nav { display: flex; gap: .2rem; }
+.top nav a {
+  text-decoration: none; color: var(--muted); font-size: .8rem;
+  padding: .35rem .7rem; border-radius: 999px; transition: color .15s, background .15s;
+}
+.top nav a:hover { color: var(--text); background: var(--raised); }
+.top nav a.on { color: #000; background: var(--yellow); }
+.top .spacer { flex: 1; }
+.top .pill-select { display: inline-flex; align-items: center; gap: .5rem; color: var(--dim); font-size: .75rem; }
+@media (max-width: 640px) {
+  .top nav { order: 3; width: 100%; overflow-x: auto; }
+}
+
+/* A second row under the top bar, for a tool page's own controls. */
+.subbar {
+  display: flex; align-items: center; gap: .5rem .8rem; flex-wrap: wrap;
+  padding: .6rem clamp(1rem, 4vw, 2rem);
+  border-bottom: 1px solid var(--line);
+  background: rgba(19, 19, 21, .6);
+}
+.subbar .title {
+  font-family: Impact, 'Arial Black', sans-serif; letter-spacing: 1px; font-size: 1.05rem;
+  color: var(--text); margin-right: .4rem;
+}
+.subbar .grow { flex: 1; }
+.subbar .muted { color: var(--dim); font-size: .75rem; }
+
+/* ── Controls ── */
+:where(select) {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  background-color: var(--raised);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-size: 5px 5px; background-repeat: no-repeat;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  padding: .38rem 1.8rem .38rem .65rem; font-size: .8rem; color: var(--text);
+  transition: border-color .15s;
+}
+:where(select):hover { border-color: #4a4a52; }
+:where(select option) { background: var(--surface); }
+:where(input[type=text], input[type=number], input[type=search], input:not([type]), textarea) {
+  background: var(--raised); border: 1px solid var(--line-2); border-radius: 8px;
+  padding: .38rem .6rem; font-size: .85rem; color: var(--text);
+  transition: border-color .15s;
+}
+:where(input[type=text], input[type=number], input[type=search], input:not([type]), textarea):hover { border-color: #4a4a52; }
+:where(input[type=text], input[type=number], input[type=search], input:not([type]), textarea):focus { outline: none; border-color: var(--yellow); }
+:where(input[type=number]) { -moz-appearance: textfield; }
+:where(input[type=number])::-webkit-inner-spin-button { opacity: .4; }
+:where(input::placeholder, textarea::placeholder) { color: #45454c; }
+:where(select, button, a, summary, input[type=checkbox], input[type=range], input[type=file]):focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+:where(input[type=checkbox]) { accent-color: var(--yellow); }
+:where(input[type=file]) { font-size: .75rem; color: var(--muted); }
+
+:where(button) {
+  display: inline-flex; align-items: center; justify-content: center; gap: .35rem; cursor: pointer;
+  background: var(--raised); border: 1px solid var(--line-2); border-radius: 8px;
+  padding: .36rem .7rem; font-size: .8rem; color: var(--text); white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s, transform .1s var(--ease);
+}
+:where(button):hover:not(:disabled) { border-color: #4a4a52; background: #222226; }
+:where(button):active:not(:disabled) { transform: scale(.98); }
+:where(button):disabled { opacity: .4; cursor: default; }
+:where(button.primary, .btn.primary) { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 500; }
+:where(button.primary, .btn.primary):hover:not(:disabled) { background: var(--yellow-2); border-color: var(--yellow-2); }
+:where(button.danger) { color: var(--red); border-color: #5a1f1f; background: #1a0f0f; }
+:where(button.danger):hover:not(:disabled) { border-color: var(--red); background: #241212; }
+:where(.btn) {
+  display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; text-decoration: none;
+  background: var(--raised); border: 1px solid var(--line-2); border-radius: 999px;
+  padding: .38rem .85rem; font-size: .78rem; color: var(--text); transition: all .15s;
+}
+:where(.btn):hover { border-color: #4a4a52; background: #222226; }
+
+/* Sliders: a yellow fill up to the thumb. Pages set --p on the input to draw it
+   in WebKit; Firefox draws its own progress. */
+:where(input[type=range]) {
+  -webkit-appearance: none; appearance: none; height: 18px; background: transparent; cursor: pointer;
+  --p: 50%; padding: 0; border: none;
+}
+:where(input[type=range])::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--yellow) var(--p), var(--line-2) var(--p));
+}
+:where(input[type=range])::-moz-range-track { height: 4px; border-radius: 999px; background: var(--line-2); }
+:where(input[type=range])::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--yellow); }
+:where(input[type=range])::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; margin-top: -6px;
+  background: #fff; border: 3px solid var(--yellow); box-shadow: 0 1px 6px rgba(0,0,0,.5);
+  transition: transform .12s var(--ease);
+}
+:where(input[type=range])::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid var(--yellow); }
+:where(input[type=range]):active::-webkit-slider-thumb { transform: scale(1.2); }
+
+/* A switch made of a checkbox: <label class="switch"><input type=checkbox><span class="track"></span> text</label> */
+.switch { display: inline-flex; align-items: center; gap: .45rem; cursor: pointer; color: var(--muted); font-size: .78rem; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch .track { width: 30px; height: 18px; border-radius: 999px; background: var(--line-2); position: relative; transition: background .2s var(--ease); flex: none; }
+.switch .track::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%;
+  background: #bbb; transition: transform .2s var(--ease), background .2s;
+}
+.switch input:checked + .track { background: var(--yellow); }
+.switch input:checked + .track::after { transform: translateX(12px); background: #000; }
+.switch input:focus-visible + .track { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
+/* ── Surfaces ── */
+.card {
+  background: linear-gradient(180deg, #161618, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0,0,0,.35);
+}
+.section-label {
+  font-size: .68rem; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--dim); font-weight: 500; margin-bottom: .7rem;
+}
+.hint { color: var(--dim); font-size: .72rem; line-height: 1.6; }
+.hint b { color: var(--muted); font-weight: 500; }
+.ok { color: var(--green); }
+.err, .error { color: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

@@ -4,108 +4,94 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>splice editor · ytp machine</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
 <style>
-  :root {
-    --yellow: #ffe500;
-    --green:  #00ff88;
-    --red:    #ff3c3c;
-    --blue:   #7dd3fc;
-    --dark:   #0d0d0d;
-    --panel:  #141414;
-    --border: #2a2a2a;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--dark); color: #e8e8e8;
-    font-family: 'Roboto Mono', monospace; font-size: 0.8rem;
-    min-height: 100vh; padding: 1rem;
-  }
-  a { color: var(--yellow); }
-  h1 { font-size: 0.95rem; color: var(--yellow); letter-spacing: 0.06em; }
-  header { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
-           margin-bottom: 0.9rem; }
-  select, input, button {
-    font: inherit; background: var(--panel); color: #e8e8e8;
-    border: 1px solid var(--border); border-radius: 4px; padding: 0.3rem 0.5rem;
-  }
-  button { cursor: pointer; }
-  button:hover:not(:disabled) { border-color: #4a4a4a; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.primary { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
-  button.danger  { color: var(--red); border-color: #5a0000; }
-
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 1rem; align-items: start; }
+  body { font-size: 13px; }
+  .page { width: min(1240px, 100% - 2rem); margin: 1.25rem auto 3rem; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1rem; align-items: start; }
   @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-  .panel { background: var(--panel); border: 1px solid var(--border);
-           border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem; }
-  .panel h2 { font-size: 0.75rem; color: #777; letter-spacing: 0.08em;
-              text-transform: uppercase; margin-bottom: 0.6rem; font-weight: 400; }
-  .row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem;
-         flex-wrap: wrap; }
-  .meta { color: #777; line-height: 1.7; }
-  .meta b { color: #e8e8e8; font-weight: 400; }
-  .hint { color: #666; font-size: 0.7rem; margin-top: 0.4rem; line-height: 1.5; }
-  #status { margin-top: 0.6rem; min-height: 1.2em; }
+  .panel {
+    background: linear-gradient(180deg, #161618, var(--surface));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 10px 40px rgba(0,0,0,.3);
+    padding: 1rem; margin-bottom: 1rem;
+  }
+  .panel h2 { font-size: .68rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); font-weight: 500; margin-bottom: .75rem; }
+  .row { display: flex; gap: .45rem; align-items: center; margin-bottom: .55rem; flex-wrap: wrap; }
+  #word { font-size: 1.05rem; padding: .5rem .75rem; }
+  .meta { color: var(--muted); line-height: 1.7; }
+  .meta b { color: var(--text); font-weight: 500; }
+  .hint { margin-top: .5rem; }
+  #status { margin-top: .6rem; min-height: 1.2em; color: var(--muted); }
   #status.err { color: var(--red); }
   #status.ok  { color: var(--green); }
-  video { width: 100%; max-height: 30vh; background: #000; border-radius: 4px;
-          display: block; margin-top: 0.5rem; }
+  video { width: 100%; max-height: 32vh; background: #000; border-radius: 8px; display: block; margin-top: .6rem; }
 
   /* The word as sounds, with the cuts drawn between them. The whole business
      of this page is where those cuts go, so they are the thing you click. */
-  #phones { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0;
-            margin: 0.3rem 0 0.8rem; }
-  .ph { background: #1b1b1b; border: 1px solid var(--border); border-radius: 3px;
-        padding: 0.3rem 0.5rem; font-weight: 700; letter-spacing: 0.04em; }
-  .ph.vowel { color: var(--blue); }
-  .cut {
-    width: 1.4rem; border: none; background: none; color: #3a3a3a;
-    font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0;
+  #phones { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; margin: .5rem 0 .9rem; }
+  .ph {
+    background: var(--raised); border: 1px solid var(--line-2); border-radius: 8px;
+    padding: .4rem .65rem; font-weight: 700; letter-spacing: .04em; font-size: .95rem;
   }
-  .cut:hover { color: #777; }
+  .ph.vowel { color: var(--blue); border-color: #164560; }
+  .cut {
+    width: 1.5rem; border: none; background: none; color: var(--line-2);
+    font-size: 1.15rem; line-height: 1; cursor: pointer; padding: 0; border-radius: 6px;
+    transition: color .15s, transform .12s var(--ease);
+  }
+  .cut:hover { color: var(--muted); transform: scaleY(1.15); }
   .cut.on { color: var(--yellow); }
 
-  .group { border: 1px solid var(--border); border-radius: 5px;
-           padding: 0.5rem; margin-bottom: 0.5rem; background: #101010; }
-  .group.bad { border-color: #5a0000; }
-  .group .g-phones { color: var(--yellow); font-weight: 700; margin-bottom: 0.4rem; }
+  .group {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: .7rem; margin-bottom: .6rem; background: #101012;
+    animation: rise .25s var(--ease);
+  }
+  @keyframes rise { from { transform: translateY(4px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .group.bad { border-color: #5a1f1f; }
+  .group .g-phones { color: var(--yellow); font-weight: 700; margin-bottom: .45rem; }
   .group select { max-width: 100%; }
-  .group .why { color: #666; font-size: 0.7rem; }
+  .group .why { color: var(--dim); font-size: .72rem; }
 
-  table { border-collapse: collapse; width: 100%; font-size: 0.72rem; }
-  td, th { padding: 0.2rem 0.35rem; text-align: left; border-bottom: 1px solid #1e1e1e; }
-  th { color: #777; font-weight: 400; }
-  .saved { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.3rem; }
-  .saved b { color: var(--yellow); font-weight: 400; }
+  table { border-collapse: collapse; width: 100%; font-size: .74rem; }
+  td, th { padding: .25rem .4rem; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  .saved { display: flex; gap: .45rem; align-items: baseline; margin-bottom: .35rem; }
+  .saved b { color: var(--yellow); font-weight: 500; }
+  .saved span { color: var(--muted); flex: 1; }
 
   /* Clips as a list rather than a dropdown: the point is to hear each one,
      and a <select> can only be read. */
-  .clips { max-height: 9.5rem; overflow-y: auto; border: 1px solid #1e1e1e;
-           border-radius: 4px; margin-top: 0.4rem; }
-  .clip { display: flex; gap: 0.4rem; align-items: center; padding: 0.15rem 0.3rem;
-          cursor: pointer; font-size: 0.72rem; }
-  .clip:hover { background: #191919; }
-  .clip.on { background: #241f00; color: var(--yellow); }
+  .clips { max-height: 10rem; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: .45rem; }
+  .clip { display: flex; gap: .45rem; align-items: center; padding: .25rem .4rem; cursor: pointer; font-size: .74rem; transition: background .12s; }
+  .clip:hover { background: var(--raised); }
+  .clip.on { background: rgba(255, 229, 0, .08); color: var(--yellow); }
   .clip .id { flex: 1; }
-  .clip .dur { color: #777; }
+  .clip .dur { color: var(--dim); }
   .clip.down .id { color: #ff9a9a; }
-  .clip button { padding: 0 0.3rem; font-size: 0.7rem; line-height: 1.4; }
+  .clip button { padding: .05rem .4rem; font-size: .7rem; border-radius: 6px; }
   .clip.playing button { border-color: var(--green); color: var(--green); }
-  .saved span { color: #777; flex: 1; }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>SPLICE EDITOR</h1>
-  <select id="corpus" title="Which voice to edit. This is the app-wide
+<header class="top">
+  <a class="brand" href="/">YTP<span>MACHINE</span></a>
+  <nav aria-label="Pages">
+    <a href="/">say</a>
+    <a href="/ytpmv.html">ytpmv</a>
+    <a class="on" href="/splice.html">splice</a>
+    <a href="/editor.html">corpus</a>
+  </nav>
+  <div class="spacer"></div>
+  <label class="pill-select">voice
+    <select id="corpus" title="Which voice to edit. This is the app-wide
 selection: the generator will serve this corpus too."></select>
-  <a href="/editor.html">corpus editor →</a>
-  <a href="/">← generator</a>
+  </label>
 </header>
+<div class="page">
 
 <div class="layout">
   <div>
@@ -162,6 +148,8 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
       <div id="saved" class="meta">—</div>
     </div>
   </div>
+</div>
+
 </div>
 
 <script>

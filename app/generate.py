@@ -48,6 +48,45 @@ _WORD_GAP    = 0.03  # brief freeze-frame pause between separate words (s)
 _STOP_PAUSE  = 0.50  # idle silent clip inserted on full stops (. ! ?) (s)
 _IDLE_MIN_GAP = 0.45 # a source gap this long counts as on-screen idle/silence
 
+# What a person generating a sentence may change, with the default and the
+# range each is held to. Everything else about a sentence is decided by the
+# corpus. Values outside the range are pulled back into it rather than
+# refused: a slider sending 2.0000001 is not a mistake worth an error.
+OPTIONS = {
+    "speed":          (1.0, 0.5, 2.0),     # the whole video, pitch kept
+    "pitch":          (0.0, -12.0, 12.0),  # semitones, tempo kept
+    "word_gap":       (_WORD_GAP, 0.0, 0.6),
+    "sentence_pause": (_STOP_PAUSE, 0.0, 2.0),
+    "stretch":        (0.09, 0.02, 0.35),  # seconds added per extra letter: loooong
+    "clean_takes":    (True, None, None),  # prefer takes with a pause around them
+    "phrases":        (True, None, None),  # use real spoken runs of several words
+}
+
+_MAX_STRETCH_ADD = 3.0   # no one word grows by more than this
+_HOLD_LOOKAHEAD = 0.12   # how much of what follows a held piece the stretcher is given
+_BUTT_LOOKAHEAD = 0.025  # and a butt-joined piece, to fill its frame rounding with sound
+_MAX_STRETCH = 6.0       # nor any piece of one by more than this factor: past it,
+                         # more of the word is held instead of holding a sliver harder
+
+
+def generation_options(given: dict | None = None) -> dict[str, Any]:
+    """*given*, with defaults filled in and every value held to its range."""
+    out: dict[str, Any] = {}
+    given = given or {}
+    for key, (default, lo, hi) in OPTIONS.items():
+        v = given.get(key, default)
+        if isinstance(default, bool):
+            out[key] = bool(v)
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = default
+        if v != v:                           # NaN
+            v = default
+        out[key] = min(hi, max(lo, v))
+    return out
+
 # ── Global cache ──────────────────────────────────────────────────────────────
 _clips_by_word_cache: dict[str, list[dict[str, Any]]] | None = None
 _cache_corpus:        str | None = None   # the corpus _clips_by_word_cache was built from
@@ -63,6 +102,26 @@ _splice_scores:       dict[tuple[str, int], int] | None = None  # (word, clip_id
 # selection weight by this, so one downvote makes a clip half as likely, three
 # make it eight times less likely, and the same in reverse for upvotes.
 _VOTE_BASE = 2.0
+
+# How much more likely a take is to be picked when it has air around it.
+#
+# Nine words in ten in a corpus of connected speech run straight into the next
+# one, and there is nowhere to cut such a word that is right: at its label, a
+# measured 30% of them lose the end of their last sound and 21% pick up the
+# start of the next word, against 3% of each for a take with a pause after it
+# (scripts/check_edges.py, judged by wav2vec2's own letter timings). Padding
+# and snapping cuts to the waveform were both tried and only moved the error
+# from one side to the other. What does fix it is not using those takes when
+# a cleaner one exists -- and for three quarters of the words anyone says, one
+# does: the same word said before a pause. Picked as they occur in the corpus,
+# this took cut-off ends from 24% to 16% and bleeds from 18% to 10%.
+#
+# Strong, because it has to be: at 8x the adjacent takes still won most of the
+# time on sheer numbers. It costs variety, which is why it can be turned off.
+_CLEAN_AFTER = 0.10       # a gap this long after the word counts as clean
+_CLEAN_BEFORE = 0.06      # and before it
+_CLEAN_AFTER_WEIGHT = 60.0
+_CLEAN_BEFORE_WEIGHT = 10.0
 
 # A downvoted clip is never ruled out entirely, only starved: when it is the
 # only clip a word has, a quiet 50:1 outsider still beats reporting the word
@@ -664,6 +723,112 @@ def tokenize(text: str) -> list[str]:
     return result
 
 
+# A letter said for longer than it is spelt: loooong, sooo, yesss, hmmmm.
+_RUN = re.compile(r"([a-z])\1+")
+# Sounds that can be held. A stop cannot -- holding the "t" of "stop" is a
+# silence -- so a run of one of these stretches nothing.
+_UNHOLDABLE = set("bcdgkpqt")
+
+
+def _clip_count(word: str) -> int:
+    try:
+        _ensure_cache()
+    except Exception:
+        return 0
+    return len((_clips_by_word_cache or {}).get(word, ()))
+
+
+def _in_dictionary(word: str) -> bool:
+    try:
+        from app.phonemes import _dict
+        return word in _dict()
+    except Exception:
+        return False
+
+
+def unstretch(token: str) -> tuple[str, list[tuple[int, int, int]]] | None:
+    """The word a stretched spelling means, and where it is stretched.
+
+    Returns (word, [(position, letters, extra), ...]) -- the run of *letters*
+    letters starting at *position* in the word is to be held for *extra*
+    letters' worth longer -- or None when nothing is stretched.
+
+    Three or more of a letter is always a stretch. Two is a stretch only when
+    the word as written is not one anybody says: "soon" and "too" are spelt
+    with two, and "soo" is not a word. When a run could shrink to one letter
+    or two -- "goood" is good, or god -- the corpus decides by which it has
+    heard more, then the pronunciation dictionary.
+    """
+    m = re.fullmatch(r"([A-Za-z]+)([.,!?;:'\"()\]]*)", token)
+    if not m:
+        return None
+    raw = m.group(1).lower()
+    runs = [(r.start(), len(r.group(0))) for r in _RUN.finditer(raw)]
+    known = _clip_count(raw) > 0 or _in_dictionary(raw)
+    runs = [(p, n) for p, n in runs if n >= 3 or (n == 2 and not known)]
+    if not runs or len(runs) > 6:
+        return None
+
+    import itertools
+    best, best_rank = None, None
+    for keeps in itertools.product(*[(1, 2) for _ in runs]):
+        word, marks, at = [], [], 0
+        for (p, n), keep in zip(runs, keeps):
+            word.append(raw[at:p])
+            pos = sum(len(x) for x in word)
+            word.append(raw[p] * keep)
+            marks.append((pos, keep, n - keep))
+            at = p + n
+        word.append(raw[at:])
+        w = "".join(word)
+        rank = (_clip_count(w), _in_dictionary(w), -len(w))
+        if best_rank is None or rank > best_rank:
+            best, best_rank = (w, marks), rank
+    w, marks = best
+    # A held stop still means the word -- "stoppp" is "stop" -- it just has
+    # nothing in it to hold.
+    marks = [(p, k, e) for p, k, e in marks if e > 0 and w[p] not in _UNHOLDABLE]
+    return w, marks
+
+
+def tokenize_full(text: str) -> list[dict[str, Any]]:
+    """Every word to say, with everything the markup says about it.
+
+    Each is {word, ends, noise, reverse, stretch, shown}: *stretch* is the
+    list from unstretch() or empty, and *shown* is how it was typed, for the
+    caption -- a stretched word reads "loooong" on screen, not "long".
+    """
+    out: list[dict[str, Any]] = []
+    for token in re.split(r"\s+", text.strip()):
+        if not token:
+            continue
+        rev = False
+        m = re.fullmatch(r"~(.+?)~([.!?\"')\]]*)", token)
+        if m:
+            rev = True
+            token = m.group(1) + m.group(2)
+        ends = bool(re.search(r"[.!?][\"')\]]*$", token))
+        m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
+        if m:
+            out.append({"word": m.group(1).lower(), "ends": ends, "noise": True,
+                        "reverse": rev, "stretch": [], "shown": m.group(1).lower()})
+            continue
+        stretched = None if _known_word(re.sub(r"[^\w]", "", token).lower()) else unstretch(token)
+        if stretched:
+            word, marks = stretched
+            out.append({"word": word, "ends": ends, "noise": False, "reverse": rev,
+                        "stretch": marks,
+                        "shown": re.sub(r"[^\w']", "", token).lower()})
+            continue
+        words = _expand_token(token)
+        for k, w in enumerate(words):
+            out.append({"word": w, "ends": ends and k == len(words) - 1, "noise": False,
+                        "reverse": rev, "stretch": [], "shown": w})
+    if out:
+        out[-1]["ends"] = True
+    return out
+
+
 def tokenize_marked(text: str) -> list[tuple[str, bool, bool, bool]]:
     """Tokenise into (word, ends_sentence, is_noise, is_reversed) tuples.
 
@@ -676,34 +841,10 @@ def tokenize_marked(text: str) -> list[tuple[str, bool, bool, bool]]:
     * ``ends_sentence`` marks a . ! ? for pause insertion; the very last token
       is always treated as a sentence end (buffer tail for editing).
     """
-    out: list[tuple[str, bool, bool, bool]] = []
-    for token in re.split(r"\s+", text.strip()):
-        if not token:
-            continue
-        # Strip the reverse marker first so everything below -- sentence ends,
-        # noise markers, number expansion -- sees an ordinary token.
-        rev = False
-        m = re.fullmatch(r"~(.+?)~([.!?\"')\]]*)", token)
-        if m:
-            rev = True
-            token = m.group(1) + m.group(2)
-        # Trailing only. Any period anywhere used to end a sentence, so "2.0"
-        # planted a full stop -- and its pause -- in the middle of a phrase.
-        ends = bool(re.search(r"[.!?][\"')\]]*$", token))
-        m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
-        if m:
-            out.append((m.group(1).lower(), ends, True, rev))
-            continue
-        words = _expand_token(token)
-        for k, w in enumerate(words):
-            # A marked token that expands ("~i30~") reverses every word it
-            # became, not just the first.
-            out.append((w, ends and k == len(words) - 1, False, rev))
-
-    if out:                                   # always full-stop the end
-        w, _e, nz, rv = out[-1]
-        out[-1] = (w, True, nz, rv)
-    return out
+    # One tokeniser, so the two cannot disagree about what a token is: this
+    # is tokenize_full with the extras (held letters, how it was typed) left
+    # off for the callers that predate them.
+    return [(t["word"], t["ends"], t["noise"], t["reverse"]) for t in tokenize_full(text)]
 
 
 # ── Lookup ────────────────────────────────────────────────────────────────────
@@ -728,7 +869,18 @@ def _duration_floor(word: str) -> float:
     return max(0.08, len(word) * 0.025)
 
 
-def pick_clip(rows: list[dict], word: str) -> dict[str, Any] | None:
+def _edge_weight(clip: dict) -> float:
+    """How much cleaner this take's edges are likely to cut, as a multiplier."""
+    w = 1.0
+    nxt, prv = clip.get("next_start"), clip.get("prev_end")
+    if nxt is None or nxt - clip["end_time"] >= _CLEAN_AFTER:
+        w *= _CLEAN_AFTER_WEIGHT
+    if prv is None or clip["start_time"] - prv >= _CLEAN_BEFORE:
+        w *= _CLEAN_BEFORE_WEIGHT
+    return w
+
+
+def pick_clip(rows: list[dict], word: str, clean: bool = True) -> dict[str, Any] | None:
     """Choose a clip for *word* whose stored duration is *plausible*.
 
     Bad timestamps come in two flavours, both of which mangle the audio:
@@ -768,6 +920,8 @@ def pick_clip(rows: list[dict], word: str) -> dict[str, Any] | None:
             w = _source_quality.get(r["source_id"], 1.0) ** 3 if _source_quality else 1.0
             if r.get("bleed_risk"):
                 w *= 0.05
+            if clean:
+                w *= _edge_weight(r)
             cid = r.get("id")
             if cid is not None:
                 w *= _vote_weight(scores.get((key, int(cid)), 0))
@@ -780,7 +934,7 @@ def pick_clip(rows: list[dict], word: str) -> dict[str, Any] | None:
     return min(rows, key=lambda r: abs((r["end_time"] - r["start_time"]) - median))
 
 
-def _find_clip(word: str, cbw: dict) -> dict[str, Any] | None:
+def _find_clip(word: str, cbw: dict, clean: bool = True) -> dict[str, Any] | None:
     rows = cbw.get(word) or []
     usable = [r for r in rows if not _vetoed(word, r)]
     if rows and not usable:
@@ -788,7 +942,7 @@ def _find_clip(word: str, cbw: dict) -> dict[str, Any] | None:
         # the caller to the splicer, which is the point: build it out of other
         # words rather than play a take that was turned down.
         return None
-    return pick_clip(usable, word)
+    return pick_clip(usable, word, clean=clean)
 
 
 # ── Contiguous-phrase detection ────────────────────────────────────────────────
@@ -1089,7 +1243,7 @@ def _drawtext(text: str, font: str, window: tuple[float, float] | None = None) -
 
 
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
-                 subtitles: bool = False) -> None:
+                 subtitles: bool = False, options: dict | None = None) -> None:
     """Encode *segments* to *out_path* in batches, then join them.
 
     Split on two limits: the command-line length, and the number of inputs one
@@ -1118,7 +1272,8 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
 
     if len(chunks) == 1:
         _say("encoding", 0, 1)
-        _encode_chunk(segments, out_path, final_tail=True, subtitles=subtitles)
+        _encode_chunk(segments, out_path, final_tail=True, subtitles=subtitles,
+                      options=options)
         _say("encoding", 1, 1)
         return
 
@@ -1129,7 +1284,7 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
             _say("encoding", ci, len(chunks))
             part = f"{out_path}.part{ci}.mp4"
             _encode_chunk(chunk, part, final_tail=(ci == len(chunks) - 1),
-                          subtitles=subtitles)
+                          subtitles=subtitles, options=options)
             part_paths.append(part)
         _say("joining", len(chunks), len(chunks))
 
@@ -1222,8 +1377,99 @@ def extract_window(seg: dict[str, Any], pad_end: float = _PAD_END) -> tuple[floa
     return start, max(want, floor)
 
 
+def _rubberband_ok() -> bool:
+    return _has_filter("rubberband")
+
+
+@lru_cache(maxsize=4)
+def _has_filter(name: str) -> bool:
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
+                             capture_output=True, text=True).stdout
+    except OSError:
+        return False
+    return any(line.split()[1:2] == [name] for line in out.splitlines() if line.strip())
+
+
+def _atempo_chain(factor: float) -> list[str]:
+    """atempo only goes from 0.5 to 2 in one step; chain it past that."""
+    steps = []
+    while factor < 0.5:
+        steps.append("atempo=0.5")
+        factor /= 0.5
+    while factor > 2.0:
+        steps.append("atempo=2.0")
+        factor /= 2.0
+    steps.append(f"atempo={factor:.5f}")
+    return steps
+
+
+def _stretch_filter(factor: float, span: float, length: float | None = None) -> list[str]:
+    """Audio made *factor* times longer, pitch kept.
+
+    rubberband where ffmpeg has it: a held vowel through it sounds held, where
+    atempo's plain overlap-add at eight times turns it into a buzz of repeated
+    grains. atempo is the fallback, not the plan.
+    """
+    # Padded going in and trimmed coming out. rubberband holds back the last
+    # stretch of whatever it is given until more arrives, and on a piece this
+    # short "the last stretch" is most of it: 0.2s at a quarter speed came
+    # out 0.3s long instead of 0.8, the held vowel gone. Silence after it
+    # pushes the vowel through; the trim takes the silence off again.
+    out = [f"apad=pad_dur={max(0.5, span):.3f}"]      # in case the file ends first
+    if _rubberband_ok():
+        out.append(f"rubberband=tempo={1.0 / factor:.5f}:transients=smooth:window=standard")
+    else:
+        out += _atempo_chain(1.0 / factor)
+    # To *length* when given: the segment is rounded up to a whole video
+    # frame, and those few milliseconds have to be sound. Trimmed exactly to
+    # the stretched length they were padded with zeros instead, which on a
+    # piece butted up against the rest of its word is a click of silence.
+    return out + [f"atrim=end={(length or span * factor):.4f}", "asetpts=PTS-STARTPTS"]
+
+
+def segment_durations(seg: dict[str, Any], window: tuple[float, float],
+                      options: dict[str, Any]) -> tuple[float, float, float]:
+    """(source span, sounding length, total output length) of one segment.
+
+    The one place the encoder and the timeline both get their lengths from,
+    so the word highlighted on the page is the word being said.
+    """
+    span = max(0.0, window[1] - window[0])
+    sounding = span * float(seg.get("stretch") or 1.0)
+    total = (sounding + float(seg.get("pause_after", 0.0))) / options["speed"]
+    return span, sounding, round(total * _FPS) / _FPS
+
+
+def timeline(segments: list[dict[str, Any]], options: dict[str, Any]) -> list[dict[str, Any]]:
+    """When each word is on screen in the finished video: [{i, start, end}].
+
+    *i* is the word's index in the report's tokens. A word spliced from
+    several pieces spans all of them; a run carries the times of every word
+    inside it.
+    """
+    spans: dict[int, list[float]] = {}
+    t = 0.0
+    for k, seg in enumerate(segments):
+        pad = _PAD_END_LAST if k == len(segments) - 1 else _PAD_END
+        win = extract_window(seg, pad)
+        _span, sounding, total = segment_durations(seg, win, options)
+        if seg.get("_tokens"):
+            for i, a, b in seg["_tokens"]:
+                lo = t + max(0.0, a - win[0]) / options["speed"]
+                hi = t + min(sounding, max(0.0, b - win[0])) / options["speed"]
+                s = spans.setdefault(i, [lo, hi])
+                s[0], s[1] = min(s[0], lo), max(s[1], hi)
+        elif seg.get("_tok") is not None:
+            s = spans.setdefault(seg["_tok"], [t, t])
+            s[1] = t + sounding / options["speed"]
+        t += total
+    return [{"i": i, "start": round(a, 3), "end": round(b, 3)} for i, (a, b) in sorted(spans.items())]
+
+
 def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
-                  final_tail: bool, subtitles: bool = False) -> None:
+                  final_tail: bool, subtitles: bool = False,
+                  options: dict | None = None) -> None:
     """
     One FFmpeg call for one chunk of segments.
 
@@ -1236,6 +1482,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     the chunk holding the overall last word, which gets the generous tail pad.
     """
     n = len(segments)
+    options = generation_options(options)
+    speed, pitch = options["speed"], options["pitch"]
     # -loglevel error, because the captured stderr is the only thing we get to
     # diagnose a failure from. ffmpeg dumps a full stream description per input
     # and there is one input per clip, so on a long sentence the last 3000
@@ -1255,9 +1503,22 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
 
         duration = tail_end - start
         clip_durations.append(duration)
+        # A held piece reads on past its end, into the sound that really
+        # follows it. The stretcher never lands exactly on length, and what
+        # it fills the shortfall with is whatever comes next in its input:
+        # padded silence left a 30ms hole at the end of a held vowel, where
+        # the real continuation is simply more of the word. It is trimmed off
+        # again after stretching.
+        #
+        # Any piece butted against the next one without a fade reads on a
+        # little too, for the same reason at a smaller scale: its length is
+        # rounded up to a whole frame, and the rounding must be sound rather
+        # than zeros in the middle of a word.
+        read = duration + (_HOLD_LOOKAHEAD if seg.get("stretch")
+                           else _BUTT_LOOKAHEAD if seg.get("fade_out") == 0.0 else 0.0)
         cmd += [
             "-ss", f"{start:.4f}",
-            "-t",  f"{duration:.4f}",
+            "-t",  f"{read:.4f}",
             "-i",  seg["source_file"],
         ]
 
@@ -1284,9 +1545,19 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # It goes before the pause padding so the frozen tail stays at the end
         # rather than being flipped to the front.
         rev = bool(seg.get("reverse"))
+        # A held letter: this piece of the word is played slower, sound and
+        # picture both, and everything measured in it afterwards is in the
+        # slowed time.
+        stretch = float(seg.get("stretch") or 1.0)
+        span = dur
+        dur = dur * stretch
+        _span, _sounding, quantised = segment_durations(
+            seg, (clip_starts[i], clip_starts[i] + span), options)
 
-        vfilters = [f"scale=480:270:force_original_aspect_ratio=disable",
-                    f"fps={_FPS}", "setsar=1"]
+        vfilters = [f"scale=480:270:force_original_aspect_ratio=disable"]
+        if stretch != 1.0:
+            vfilters.append(f"setpts=PTS*{stretch:.5f}")
+        vfilters += [f"fps={_FPS}", "setsar=1"]
         if rev:
             vfilters.append("reverse")
         if pause > 0:
@@ -1315,11 +1586,21 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
                 for k, (w, a, b) in enumerate(timed):
                     lo = 0.0 if k == 0 else max(0.0, a - base)
                     hi = dur if k == len(timed) - 1 else max(lo, b - base)
+                    if stretch != 1.0:
+                        lo, hi = lo * stretch, min(dur, hi * stretch)
                     if rev:                       # played backwards, so read backwards
                         lo, hi = max(0.0, dur - hi), max(0.0, dur - lo)
                     vfilters.append(_drawtext(w, font, (lo, hi)))
             elif seg.get("subtitle"):
                 vfilters.append(_drawtext(seg["subtitle"], font))
+        if speed != 1.0:
+            vfilters += [f"setpts=PTS/{speed:.5f}", f"fps={_FPS}"]
+        # The picture made exactly as long as the sound will be. concat pads
+        # whichever stream of a segment is shorter with silence or a frozen
+        # frame, and a slowed picture comes out a frame or two longer than
+        # its slowed sound -- which put 70ms of dead silence in the middle of
+        # every held word, right after the held part.
+        vfilters += ["tpad=stop_mode=clone:stop_duration=0.2", f"trim=end={quantised:.4f}"]
         vfilters.append("setpts=PTS-STARTPTS")
         parts.append(f"[{i}:v]" + ",".join(vfilters) + f"[v{i}]")
 
@@ -1328,6 +1609,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             # Before the fades, so they still land on the audible edges of what
             # actually plays rather than on what used to be the edges.
             afilters.append("areverse")
+        if stretch != 1.0:
+            afilters += _stretch_filter(stretch, span, quantised * speed - pause)
         if fi > 0:
             afilters.append(f"afade=t=in:st=0:d={fi:.4f}")
         if fo > 0:
@@ -1335,6 +1618,17 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             afilters.append(f"afade=t=out:st={fo_start:.4f}:d={fo:.4f}")
         if pause > 0:
             afilters.append(f"apad=pad_dur={pause:.4f}")
+        if pitch != 0.0:
+            ratio = 2.0 ** (pitch / 12.0)
+            if _rubberband_ok():
+                afilters.append(f"rubberband=pitch={ratio:.5f}:formant=preserved")
+            else:
+                # Without rubberband, the tape-speed way: pitch and tempo move
+                # together, then tempo is put back.
+                afilters += [f"asetrate={int(44100 * ratio)}", "aresample=44100",
+                             *_atempo_chain(1.0 / ratio)]
+        if speed != 1.0:
+            afilters += _atempo_chain(speed)
         # The audio is made exactly as long as the video, which is not the
         # same as being as long as the source span.
         #
@@ -1348,7 +1642,6 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         #
         # apad then atrim pins the sound to the picture's own length, so the
         # walk cannot start.
-        quantised = round(dur * _FPS) / _FPS
         afilters.append("apad")
         afilters.append(f"atrim=end={quantised:.4f}")
         afilters.append("asetpts=PTS-STARTPTS")
@@ -1408,7 +1701,7 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
 # ── Main generation ───────────────────────────────────────────────────────────
 
 def generate_video(text: str, progress=None,
-                   subtitles: bool = False) -> dict[str, Any]:
+                   subtitles: bool = False, options: dict | None = None) -> dict[str, Any]:
     """Turn *text* into a video.
 
     `progress`, if given, is called as progress(stage, done, total) at points
@@ -1417,19 +1710,152 @@ def generate_video(text: str, progress=None,
     than leaving a request open for minutes -- which is what used to happen,
     until a long sentence outlasted the proxy and returned 504.
     """
-    segments, report = resolve_text(text, progress=progress)
+    options = generation_options(options)
+    segments, report = resolve_text(text, progress=progress, options=options)
     if not segments:
-        return {**report, "video_url": None}
+        return {**report, "video_url": None, "options": options}
 
     run_id = uuid.uuid4().hex[:10]
     os.makedirs("output", exist_ok=True)
     final_path = os.path.join("output", f"{run_id}.mp4")
 
-    _build_video(segments, final_path, progress=progress, subtitles=subtitles)
-    return {**report, "video_url": f"/output/{run_id}.mp4"}
+    _build_video(segments, final_path, progress=progress, subtitles=subtitles,
+                 options=options)
+    return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
+            "timeline": timeline(segments, options)}
 
 
-def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
+def _hold(seg: dict[str, Any], a: float, b: float, factor: float) -> list[dict[str, Any]]:
+    """*seg* split so that source seconds a..b play *factor* times longer.
+
+    Three pieces, butt-joined with no fades between them so the word plays as
+    one sound: what comes before the held part, the held part, and what comes
+    after. The outer two keep the segment's own edges -- its padding, its
+    fades, its pause -- and the middle one is cut exactly.
+    """
+    a = max(seg["start_time"], a)
+    b = min(seg["end_time"], b)
+    if b - a < 0.02 or factor <= 1.0:
+        return [seg]
+    pieces = []
+    if a - seg["start_time"] >= 0.01:
+        head = dict(seg, end_time=a, next_start=a, fade_out=0.0, pause_after=0.0)
+        head.pop("stretch", None)
+        pieces.append(head)
+    mid = dict(seg, start_time=a, end_time=b, prev_end=a, next_start=b,
+               fade_in=seg.get("fade_in") if not pieces else 0.0,
+               fade_out=0.0, pause_after=0.0, stretch=factor, subword=True)
+    pieces.append(mid)
+    if seg["end_time"] - b >= 0.01:
+        tail = dict(seg, start_time=b, prev_end=b, fade_in=0.0)
+        tail.pop("stretch", None)
+        pieces.append(tail)
+    else:
+        mid["fade_out"] = seg.get("fade_out")
+        mid["pause_after"] = seg.get("pause_after", 0.0)
+        mid["next_start"] = seg.get("next_start")
+    return pieces
+
+
+def _letter_span(seg: dict[str, Any], word: str, pos: int, keep: int) -> tuple[float, float]:
+    """Where letters pos..pos+keep of *word* are sounded inside a whole-word clip."""
+    try:
+        from app.forced_align import char_times
+        ct = char_times(seg)
+    except Exception:
+        ct = None
+    letters = [ch for ch in word if ch.isalpha()]
+    if ct and len(ct) == len(letters) and pos + keep <= len(ct):
+        # From where the letter starts to where the next one does. The
+        # aligner's own end for a letter is no use here: CTC marks a sound in
+        # a frame or two, so the "s" of "yes" came back 30ms long when it
+        # sounds for nearly 300 -- and a 30ms slice held for half a second is
+        # thirteen times its length, which nothing can stretch without the
+        # sound falling apart.
+        a = seg["start_time"] + ct[pos][1]
+        b = (seg["start_time"] + ct[pos + keep][1] if pos + keep < len(ct)
+             else seg["end_time"])
+        if b > a:
+            return a, b
+    # No alignment: the letters' share of the word, which is rough but lands
+    # on the right part of it.
+    d = seg["end_time"] - seg["start_time"]
+    n = max(1, len(letters))
+    return seg["start_time"] + d * pos / n, seg["start_time"] + d * (pos + keep) / n
+
+
+def _stretch_word(segs: list[dict[str, Any]], word: str, marks, per_letter: float) -> list[dict[str, Any]]:
+    """The segments that say *word*, with each marked letter held longer."""
+    if not segs or not marks:
+        return segs
+    from app.phonemes import _is_vowel, word_to_phonemes
+
+    # Where each held letter is, worked out on the segments as they came --
+    # before any of them is split, since a split moves nothing but does
+    # replace the piece a later letter would have been looked up in.
+    holds = []
+    for pos, keep, extra in marks:
+        if len(segs) == 1 and not segs[0].get("unit"):
+            seg = segs[0]
+            a, b = _letter_span(seg, word, pos, keep)
+        else:
+            # A spliced word: the piece that says this letter's sound.
+            phones = word_to_phonemes(word) or []
+            if not phones:
+                continue
+            idx = min(len(phones) - 1, int(pos * len(phones) / max(1, len(word))))
+            vowel = word[pos] in "aeiouy"
+            target = min(range(len(phones)),
+                         key=lambda j: (_is_vowel(phones[j]) != vowel, abs(j - idx)))
+            seg = next((s for s in segs if s.get("unit") and
+                        s["unit"]["at"] <= target < s["unit"]["at"] + len(s["unit"]["phones"])), None)
+            if seg is None:
+                seg = max(segs, key=lambda s: s["end_time"] - s["start_time"])
+                d = seg["end_time"] - seg["start_time"]
+                a, b = seg["start_time"] + 0.25 * d, seg["start_time"] + 0.75 * d
+            else:
+                d = (seg["end_time"] - seg["start_time"]) / len(seg["unit"]["phones"])
+                j = target - seg["unit"]["at"]
+                a, b = seg["start_time"] + d * j, seg["start_time"] + d * (j + 1)
+        if b - a < 0.03:                    # too short to hold: widen it inside the piece
+            mid = (a + b) / 2
+            a = max(seg["start_time"], mid - 0.015)
+            b = min(seg["end_time"], a + 0.03)
+        holds.append((a, b, extra, seg["source_file"], id(seg)))
+
+    added = 0.0
+    originals = {id(s) for s in segs}
+    for a, b, extra, src, owner in sorted(holds, key=lambda h: -h[0]):   # right to left
+        want = min(extra * per_letter, _MAX_STRETCH_ADD - added)
+        if want <= 0.01:
+            continue
+        mid = (a + b) / 2
+        # The piece holding it now: the segment itself if it has not been
+        # split, or whichever of its pieces still covers this span.
+        piece = next((s for s in segs if id(s) == owner), None) if owner in originals else None
+        if piece is None or not (piece["start_time"] <= mid < piece["end_time"]):
+            piece = next((s for s in segs if s["source_file"] == src and not s.get("stretch")
+                          and s["start_time"] <= mid < s["end_time"]), None)
+        if piece is None:
+            continue
+        span = b - a
+        if (span + want) / span > _MAX_STRETCH:
+            # Held too hard, a slice smears into a fading buzz. Take more of
+            # the sound around it instead, as far as the piece allows.
+            wider = want / (_MAX_STRETCH - 1.0)
+            grow = (wider - span) / 2
+            a = max(piece["start_time"], a - grow)
+            b = min(piece["end_time"], b + grow)
+            span = b - a
+        factor = min(_MAX_STRETCH, (span + want) / span)
+        at = segs.index(piece)
+        segs = segs[:at] + _hold(piece, a, b, factor) + segs[at + 1:]
+        added += span * (factor - 1.0)
+    return segs
+
+
+def resolve_text(text: str, progress=None,
+                 options: dict | None = None) -> tuple[list[dict], dict[str, Any]]:
     """Turn *text* into the segments that would say it, without encoding.
 
     Split out of generate_video so the YTPMV sampler can have a word said by
@@ -1443,14 +1869,18 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
         if progress:
             progress(stage, done, total)
 
-    marked = tokenize_marked(text)
-    if not marked:
+    options = generation_options(options)
+    word_gap, stop_pause = options["word_gap"], options["sentence_pause"]
+    full = tokenize_full(text)
+    if not full:
         return [], {"found": [], "spliced": [], "missing": [], "runs": [],
                     "tokens": []}
-    words   = [w  for w, _e, _n, _r in marked]
-    ends    = [e  for _w, e, _n, _r in marked]   # ends[i] = word i ends a sentence
-    is_noise = [n for _w, _e, n, _r in marked]   # is_noise[i] = *wrapped* noise token
-    is_rev   = [r for _w, _e, _n, r in marked]   # is_rev[i]   = ~wrapped~ reversed token
+    words   = [t["word"] for t in full]
+    ends    = [t["ends"] for t in full]      # ends[i] = word i ends a sentence
+    is_noise = [t["noise"] for t in full]    # is_noise[i] = *wrapped* noise token
+    is_rev   = [t["reverse"] for t in full]  # is_rev[i]   = ~wrapped~ reversed token
+    stretch  = [t["stretch"] for t in full]  # stretch[i] = held letters: loooong
+    shown    = [t["shown"] for t in full]
 
     _say("loading", 0, 1)
     _ensure_cache()
@@ -1493,7 +1923,7 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
             # Copied, like every other segment. A noise carries no caption:
             # a spew is not a word, and writing "*spew*" across the picture
             # explains a joke that did not need it.
-            segments.append(dict(nz))
+            segments.append(dict(nz, _tok=len(tokens) - 1))
             log.info("  NOISE    %-14s  (%s)", word,
                      nz["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1])
             if is_rev[i]:
@@ -1501,23 +1931,23 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
                     seg["reverse"] = True
             if len(segments) > seg_before:
                 if ends[i]:
-                    idle = _pick_idle(_STOP_PAUSE)
+                    idle = _pick_idle(stop_pause) if stop_pause >= 0.1 else None
                     if idle is not None:
                         segments.append(idle)
-                    else:
+                    elif stop_pause > 0:
                         # No quiet footage to hold on. Freeze the last frame and
                         # pad the audio instead -- silent because it is made,
                         # not found.
                         segments[-1]["pause_after"] = max(
-                            segments[-1].get("pause_after", 0.0), _STOP_PAUSE)
-                elif i < n - 1:
-                    segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), _WORD_GAP)
+                            segments[-1].get("pause_after", 0.0), stop_pause)
+                elif i < n - 1 and word_gap > 0:
+                    segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), word_gap)
             i += 1
             continue
 
         # 1) Prefer a contiguous phrase already spoken in some source — but never
         # let a run cross a full stop (the pause belongs at the sentence end).
-        run = _find_run(words, i)
+        run = _find_run(words, i) if options["phrases"] and not stretch[i] else None
         if run:
             src, s, _e, length = run
             cap = length
@@ -1525,7 +1955,7 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
                 # A run is one clip, so it is reversed or not as a whole. Where
                 # the mark changes, the run has to end -- otherwise marking one
                 # word would quietly reverse the words either side of it.
-                if ends[i + k] or is_rev[i + k] != is_rev[i + k + 1]:
+                if ends[i + k] or is_rev[i + k] != is_rev[i + k + 1] or stretch[i + k + 1]:
                     cap = k + 1
                     break
             if cap >= 2:
@@ -1535,7 +1965,11 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
                 # the whole phrase on screen at once.
                 _rseq = _ordered_by_source[src]        # type: ignore[index]
                 merged["subtitle_words"] = [
-                    [words[i + k], _rseq[s + k]["start_time"], _rseq[s + k]["end_time"]]
+                    [shown[i + k], _rseq[s + k]["start_time"], _rseq[s + k]["end_time"]]
+                    for k in range(cap)
+                ]
+                merged["_tokens"] = [
+                    (len(tokens) + k, _rseq[s + k]["start_time"], _rseq[s + k]["end_time"])
                     for k in range(cap)
                 ]
                 segments.append(merged)
@@ -1561,7 +1995,7 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
         if not used_run:
             cap = 1
             word = words[i]
-            clip = _find_clip(word, cbw)   # noises only via explicit *word* tokens
+            clip = _find_clip(word, cbw, options["clean_takes"])   # noises only via explicit *word* tokens
             if clip:
                 found.append(word)
                 tokens.append({
@@ -1573,8 +2007,15 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
                 # below. Appending it directly meant reversing a word once
                 # left that clip reversed for every later generation in the
                 # same process, silently and for as long as the process ran.
-                clip = dict(clip, subtitle=word)
-                segments.append(clip)
+                clip = dict(clip, subtitle=shown[i], _tok=len(tokens) - 1)
+                if stretch[i]:
+                    held = _stretch_word([clip], word, stretch[i], options["stretch"])
+                    for piece in held:
+                        piece["_tok"] = len(tokens) - 1
+                    tokens[-1]["stretched"] = shown[i]
+                    segments.extend(held)
+                else:
+                    segments.append(clip)
                 fname = clip["source_file"].rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
                 log.info("  FOUND    %-14s  %.3f->%.3f  (%s)",
                          word, clip["start_time"], clip["end_time"], fname)
@@ -1595,7 +2036,13 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
                     # the word it was cut from, so the caption stays put while
                     # the pieces play rather than flickering through them.
                     for unit in segs:
-                        unit["subtitle"] = word
+                        unit["subtitle"] = shown[i]
+                        unit["_tok"] = len(tokens) - 1
+                    if stretch[i]:
+                        segs = _stretch_word(segs, word, stretch[i], options["stretch"])
+                        for unit in segs:
+                            unit["_tok"] = len(tokens) - 1
+                        tokens[-1]["stretched"] = shown[i]
                     segments.extend(segs)
                     log.info("  %-8s %-14s  -> %s", "APPROX" if approx else "SPLICE",
                              word, "+".join(s["word"] for s in segs))
@@ -1613,14 +2060,14 @@ def resolve_text(text: str, progress=None) -> tuple[list[dict], dict[str, Any]]:
         # words — but only if this word actually produced audio.
         if len(segments) > seg_before:
             if ends[last_idx]:
-                idle = _pick_idle(_STOP_PAUSE)
+                idle = _pick_idle(stop_pause) if stop_pause >= 0.1 else None
                 if idle is not None:
                     segments.append(idle)
-                else:
+                elif stop_pause > 0:
                     segments[-1]["pause_after"] = max(
-                        segments[-1].get("pause_after", 0.0), _STOP_PAUSE)
-            elif last_idx < n - 1:
-                segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), _WORD_GAP)
+                        segments[-1].get("pause_after", 0.0), stop_pause)
+            elif last_idx < n - 1 and word_gap > 0:
+                segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), word_gap)
 
         i += cap
 

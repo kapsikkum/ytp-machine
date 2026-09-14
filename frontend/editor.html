@@ -4,150 +4,142 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>corpus editor · ytp machine</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
 <style>
-  :root {
-    --yellow: #ffe500;
-    --green:  #00ff88;
-    --red:    #ff3c3c;
-    --blue:   #7dd3fc;
-    --dark:   #0d0d0d;
-    --panel:  #141414;
-    --border: #2a2a2a;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--dark); color: #e8e8e8;
-    font-family: 'Roboto Mono', monospace; font-size: 0.8rem;
-    min-height: 100vh; padding: 1rem;
-  }
-  a { color: var(--yellow); }
-  h1 { font-size: 0.95rem; color: var(--yellow); letter-spacing: 0.06em; }
-  header { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
-           margin-bottom: 0.9rem; }
-  header .muted { color: #777; }
-
-  select, input, button {
-    font: inherit; background: var(--panel); color: #e8e8e8;
-    border: 1px solid var(--border); border-radius: 4px; padding: 0.3rem 0.5rem;
-  }
-  button { cursor: pointer; }
-  button:hover:not(:disabled) { border-color: #4a4a4a; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.primary, #pack-export { color: var(--dark); background: var(--yellow); border-color: var(--yellow); font-weight: 700; }
-  button.danger  { color: var(--red); border-color: #5a0000; }
-
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 1rem; align-items: start; }
+  body { font-size: 13px; }
+  .page { width: min(1400px, 100% - 2rem); margin: 1rem auto 3rem; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 23rem; gap: 1rem; align-items: start; }
   @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; }
-  .panel h2 { font-size: 0.75rem; color: #777; letter-spacing: 0.08em;
-              text-transform: uppercase; margin-bottom: 0.6rem; font-weight: 400; }
+  .panel {
+    background: linear-gradient(180deg, #161618, var(--surface));
+    border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 10px 40px rgba(0,0,0,.3); padding: 1rem;
+  }
+  .panel h2 { font-size: .68rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); font-weight: 500; margin-bottom: .75rem; }
 
-  video { width: 100%; max-height: 42vh; background: #000; border-radius: 4px; display: block; }
-  canvas { width: 100%; height: 120px; display: block; background: #0a0a0a;
-           border: 1px solid var(--border); border-radius: 4px; cursor: crosshair; }
-  .hint { color: #666; font-size: 0.7rem; margin-top: 0.4rem; line-height: 1.5; }
+  video { width: 100%; max-height: 42vh; background: #000; border-radius: 8px; display: block; }
+  canvas { width: 100%; height: 130px; display: block; background: #0a0a0b;
+           border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; }
+  .hint { margin-top: .5rem; }
 
   /* Above the canvas rather than beside it: these are used while looking at
      the waveform, and a control you have to look away from is a control you
      stop using. */
-  #tools { display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;
-           margin: 0.6rem 0 0.4rem; }
-  #tools label { color: #777; font-size: 0.7rem; display: flex; gap: 0.4rem;
-                 align-items: center; }
-  #tools input[type=range] { width: 8rem; accent-color: var(--yellow); padding: 0; }
-  #tools .val { color: var(--yellow); min-width: 2.6rem; text-align: right; }
-  #tools .grow { margin-left: auto; display: flex; gap: 0.4rem; }
+  #tools { display: flex; gap: 1.1rem; align-items: center; flex-wrap: wrap; margin: .75rem 0 .5rem; }
+  #tools label { color: var(--muted); font-size: .72rem; display: flex; gap: .5rem; align-items: center; }
+  #tools input[type=range] { width: 8.5rem; }
+  #tools .val { color: var(--yellow); min-width: 2.8rem; text-align: right; font-variant-numeric: tabular-nums; }
+  #tools .grow { margin-left: auto; display: flex; gap: .4rem; }
 
-  #words { display: flex; flex-wrap: wrap; gap: 0.3rem; max-height: 30vh; overflow-y: auto; }
+  #words { display: flex; flex-wrap: wrap; gap: .3rem; max-height: 32vh; overflow-y: auto; padding: .1rem; }
   .w {
-    background: #1b1b1b; border: 1px solid var(--border); border-radius: 3px;
-    padding: 0.15rem 0.4rem; cursor: pointer; white-space: nowrap;
+    background: var(--raised); border: 1px solid var(--line-2); border-radius: 7px;
+    padding: .2rem .45rem; cursor: pointer; white-space: nowrap;
+    transition: border-color .12s, background .12s, color .12s;
   }
-  .w:hover { border-color: #4a4a4a; }
+  .w:hover { border-color: #4a4a52; color: var(--text); }
   .w.sel  { background: var(--yellow); color: #000; border-color: var(--yellow); font-weight: 700; }
-  .w.flag { border-color: #6a4a00; color: #ffbe4d; }
-  .w.down { border-color: #6e1f1f; color: #ff9a9a; }
+  .w.flag { border-color: #5a4210; color: var(--amber); }
+  .w.down { border-color: #5a1f1f; color: #ff9a9a; }
   /* A clip nobody has measured the sounds of: its sub-word cuts are inferred
      from the spelling until somebody presses the button. */
-  .w.unaligned { border-style: dashed; border-color: #4a4a4a; }
+  .w.unaligned { border-style: dashed; border-color: #4a4a52; }
   /* Not the same fault: this one needs a pronunciation, not a button. */
-  .w.nopron { border-style: dashed; border-color: #6a4a00; color: #ffbe4d; }
-  #align { font-size: 0.7rem; padding: 0.2rem 0.5rem; }
-  #align.busy { color: var(--green); border-color: #0a5a30; }
+  .w.nopron { border-style: dashed; border-color: #5a4210; color: var(--amber); }
+  .w.noise { border-color: #164560; color: var(--blue); font-style: italic; }
+  .w.sel.flag { color: #000; }
+  #align { font-size: .72rem; }
+  #align.busy { color: var(--green); border-color: #1d4d39; }
 
   /* A native <details> rather than JS-toggled div: no state to keep in sync,
      and Escape/click-outside-to-close come for free. */
-  #pack { position: relative; font-size: 0.7rem; }
-  #pack summary { cursor: pointer; list-style: none; padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border); border-radius: 4px; color: #e8e8e8; }
+  #pack { position: relative; font-size: .75rem; }
+  #pack summary {
+    cursor: pointer; list-style: none; padding: .36rem .75rem;
+    border: 1px solid var(--line-2); border-radius: 8px; color: var(--text); background: var(--raised);
+    transition: border-color .15s;
+  }
   #pack summary::-webkit-details-marker { display: none; }
-  #pack summary:hover { border-color: #4a4a4a; }
+  #pack summary:hover { border-color: #4a4a52; }
   #pack[open] summary { border-color: var(--yellow); color: var(--yellow); }
-  #pack .body { position: absolute; top: calc(100% + 0.3rem); left: 0;
-    width: 17rem; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 6px; padding: 0.7rem; z-index: 30; }
+  #pack .body {
+    position: absolute; top: calc(100% + .4rem); right: 0; width: min(18rem, calc(100vw - 2rem));
+    background: #18181b; border: 1px solid var(--line-2); border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.55); padding: .85rem; z-index: 50;
+  }
+  @media (max-width: 900px) { #pack .body { right: auto; left: 0; } }
   #pack .body .row label { width: auto; }
-  #pack-export { display: block; text-align: center; text-decoration: none;
-    padding: 0.3rem 0.5rem; border-radius: 4px; }
+  #pack-export {
+    display: block; text-align: center; text-decoration: none; padding: .45rem .6rem; border-radius: 8px;
+    background: var(--yellow); color: #000; font-weight: 500;
+  }
+  #pack-export:hover { background: var(--yellow-2); }
   #pack-status { min-height: 1.1em; }
   #pack-status.err { color: var(--red); }
   #pack-status.ok  { color: var(--green); }
-  #ratings .r { display: flex; gap: 0.4rem; align-items: center;
-    margin-bottom: 0.3rem; font-size: 0.75rem; }
+  #ratings .r { display: flex; gap: .45rem; align-items: center; margin-bottom: .35rem; font-size: .76rem; }
   #ratings .r b { flex: 1; font-weight: 500; }
   #ratings .r .s { color: var(--blue); min-width: 2rem; text-align: right; }
   #ratings .r .s.bad { color: #ff9a9a; }
-  .w.noise { border-color: #0e4a6e; color: var(--blue); font-style: italic; }
-  .w.sel.flag { color: #000; }
 
-  .row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; }
-  .row label { color: #777; width: 3.6rem; flex: none; }
+  .row { display: flex; gap: .45rem; align-items: center; margin-bottom: .55rem; }
+  .row label { color: var(--muted); width: 3.6rem; flex: none; font-size: .75rem; }
   .row input { flex: 1; min-width: 0; }
-  .nudge { display: flex; gap: 0.25rem; }
-  .nudge button { padding: 0.2rem 0.35rem; font-size: 0.7rem; }
-  .meta { color: #777; line-height: 1.7; }
-  .meta b { color: #e8e8e8; font-weight: 400; }
-  #status { margin-top: 0.6rem; min-height: 1.2em; }
+  .nudge { display: flex; gap: .25rem; }
+  .nudge button { padding: .22rem .4rem; font-size: .7rem; border-radius: 6px; }
+  .meta { color: var(--muted); line-height: 1.7; }
+  .meta b { color: var(--text); font-weight: 500; }
+  #status { margin-top: .65rem; min-height: 1.2em; color: var(--muted); }
   #status.err { color: var(--red); }
   #status.ok  { color: var(--green); }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>CORPUS EDITOR</h1>
-  <select id="corpus" title="Which voice to edit. This is the app-wide
+<header class="top">
+  <a class="brand" href="/">YTP<span>MACHINE</span></a>
+  <nav aria-label="Pages">
+    <a href="/">say</a>
+    <a href="/ytpmv.html">ytpmv</a>
+    <a href="/splice.html">splice</a>
+    <a class="on" href="/editor.html">corpus</a>
+  </nav>
+  <div class="spacer"></div>
+  <label class="pill-select">voice
+    <select id="corpus" title="Which voice to edit. This is the app-wide
 selection: the generator will serve this corpus too."></select>
-  <select id="source"></select>
+  </label>
+</header>
+<div class="subbar">
+  <span class="title">corpus editor</span>
+  <select id="source" title="Which video"></select>
   <span class="muted" id="counts"></span>
   <button id="align" style="display:none"></button>
+  <span class="grow"></span>
   <details id="pack">
-    <summary>corpus pack ▾</summary>
-    <div class="body">
-      <a id="pack-export" href="#" class="primary" download>↓ export current corpus</a>
-      <div class="hint" style="margin:0.4rem 0 0.7rem">
-        A .tar.zst of the database, videos, transcripts and pronunciation
-        list — move it to another machine, or keep it as a backup.
+      <summary>corpus pack ▾</summary>
+      <div class="body">
+        <a id="pack-export" href="#" class="primary" download>↓ export current corpus</a>
+        <div class="hint" style="margin:0.4rem 0 0.7rem">
+          A .tar.zst of the database, videos, transcripts and pronunciation
+          list — move it to another machine, or keep it as a backup.
+        </div>
+        <div class="row"><input id="pack-name" placeholder="new corpus name"></div>
+        <div class="row"><input type="file" id="pack-file" accept=".zst,.gz,.tar,.tgz" style="flex:1"></div>
+        <div class="row">
+          <label style="display:flex;gap:0.35rem;align-items:center">
+            <input type="checkbox" id="pack-force" style="flex:none;width:auto">
+            overwrite if it exists
+          </label>
+        </div>
+        <div class="row"><button id="pack-import" class="primary" style="flex:1">↑ import as new corpus</button></div>
+        <div id="pack-status"></div>
       </div>
-      <div class="row"><input id="pack-name" placeholder="new corpus name"></div>
-      <div class="row"><input type="file" id="pack-file" accept=".zst,.gz,.tar,.tgz" style="flex:1"></div>
-      <div class="row">
-        <label style="display:flex;gap:0.35rem;align-items:center">
-          <input type="checkbox" id="pack-force" style="flex:none;width:auto">
-          overwrite if it exists
-        </label>
-      </div>
-      <div class="row"><button id="pack-import" class="primary" style="flex:1">↑ import as new corpus</button></div>
-      <div id="pack-status"></div>
-    </div>
-  </details>
-  <a href="/splice.html" style="margin-left:auto">splice editor →</a>
-  <a href="/">← generator</a>
-</header>
+    </details>
+</div>
+<div class="page">
 
 <div class="layout">
   <div>
@@ -183,7 +175,7 @@ selection: the generator will serve this corpus too."></select>
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel side">
     <h2>Selected <button id="deselect" style="float:right;padding:0.05rem 0.35rem;
         font-size:0.65rem">deselect (esc)</button></h2>
     <div id="editor" style="display:none">
@@ -249,6 +241,8 @@ non-verbal sound. Whisper cannot hear these at all.">add noise</button>
       videos themselves, only to the corpus database.
     </div>
   </div>
+</div>
+
 </div>
 
 <script>

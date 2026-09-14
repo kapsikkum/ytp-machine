@@ -28,6 +28,10 @@ class GenerateRequest(BaseModel):
     # -- that is half the joke -- and the words on screen are what let someone
     # hear what it was going for. Pass false to turn them off.
     subtitles: bool = True
+    # How it is said: speed, pitch, gaps, how long a stretched letter is held,
+    # and whether to prefer clean takes and real phrases. See
+    # app.generate.OPTIONS; anything left out takes its default.
+    options: dict = {}
 
 
 class SpliceModeRequest(BaseModel):
@@ -68,7 +72,7 @@ def generate(req: GenerateRequest, wait: bool = False):
         log.info("GENERATE (sync)  %r", text)
         t0 = time.perf_counter()
         try:
-            result = generate_video(text, subtitles=req.subtitles)
+            result = generate_video(text, subtitles=req.subtitles, options=req.options)
         except RuntimeError as exc:
             detail = str(exc)
             crowded = "temporarily unavailable" in detail or "Too many open files" in detail
@@ -95,7 +99,7 @@ def generate(req: GenerateRequest, wait: bool = False):
             })
         return result
 
-    job = jobs.submit(text, subtitles=req.subtitles)
+    job = jobs.submit(text, subtitles=req.subtitles, options=req.options)
     log.info("QUEUE  %s  %r", job.id, text[:80])
     body = job.as_dict()
     body["position"] = jobs.position(job.id)

@@ -132,7 +132,7 @@ def _run(job: Job) -> None:
         else:
             from app.generate import generate_video
             job.result = generate_video(job.text, progress=progress,
-                                        subtitles=job.subtitles)
+                                        subtitles=job.subtitles, options=job.params)
         job.status = "done"
         job.stage = "finished"
     except RuntimeError as exc:
@@ -193,9 +193,10 @@ def _ensure_worker() -> None:
         _worker.start()
 
 
-def submit(text: str, subtitles: bool = False) -> Job:
+def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None) -> Job:
     _ensure_worker()
-    job = Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles)
+    job = Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
+              params=dict(options or {}))
     with _lock:
         _jobs[job.id] = job
         _order.append(job.id)
