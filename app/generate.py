@@ -60,6 +60,9 @@ OPTIONS = {
     "stretch":        (0.09, 0.02, 0.35),  # seconds added per extra letter: loooong
     "clean_takes":    (True, None, None),  # prefer takes with a pause around them
     "phrases":        (True, None, None),  # use real spoken runs of several words
+    "sing":           (False, None, None), # every word hard-tuned onto a tune; see app/sing.py
+    "sing_key":       (0.0, 0.0, 11.0),    # C to B
+    "sing_shape":     (0.0, 0.0, 4.0),     # index into sing.SHAPES
 }
 
 _MAX_STRETCH_ADD = 3.0   # no one word grows by more than this
@@ -1721,8 +1724,15 @@ def generate_video(text: str, progress=None,
 
     _build_video(segments, final_path, progress=progress, subtitles=subtitles,
                  options=options)
+    spans = timeline(segments, options)
+    if options["sing"]:
+        from app import sing
+        if progress:
+            progress("singing", 0, 1)
+        sing.sing(final_path, spans, int(options["sing_key"]), int(options["sing_shape"]),
+                  seed=hash(text) & 0xFFFF)
     return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
-            "timeline": timeline(segments, options)}
+            "timeline": spans}
 
 
 def _hold(seg: dict[str, Any], a: float, b: float, factor: float) -> list[dict[str, Any]]:

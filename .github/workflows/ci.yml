@@ -39,6 +39,8 @@ jobs:
         # held word is cut into meeting with no gap; and the timeline the page
         # highlights words by adding up to what the encoder makes.
         run: python tests/test_generate_options.py
+      - name: Singing
+        run: python tests/test_sing.py
 
       - name: Bundle round-trip
         # A corpus bundle that packs, checksums and lists cleanly can still be

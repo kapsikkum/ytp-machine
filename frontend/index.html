@@ -339,12 +339,20 @@
       hint: 'How long a . ! or ? waits before the next sentence.' },
     { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
       hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
+    { key: 'sing_key', name: 'sing: key', min: 0, max: 11, step: 1, def: 0,
+      fmt: v => ['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'][v],
+      hint: 'With sing on, the key the tune is in.' },
+    { key: 'sing_shape', name: 'sing: tune', min: 0, max: 4, step: 1, def: 0,
+      fmt: v => ['up and down', 'rising', 'falling', 'wandering', 'twinkle twinkle'][v],
+      hint: 'With sing on, the shape of the tune: one note a word.' },
   ];
   const TOGGLES = [
     { key: 'clean_takes', name: 'clean takes', def: true,
       hint: 'Prefer recordings of a word said before a pause. Far fewer clipped endings and bits of the next word, at the cost of some variety.' },
     { key: 'phrases', name: 'real phrases', def: true,
       hint: 'When several words were said together somewhere, play that recording instead of cutting word by word. Off is choppier.' },
+    { key: 'sing', name: 'sing', def: false,
+      hint: 'Every word hard-tuned onto a note of a tune, autotune style. Pick the key and tune above. Held letters make longer notes.' },
   ];
   const DEFAULTS = Object.fromEntries([...SLIDERS, ...TOGGLES].map(o => [o.key, o.def]));
   const PRESETS = [
@@ -354,6 +362,7 @@
     { name: 'chipmunk', opts: { pitch: 7, speed: 1.2 } },
     { name: 'slow and low', opts: { pitch: -5, speed: 0.75, sentence_pause: 0.9 } },
     { name: 'drawn out', opts: { stretch: 0.2, word_gap: 0.08, speed: 0.9 } },
+    { name: 'sing', opts: { sing: true, stretch: 0.15, word_gap: 0.06 } },
   ];
   let opts = Object.assign({}, DEFAULTS, store.get('ytp-opts', {}));
 
@@ -673,7 +682,7 @@
   // ── Generating ────────────────────────────────────────────────────────────
   let busy = false, lastText = '';
   const STAGE = { waiting: 'waiting to start', loading: 'loading the voice', resolving: 'finding the words',
-                  encoding: 'making the video', joining: 'joining it together', finished: 'finishing' };
+                  encoding: 'making the video', joining: 'joining it together', singing: 'singing it', finished: 'finishing' };
 
   function setStatus(msg, error = false) { statusEl.textContent = msg; statusEl.className = error ? 'error' : ''; }
   function progress(fraction) {

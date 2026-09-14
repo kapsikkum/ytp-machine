@@ -146,7 +146,7 @@ def _yin_block(frames: np.ndarray, W: int, tmin: int, tmax: int, sr: int):
 
 
 def track_f0(x: np.ndarray, sr: int = SR, fmin: float = _FMIN,
-             fmax: float = _FMAX) -> F0Track:
+             fmax: float = _FMAX, aperiodic: float = _APERIODIC) -> F0Track:
     """Frame-by-frame pitch by YIN, with a voiced/unvoiced decision."""
     W = int(_FRAME * sr)
     hop = int(_HOP * sr)
@@ -170,7 +170,7 @@ def track_f0(x: np.ndarray, sr: int = SR, fmin: float = _FMIN,
     rms = np.concatenate(rmss)
 
     loud = rms > max(1e-4, _SILENCE * float(rms.max(initial=0.0)))
-    voiced = loud & (ap < _APERIODIC)
+    voiced = loud & (ap < aperiodic)
 
     # A voiced run shorter than 3 frames is a click YIN happened to like.
     v = voiced.copy()
@@ -376,10 +376,10 @@ def _resample(x: np.ndarray, ratio: float) -> np.ndarray:
 class Voice:
     """A sample, measured once, that can be sung on any note."""
 
-    def __init__(self, x: np.ndarray, sr: int = SR):
+    def __init__(self, x: np.ndarray, sr: int = SR, aperiodic: float = _APERIODIC):
         self.x = np.asarray(x, dtype=np.float32)
         self.sr = sr
-        self.track = track_f0(self.x, sr)
+        self.track = track_f0(self.x, sr, aperiodic=aperiodic)
         self.info = describe(self.track, len(self.x) / sr)
         self.marks, self.periods, self.mvoiced = pitch_marks(self.x, self.track, sr)
         vt = self.track.times[self.track.voiced]
