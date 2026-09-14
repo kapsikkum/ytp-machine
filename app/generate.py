@@ -63,6 +63,11 @@ OPTIONS = {
     "sing":           (False, None, None), # every word hard-tuned onto a tune; see app/sing.py
     "sing_key":       (0.0, 0.0, 11.0),    # C to B
     "sing_shape":     (0.0, 0.0, 4.0),     # index into sing.SHAPES
+    "sing_amount":    (1.0, 0.0, 1.0),     # 1 hard-tuned, 0 left as spoken
+    "sing_vibrato":   (0.0, 0.0, 1.0),     # semitones either side
+    "sing_cute":      (0.0, 0.0, 1.0),     # higher, and a smaller throat
+    "sing_midi":      ("", None, None),    # an uploaded YTPMV MIDI to take the tune from
+    "sing_part":      ("", None, None),    # which part of it; the lead when empty
 }
 
 _MAX_STRETCH_ADD = 3.0   # no one word grows by more than this
@@ -80,6 +85,9 @@ def generation_options(given: dict | None = None) -> dict[str, Any]:
         v = given.get(key, default)
         if isinstance(default, bool):
             out[key] = bool(v)
+            continue
+        if isinstance(default, str):
+            out[key] = re.sub(r"[^\w.-]", "", str(v or ""))[:64]
             continue
         try:
             v = float(v)
@@ -801,10 +809,16 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
     list from unstretch() or empty, and *shown* is how it was typed, for the
     caption -- a stretched word reads "loooong" on screen, not "long".
     """
+    from app.sing import MARK, parse_mark
     out: list[dict[str, Any]] = []
     for token in re.split(r"\s+", text.strip()):
         if not token:
             continue
+        # hello^+2 or hello^A3: where the word sits when it is sung.
+        m = MARK.fullmatch(token)
+        note = None
+        if m and m.group(1):
+            token, note = m.group(1) + m.group(3), parse_mark(m.group(2))
         rev = False
         m = re.fullmatch(r"~(.+?)~([.!?\"')\]]*)", token)
         if m:
@@ -814,19 +828,19 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
         m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
         if m:
             out.append({"word": m.group(1).lower(), "ends": ends, "noise": True,
-                        "reverse": rev, "stretch": [], "shown": m.group(1).lower()})
+                        "reverse": rev, "stretch": [], "shown": m.group(1).lower(), "note": note})
             continue
         stretched = None if _known_word(re.sub(r"[^\w]", "", token).lower()) else unstretch(token)
         if stretched:
             word, marks = stretched
             out.append({"word": word, "ends": ends, "noise": False, "reverse": rev,
-                        "stretch": marks,
+                        "stretch": marks, "note": note,
                         "shown": re.sub(r"[^\w']", "", token).lower()})
             continue
         words = _expand_token(token)
         for k, w in enumerate(words):
             out.append({"word": w, "ends": ends and k == len(words) - 1, "noise": False,
-                        "reverse": rev, "stretch": [], "shown": w})
+                        "reverse": rev, "stretch": [], "shown": w, "note": note})
     if out:
         out[-1]["ends"] = True
     return out
@@ -1233,7 +1247,11 @@ def _drawtext(text: str, font: str, window: tuple[float, float] | None = None) -
     evaluated.
     """
     size = _cap_size(text)
-    for ch in ("\\", "'", ":"):
+    # Nothing escapes a quote inside a quoted filter argument -- "assumin\'"
+    # ended the quote early and failed the whole chunk -- so an apostrophe is
+    # drawn as the typographic one, which reads the same.
+    text = text.replace("'", "’")
+    for ch in ("\\", ":"):
         text = text.replace(ch, "\\" + ch)
     font = font.replace("\\", "/").replace(":", "\\:")
     f = (f"drawtext=fontfile='{font}':text='{text}':expansion=none"
@@ -1729,8 +1747,10 @@ def generate_video(text: str, progress=None,
         from app import sing
         if progress:
             progress("singing", 0, 1)
-        sing.sing(final_path, spans, int(options["sing_key"]), int(options["sing_shape"]),
-                  seed=hash(text) & 0xFFFF)
+        marks = [t["note"] for t in tokenize_full(text)]
+        sing.sing(final_path, spans, options,
+                  marks if len(marks) == len(report.get("tokens", [])) else None,
+                  seed=sum(map(ord, text)) & 0xFFFF)
     return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
             "timeline": spans}
 

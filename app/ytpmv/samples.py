@@ -348,7 +348,13 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
             finally:
                 if os.path.exists(tmp):
                     os.remove(tmp)
-            x = decode_audio(mp4)
+            try:
+                x = decode_audio(mp4)
+            except RuntimeError as exc:
+                # Built fine and still no sound: the recording it was cut from
+                # has none. That is this word being unsayable, not a server fault.
+                os.remove(mp4)
+                raise SampleError(f'"{text}" has no sound in its recording') from exc
 
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))

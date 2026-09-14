@@ -697,7 +697,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if font:
         for i, p in enumerate(tiles):
             x, y = (i % cols) * tw, (i // cols) * th
-            text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+            text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
             f = font.replace("\\", "/").replace(":", "\\:")
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
                          f":fontsize={max(12, th // 12)}:borderw=2:bordercolor=black"
