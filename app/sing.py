@@ -77,7 +77,9 @@ def sing(path: str, spans: list[dict], key: int = 0, shape: int = 0, seed: int =
         out, _ = v.render(pitch.midi_to_hz(m), (b - a) / sr, "perfect", stretch=False)
         y[a:a + len(out)] = out[:b - a]
 
-    tmp = tempfile.mkdtemp(prefix="sing_")
+    # Beside the video, so the finished file is renamed into place rather than
+    # copied across filesystems (/tmp and output/ are different mounts in the container).
+    tmp = tempfile.mkdtemp(prefix="sing_", dir=os.path.dirname(os.path.abspath(path)))
     wav, mp4 = os.path.join(tmp, "sung.wav"), os.path.join(tmp, "sung.mp4")
     with wave.open(wav, "wb") as w:
         w.setnchannels(1)
