@@ -255,6 +255,86 @@ def _to_sr(x: np.ndarray, src: float, dst: float) -> np.ndarray:
     return np.interp(np.arange(n) * src / dst, np.arange(len(x)), x).astype(np.float32)
 
 
+# ── Drums off the sample channel ─────────────────────────────────────────────
+#
+# A snare, a hi-hat and a cymbal are noise, and FM cannot make noise. The
+# patches that tried were measured, and none of them was noise at all: the
+# snare's spectrum was a cluster of pure tones round 2.6 kHz, flat to three
+# decimal places of nothing, and it played as a shrill ping with no body. Turning
+# feedback up does not get past that on this chip -- which is why Mega Drive
+# games did not try either. Sonic's snares came off the DAC as eight-bit
+# samples, and so do these: a drum built the way a drum machine builds one,
+# then played through the same eight-bit, thirteen-kilohertz channel as the
+# voice, grain and aliasing included.
+#
+# Built once each, from a fixed seed, because a sample is the same recording
+# every time it is played.
+
+DAC_RATE = 13300.0
+_SAMPLED: dict[tuple[str, int], np.ndarray] = {}
+
+
+def _band_noise(n: int, sr: int, lo: float, hi: float, seed: int) -> np.ndarray:
+    """White noise with everything outside lo..hi Hz taken out, gently."""
+    rng = np.random.default_rng(seed)
+    spec = np.fft.rfft(rng.standard_normal(n))
+    fr = np.fft.rfftfreq(n, 1.0 / sr)
+    shape = 1.0 / (1.0 + (lo / np.maximum(fr, 1.0)) ** 4) / (1.0 + (fr / hi) ** 4)
+    y = np.fft.irfft(spec * shape, n)
+    return y / (np.abs(y).max() + 1e-12)
+
+
+def _drum_sample(name: str, sr: int) -> np.ndarray:
+    key = (name, sr)
+    if key in _SAMPLED:
+        return _SAMPLED[key]
+    if name == "md-snare":
+        n = int(0.30 * sr)
+        t = np.arange(n) / sr
+        # The shell: a tone dropping onto about 180 Hz, gone in a few tens of
+        # milliseconds. It is what makes it a drum rather than a hiss.
+        f = 180.0 + 110.0 * np.exp(-t / 0.010)
+        body = np.sin(2 * np.pi * np.cumsum(f) / sr) * np.exp(-t / 0.045)
+        # The wires: bright noise with a crack at the front and a short tail.
+        wires = _band_noise(n, sr, 1400.0, 9000.0, 7)
+        wires *= 0.55 * np.exp(-t / 0.012) + 0.75 * np.exp(-t / 0.085)
+        y = 0.62 * body + wires
+    elif name == "md-hat":
+        n = int(0.12 * sr)
+        t = np.arange(n) / sr
+        y = _band_noise(n, sr, 6500.0, 16000.0, 11) * np.exp(-t / 0.022)
+    else:                                            # md-cymbal
+        n = int(1.1 * sr)
+        t = np.arange(n) / sr
+        noise = _band_noise(n, sr, 3200.0, 15000.0, 13)
+        # A little of the metal: a few inharmonic partials under the wash.
+        ring = sum(np.sin(2 * np.pi * hz * t) for hz in (3150.0, 4730.0, 6410.0)) / 3.0
+        y = (noise + 0.18 * ring) * (0.35 * np.exp(-t / 0.03) + 0.65 * np.exp(-t / 0.38))
+    attack = min(n, int(0.0015 * sr))
+    y[:attack] *= np.linspace(0.0, 1.0, attack)
+    # Not quite full scale: the output stage's coupling overshoots a hard
+    # transient by a few percent, and a sample at 1.0 came out clipping.
+    y = (0.9 * y / (np.abs(y).max() + 1e-12)).astype(np.float32)
+    _SAMPLED[key] = y
+    return y
+
+
+SAMPLED_DRUMS = frozenset({"md-snare", "md-hat", "md-cymbal"})
+
+
+def _play_sample(name: str, dur: float, sr: int, level: float, tail: float) -> np.ndarray:
+    """A drum off the DAC: the sample, cut short if the next hit comes first."""
+    y = _drum_sample(name, sr)
+    n = min(len(y), max(2, int(round((dur + max(0.0, tail)) * sr))))
+    # Velocity scales the sample before it reaches eight bits, which is what a
+    # driver's volume did -- so a quiet hit is a coarser one, as it was.
+    out = dac(y[:n] * float(min(1.0, max(0.0, level))), DAC_RATE, sr).astype(np.float32)
+    edge = min(len(out), int(0.004 * sr))
+    if n < len(y) and edge > 1:
+        out[-edge:] *= np.linspace(1.0, 0.0, edge, dtype=np.float32)
+    return out
+
+
 def render_note(patch: Patch, hz: float, dur: float, sr: int = SR,
                 level: float = 1.0, tail: float = 0.18) -> np.ndarray:
     """*patch* playing *hz*, held down for *dur* seconds, as the chip would.
@@ -266,7 +346,11 @@ def render_note(patch: Patch, hz: float, dur: float, sr: int = SR,
 
     *level* is velocity, which the chip has no notion of: drivers did it by
     rewriting the carriers' levels, and so does this.
+
+    The noise drums are not FM at all; see SAMPLED_DRUMS.
     """
+    if patch.name in SAMPLED_DRUMS:
+        return _play_sample(patch.name, dur, sr, level, tail)
     n = max(2, int(round((dur + max(0.0, tail)) * FM_RATE)))
     t = np.arange(n) / FM_RATE
     ticks = np.arange(n) / 3.0
@@ -475,14 +559,14 @@ PATCHES.update({
              Op(mul=1, tl=64, ar=31, d1r=31, sl=15, d2r=31, rr=15),
              Op(mul=1, tl=2, ar=31, d1r=18, sl=15, d2r=0, rr=10))),
     "md-snare": Patch(
-        "md-snare", "feedback turned up until it stops being a pitch", alg=4, fb=7,
+        "md-snare", "a snare sample off the DAC, as Sonic played its drums", alg=4, fb=7,
         base_hz=196.0, gain=1.9,
         ops=(Op(mul=15, tl=22, ar=31, d1r=24, sl=15, d2r=0, rr=12),
              Op(mul=14, tl=10, ar=31, d1r=17, sl=15, d2r=0, rr=12),
              Op(mul=11, tl=26, ar=31, d1r=26, sl=15, d2r=0, rr=12),
              Op(mul=13, tl=14, ar=31, d1r=17, sl=15, d2r=0, rr=12))),
     "md-hat": Patch(
-        "md-hat", "the same, over almost before it starts", alg=4, fb=7,
+        "md-hat", "a hi-hat sample off the DAC, over almost before it starts", alg=4, fb=7,
         base_hz=880.0, gain=3.03,
         ops=(Op(mul=15, tl=20, ar=31, d1r=24, sl=15, d2r=0, rr=15),
              Op(mul=13, tl=16, ar=31, d1r=20, sl=15, d2r=0, rr=15),
@@ -496,7 +580,7 @@ PATCHES.update({
              Op(mul=1, tl=44, ar=31, d1r=20, sl=6, d2r=12, rr=12),
              Op(mul=1, tl=6, ar=31, d1r=16, sl=15, d2r=0, rr=10))),
     "md-cymbal": Patch(
-        "md-cymbal", "noise left to ring", alg=4, fb=7,
+        "md-cymbal", "a cymbal sample off the DAC, left to ring", alg=4, fb=7,
         base_hz=1100.0, gain=2.43,
         ops=(Op(mul=15, tl=24, ar=31, d1r=16, sl=15, d2r=0, rr=6),
              Op(mul=14, tl=14, ar=31, d1r=13, sl=15, d2r=0, rr=5),

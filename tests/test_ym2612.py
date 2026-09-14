@@ -297,7 +297,11 @@ song = Song([tune, low, kit], 2.0, 120.0, (4, 4), "D minor", 0.9)
 check("the lowest line is the bass", _r.bass_line(song), "low")
 check("which the NES gives its triangle", _r.chip_tone(low, "nes", as_bass=True), "triangle")
 check("the Master System its bass square", _r.chip_tone(low, "sms", as_bass=True), "psg-bass")
-check("but drums are never the bass", _r.chip_tone(kit, "nes", as_bass=True), "nes-kick")
+check("but drums are never the bass", _r.chip_tone(kit, "nes", as_bass=True, voice_drums=False), "nes-kick")
+check("and drums are the voice, off the chip's own sample channel", _r.chip_tone(kit, "nes"), "dpcm")
+check("on every machine", [_r.chip_tone(kit, c) for c in ("md", "sms", "snes", "gb", "opl3", "sid")],
+      ["dac", "psg-pcm", "brr", "gb-pcm", "sb16-pcm", "sid-digi"])
+check("unless there is no voice, when the chip's kit plays them", _r.chip_tone(kit, "md", voice_drums=False), "md-kick")
 named = Song([tune, _part("b", "bass", [40, 43]), low], 2.0, 120.0, (4, 4), "D minor", 0.9)
 check("when a part is already called the bass, nothing is guessed", _r.bass_line(named), None)
 high = Song([tune, _part("h", "rhythm", [67, 69, 71])], 2.0, 120.0, (4, 4), "C", 0.9)
@@ -347,7 +351,7 @@ st = _chipped({"tune": {"tone": "pulse"}, "low": {"tone": "voice"}}, "sid")
 check("a chosen instrument outlives the switch, from another machine too", st["tune"]["tone"], "pulse")
 check("voice keeps a part as him on a chipped song", st["low"]["tone"], "clean")
 check("and leaves the octave the voice wanted", st["low"]["octave"], -2)
-check("the kit still follows the chip", st["kit"]["tone"], "sid-kick")
+check("the drums are the voice through the chip", st["kit"]["tone"], "sid-digi")
 check("every part knows the chip, chosen or not, so a SID voice gets the right SID",
       _chipped({"tune": {"tone": "sid-bell"}}, "sid8580")["tune"]["chip"], "sid8580")
 st = _chipped({"tune": {"tone": "organ"}}, None)
@@ -388,11 +392,15 @@ for chip in _r.CHIPS:
     machine = _cat["machine_of"].get(chip.split("-")[0])
     for p in (tune, low, kit):
         auto = _r.chip_tone(p, chip)
-        if chip.endswith("-voice"):
+        if chip.endswith("-voice") or p.is_drums:
             ok = auto in dict(_cat["voice"])
         else:
             ok = auto in dict(_cat["machines"][machine]["drums" if p.is_drums else "melodic"])
         check(f"on {chip}, auto for {p.id} ({auto}) is on the list it is offered from", ok, True)
+        if p.is_drums and not chip.endswith("-voice"):
+            kit_auto = _r.chip_tone(p, chip, voice_drums=False)
+            check(f"on {chip} with no voice, the kit ({kit_auto}) is on the chip's list",
+                  kit_auto in dict(_cat["machines"][machine]["drums"]), True)
 
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")

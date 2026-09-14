@@ -139,6 +139,9 @@ def analyse(midi_id: str, progress=None) -> dict:
         p["recommended"] = rec
         p["settings"] = _default_settings_for(part, rec)
         p["chip_tones"] = {c: chip_tone(part, c, as_bass=(part.id == low)) for c in CHIPS}
+        # And with no voice, where a drum has nothing to play but the kit.
+        p["chip_tones_synth"] = {c: chip_tone(part, c, as_bass=(part.id == low), voice_drums=False)
+                                 for c in CHIPS}
     return out
 
 
@@ -238,19 +241,25 @@ def bass_line(song: music.Song) -> str | None:
 
 
 def chip_tone(part: music.Part, chip: str = "md", as_bass: bool = False,
-              program: int | None = None) -> str:
+              program: int | None = None, voice_drums: bool = True) -> str:
     """What *part* is played by when the whole song goes through *chip*.
 
-    Every part, drums included. A console usually sampled its kit rather than
-    synthesising it, and that is still available per part -- but "through the
-    chip" ought to mean through the chip, so the synthesised settings use the
-    synthesised kit. *as_bass* plays the part as the bass whatever the
-    analysis called it; see bass_line. *program* stands in for the General
-    MIDI instrument the file gave the part, when another was asked for.
+    Tunes are synthesised by the chip. Drums, with *voice_drums*, are the
+    voice's own drum hits played off that machine's sample channel -- which
+    is how these consoles did their kits, Sonic's snares being samples off
+    the DAC, and is also the point of the thing: the melody on the chip, the
+    drums still him. It is what every chip used to do by accident, until a
+    fix made the kits synthesise, and it was missed. The synthesised kits are
+    still there to choose per part, and they are what a song with no voice
+    gets, having nothing else to play its drums with.
+
+    *as_bass* plays the part as the bass whatever the analysis called it; see
+    bass_line. *program* stands in for the General MIDI instrument the file
+    gave the part, when another was asked for.
     """
     machine, _, mode = chip.partition("-")
     program = part.program if program is None or part.is_drums else program
-    if mode == "voice":
+    if mode == "voice" or (part.is_drums and voice_drums):
         return tones.SAMPLED[machine]
     role = "bass" if as_bass and not part.is_drums else part.role
     if machine == "nes":
@@ -454,7 +463,8 @@ def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | Non
         if synth:
             keep = keep and tones.resolve(asked.get("tone")) in tones.SYNTH
         if chip and not keep:
-            s_["tone"] = chip_tone(p, chip, as_bass=(p.id == low), program=s_.get("program"))
+            s_["tone"] = chip_tone(p, chip, as_bass=(p.id == low), program=s_.get("program"),
+                                   voice_drums=not synth)
         if synth:
             # Muted for want of a word is not muted: there are no words.
             s_["text"] = s_["tone"]

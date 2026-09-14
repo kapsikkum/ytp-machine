@@ -546,7 +546,10 @@
   const machineOf = (chip) => soundsVoice(chip) ? null : song.instruments.machine_of[chip.split('-')[0]];
   const inMachine = (m, tone) => ['melodic', 'drums'].some(k =>
     song.instruments.machines[m][k].some(([t]) => t === tone));
-  const toneOf = (p, s, chip) => s.instrument || (chip ? p.chip_tones[chip] : 'clean');
+  // What auto picks: a drum is the voice off the chip's sample channel, unless
+  // there is no voice, when it is the chip's own kit.
+  const autoTone = (p, chip) => ((synthMode && p.chip_tones_synth) || p.chip_tones)[chip];
+  const toneOf = (p, s, chip) => s.instrument || (chip ? autoTone(p, chip) : 'clean');
   // The octave a part is really played at. The suggestion suits a speaking
   // voice and a chip does not use it, so until somebody moves it, a part a
   // chip plays is at the octave it was written in -- and says so.
@@ -567,7 +570,7 @@
     const option = ([t, about]) =>
       `<option value="${esc(t)}" title="${esc(about)}"${s.instrument === t ? ' selected' : ''}>${esc(t)}</option>`;
     const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(option).join('')}</optgroup>` : '';
-    const auto = chip ? p.chip_tones[chip] : 'voice';
+    const auto = chip ? autoTone(p, chip) : 'voice';
     let html = `<option value=""${s.instrument ? '' : ' selected'}>auto: ${esc(auto)}</option>`;
     if (own) html += group(cat.machines[own].name, cat.machines[own][kind]);
     if (!synthMode) html += group('the voice', cat.voice);
