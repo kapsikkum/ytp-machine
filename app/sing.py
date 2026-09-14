@@ -24,7 +24,6 @@ import logging
 import math
 import os
 import random
-import re
 import subprocess
 import tempfile
 import wave
@@ -45,22 +44,6 @@ _APERIODIC = 0.8
 _VIBRATO_HZ = 5.5
 _VIBRATO_ONSET = 0.25     # seconds for the vibrato to grow in, as a singer's does
 _UNVOICED = 0.010
-_PC = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
-
-# The per-word markup, shared with generate.tokenize_full and the page.
-MARK = re.compile(r"(.*?)\^([+-]?\d{1,2}|[A-Ga-g][#b]?-?\d)([.,!?;:\"')\]]*)")
-
-
-def parse_mark(mark: str | None) -> tuple[str, float] | None:
-    """("rel", semitones) or ("abs", MIDI note) from what followed a ^."""
-    if not mark:
-        return None
-    m = re.fullmatch(r"([A-Ga-g])([#b]?)(-?\d)", mark)
-    if m:
-        pc = _PC[m.group(1).lower()] + {"#": 1, "b": -1, "": 0}[m.group(2)]
-        return "abs", float((int(m.group(3)) + 1) * 12 + pc)
-    return "rel", float(int(mark))
-
 
 def degrees(n: int, shape: int, seed: int = 0) -> list[int]:
     """Scale degrees, one a word."""

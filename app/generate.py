@@ -802,6 +802,23 @@ def unstretch(token: str) -> tuple[str, list[tuple[int, int, int]]] | None:
     return w, marks
 
 
+_PC = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
+# Where a word sits when it is sung (app/sing.py): hello^+2 or hello^A3. Here
+# rather than there so tokenising needs no numpy. The page has the same pattern.
+MARK = re.compile(r"(.*?)\^([+-]?\d{1,2}|[A-Ga-g][#b]?-?\d)([.,!?;:\"')\]]*)")
+
+
+def parse_mark(mark: str | None) -> tuple[str, float] | None:
+    """("rel", semitones) or ("abs", MIDI note) from what followed a ^."""
+    if not mark:
+        return None
+    m = re.fullmatch(r"([A-Ga-g])([#b]?)(-?\d)", mark)
+    if m:
+        pc = _PC[m.group(1).lower()] + {"#": 1, "b": -1, "": 0}[m.group(2)]
+        return "abs", float((int(m.group(3)) + 1) * 12 + pc)
+    return "rel", float(int(mark))
+
+
 def tokenize_full(text: str) -> list[dict[str, Any]]:
     """Every word to say, with everything the markup says about it.
 
@@ -809,7 +826,6 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
     list from unstretch() or empty, and *shown* is how it was typed, for the
     caption -- a stretched word reads "loooong" on screen, not "long".
     """
-    from app.sing import MARK, parse_mark
     out: list[dict[str, Any]] = []
     for token in re.split(r"\s+", text.strip()):
         if not token:

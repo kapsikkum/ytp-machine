@@ -97,6 +97,10 @@
     .slider output { color: var(--text); font-size: .75rem; font-variant-numeric: tabular-nums; }
     .slider input { grid-column: 1 / -1; }
     .toggles { display: flex; flex-wrap: wrap; gap: .6rem 1.4rem; }
+    .sing-panel { border-top: 1px dashed var(--line); padding-top: .9rem; display: flex; flex-direction: column; gap: .9rem; }
+    .sing-midi { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; color: var(--muted); font-size: .75rem; }
+    .chip.sung { cursor: ns-resize; user-select: none; }
+    .chip .note { color: var(--yellow); font-size: .68rem; }
     .voice-settings {
       display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
       border-top: 1px dashed var(--line); padding-top: .9rem; color: var(--dim); font-size: .72rem;
@@ -244,6 +248,18 @@
             <div class="presets" id="presets" role="group" aria-label="Presets"></div>
             <div class="sliders" id="sliders"></div>
             <div class="toggles" id="toggles"></div>
+            <div class="sing-panel" id="sing-panel" hidden>
+              <div class="section-label" style="margin:0">singing</div>
+              <div class="sliders" id="sing-sliders"></div>
+              <div class="sing-midi">
+                <label title="Sing to the top line of a MIDI file instead of a tune shape, one note a word">tune from a MIDI
+                  <input type="file" id="sing-file" accept=".mid,.midi,audio/midi"></label>
+                <select id="sing-part" hidden title="Which part of the file is the tune"></select>
+                <span id="sing-midi-name" class="hint"></span>
+                <button type="button" class="linkish" id="sing-midi-clear" hidden>use the tune shape</button>
+              </div>
+              <div class="hint">On the word chips: <b>click</b> a word to sing it a semitone higher, <b>shift-click</b> lower. Or type it: <b>hello^+2</b>, <b>hello^-3</b>, or a note, <b>hello^A3</b>.</div>
+            </div>
             <div class="voice-settings" id="splice-wrap" hidden>
               <span>for this voice</span>
               <label title="How hard to try for a word the voice never said">effort
@@ -339,10 +355,17 @@
       hint: 'How long a . ! or ? waits before the next sentence.' },
     { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
       hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
-    { key: 'sing_key', name: 'sing: key', min: 0, max: 11, step: 1, def: 0,
+    { key: 'sing_amount', name: 'tune strength', min: 0, max: 1, step: 0.05, def: 1, sing: true,
+      fmt: v => v >= 1 ? 'robot' : v <= 0 ? 'as spoken' : `${Math.round(v * 100)}%`,
+      hint: 'How hard each word is pulled onto its note. Full is the autotune sound; less keeps some of the speech in it.' },
+    { key: 'sing_vibrato', name: 'vibrato', min: 0, max: 1, step: 0.05, def: 0, sing: true,
+      fmt: v => v ? `${v.toFixed(2)} semitones` : 'none', hint: 'A wobble on held notes, growing in as a singer does.' },
+    { key: 'sing_cute', name: 'cute', min: 0, max: 1, step: 0.05, def: 0, sing: true,
+      fmt: v => v ? `${Math.round(v * 100)}%` : 'as recorded', hint: 'Higher, and a smaller throat: the Miku knob.' },
+    { key: 'sing_key', name: 'key', min: 0, max: 11, step: 1, def: 0, sing: true,
       fmt: v => ['C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B'][v],
       hint: 'With sing on, the key the tune is in.' },
-    { key: 'sing_shape', name: 'sing: tune', min: 0, max: 4, step: 1, def: 0,
+    { key: 'sing_shape', name: 'tune', min: 0, max: 4, step: 1, def: 0, sing: true,
       fmt: v => ['up and down', 'rising', 'falling', 'wandering', 'twinkle twinkle'][v],
       hint: 'With sing on, the shape of the tune: one note a word.' },
   ];
@@ -352,9 +375,10 @@
     { key: 'phrases', name: 'real phrases', def: true,
       hint: 'When several words were said together somewhere, play that recording instead of cutting word by word. Off is choppier.' },
     { key: 'sing', name: 'sing', def: false,
-      hint: 'Every word hard-tuned onto a note of a tune, autotune style. Pick the key and tune above. Held letters make longer notes.' },
+      hint: 'Every word tuned onto a note of a tune, autotune style. Held letters make longer notes.' },
   ];
   const DEFAULTS = Object.fromEntries([...SLIDERS, ...TOGGLES].map(o => [o.key, o.def]));
+  Object.assign(DEFAULTS, { sing_midi: '', sing_part: '' });
   const PRESETS = [
     { name: 'natural', opts: {} },
     { name: 'choppy', opts: { phrases: false, clean_takes: false, word_gap: 0.12, sentence_pause: 0.3 } },
@@ -363,15 +387,18 @@
     { name: 'slow and low', opts: { pitch: -5, speed: 0.75, sentence_pause: 0.9 } },
     { name: 'drawn out', opts: { stretch: 0.2, word_gap: 0.08, speed: 0.9 } },
     { name: 'sing', opts: { sing: true, stretch: 0.15, word_gap: 0.06 } },
+    { name: 'miku', opts: { sing: true, sing_cute: 0.8, sing_vibrato: 0.3, stretch: 0.18, word_gap: 0.05, sing_shape: 3 } },
   ];
   let opts = Object.assign({}, DEFAULTS, store.get('ytp-opts', {}));
 
   function drawSettings() {
-    $('sliders').innerHTML = SLIDERS.map(o => `
+    const slider = o => `
       <label class="slider" title="${esc(o.hint)}">
         <span class="name">${esc(o.name)}</span><output data-out="${o.key}"></output>
         <input type="range" data-opt="${o.key}" min="${o.min}" max="${o.max}" step="${o.step}">
-      </label>`).join('');
+      </label>`;
+    $('sliders').innerHTML = SLIDERS.filter(o => !o.sing).map(slider).join('');
+    $('sing-sliders').innerHTML = SLIDERS.filter(o => o.sing).map(slider).join('');
     $('toggles').innerHTML = TOGGLES.map(o => `
       <label class="switch" title="${esc(o.hint)}">
         <input type="checkbox" data-opt="${o.key}"><span class="track"></span> ${esc(o.name)}
@@ -390,15 +417,45 @@
     const same = (p) => Object.keys(DEFAULTS).every(k => (k in p.opts ? p.opts[k] : DEFAULTS[k]) === opts[k]);
     document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', same(PRESETS[b.dataset.preset])));
     $('tweak-btn').classList.toggle('changed', !same(PRESETS[0]));
+    $('sing-panel').hidden = !opts.sing;
+    drawSingMidi();
     store.set('ytp-opts', opts);
   }
-  $('sliders').addEventListener('input', (e) => {
+  for (const box of ['sliders', 'sing-sliders']) $(box).addEventListener('input', (e) => {
     const k = e.target.dataset.opt; if (!k) return;
     opts[k] = Number(e.target.value); syncSettings();
   });
+  // The tune from a MIDI file: uploaded to the YTPMV, which keeps it and says
+  // what parts it has. Only its id and the part chosen are kept here.
+  let singParts = store.get('ytp-sing-parts', null);
+  function drawSingMidi() {
+    const on = !!opts.sing_midi;
+    $('sing-midi-clear').hidden = !on;
+    $('sing-part').hidden = !on || !singParts;
+    $('sing-midi-name').textContent = on ? (singParts?.name || 'a MIDI file') : '';
+    if (on && singParts) {
+      $('sing-part').innerHTML = `<option value="">the lead</option>` + singParts.parts
+        .map(p => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.role)})</option>`).join('');
+      $('sing-part').value = opts.sing_part || '';
+    }
+  }
+  $('sing-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    $('sing-midi-name').textContent = 'reading it…';
+    const fd = new FormData(); fd.append('midi', f);
+    const res = await fetchJson('/api/ytpmv/midi', { method: 'POST', body: fd });
+    e.target.value = '';
+    if (!res.ok) { $('sing-midi-name').textContent = res.error || res.data?.detail || 'that file would not read'; return; }
+    singParts = { name: f.name, parts: (res.data.parts || []).filter(p => !String(p.role).startsWith('drums')) };
+    store.set('ytp-sing-parts', singParts);
+    opts.sing_midi = res.data.midi_id; opts.sing_part = ''; syncSettings();
+  });
+  $('sing-part').addEventListener('change', (e) => { opts.sing_part = e.target.value; syncSettings(); });
+  $('sing-midi-clear').addEventListener('click', () => { opts.sing_midi = ''; opts.sing_part = ''; syncSettings(); });
   $('toggles').addEventListener('change', (e) => {
     const k = e.target.dataset.opt; if (!k) return;
     opts[k] = e.target.checked; syncSettings();
+    if (k === 'sing') drawChips();
   });
   $('presets').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-preset]'); if (!b) return;
@@ -552,8 +609,20 @@
   // Each typed token as the chips that preview it.
   function preview(text) {
     const chips = [];
+    let ti = -1;
     for (let tok of text.split(/\s+/)) {
       if (!tok) continue;
+      ti++;
+      const sm = tok.match(NOTE_MARK);
+      const note = sm && sm[1] ? sm[2] : null;
+      if (note) tok = sm[1] + sm[3];
+      const at = chips.length;
+      tokens(tok);
+      for (const c of chips.slice(at)) Object.assign(c, { ti, note });
+    }
+    return chips;
+
+    function tokens(tok) {
       let rev = false;
       const r = tok.match(/^~(.+?)~([.!?"')\]]*)$/);
       if (r) { rev = true; tok = r[1] + r[2]; }
@@ -561,12 +630,12 @@
       if (nz) {
         const k = nz[1].toLowerCase();
         chips.push({ label: `*${k}*`, cls: k in noises ? 'noise' : 'splice', rev, title: k in noises ? 'a noise this voice makes' : 'no such noise — the word is said instead' });
-        continue;
+        return;
       }
       const held = unstretch(tok);
       if (held) {
         chips.push({ label: held, cls: vocab && held in vocab ? 'found' : 'splice', rev, held: true, title: `said as "${held}", held` });
-        continue;
+        return;
       }
       for (const w of spokenWords(tok)) {
         if (typeof w === 'object') { chips.push({ label: w.number, cls: '', rev, title: 'a number, said in words' }); continue; }
@@ -575,15 +644,41 @@
                      title: found === null ? '' : found ? `${vocab[w]} recording${vocab[w] === 1 ? '' : 's'}` : 'no recording — built from sounds' });
       }
     }
-    return chips;
   }
+
+  // hello^+2, hello^A3: where a word sits when it is sung. Same as app/generate.py's MARK.
+  const NOTE_MARK = /^(.*?)\^([+-]?\d{1,2}|[A-Ga-g][#b]?-?\d)([.,!?;:"')\]]*)$/;
+  function bumpNote(ti, d) {
+    const parts = textInput.value.split(/(\s+)/);
+    let n = -1;
+    for (let j = 0; j < parts.length; j++) {
+      if (j % 2 || !parts[j] || ++n !== ti) continue;
+      const m = parts[j].match(NOTE_MARK);
+      if (m && m[1] && !/^[+-]?\d+$/.test(m[2])) return;     // a named note is left as typed
+      const base = m && m[1] ? m[1] + m[3] : parts[j];
+      const v = (m && m[1] ? Number(m[2]) : 0) + d;
+      const b = base.match(/^(.*?)([.,!?;:"')\]]*)$/);
+      parts[j] = v ? `${b[1]}^${v > 0 ? '+' : ''}${v}${b[2]}` : base;
+      break;
+    }
+    textInput.value = parts.join('');
+    textInput.dispatchEvent(new Event('input'));
+  }
+  $('chips').addEventListener('click', (e) => {
+    const c = e.target.closest('.chip[data-ti]'); if (!c || !opts.sing) return;
+    bumpNote(Number(c.dataset.ti), e.shiftKey ? -1 : 1);
+  });
+  $('chips').addEventListener('contextmenu', (e) => {
+    const c = e.target.closest('.chip[data-ti]'); if (!c || !opts.sing) return;
+    e.preventDefault(); bumpNote(Number(c.dataset.ti), -1);
+  });
 
   const SHOWN = 60;
   function drawChips() {
     const chips = preview(textInput.value);
     const el = $('chips');
     el.innerHTML = chips.slice(0, SHOWN).map(c =>
-      `<span class="chip ${c.cls}" title="${esc(c.title)}">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}</span>`).join('')
+      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}" data-ti="${c.ti}" title="${esc(c.title)}${opts.sing ? ' · click up, shift-click down' : ''}">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}</span>`).join('')
       + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;

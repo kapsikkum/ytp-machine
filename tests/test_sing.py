@@ -3,6 +3,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from app import sing
+import app.generate as g
 from app.ytpmv import pitch
 
 fails = []
@@ -42,11 +43,10 @@ S = lambda y: np.abs(np.fft.rfft(y)); fr = np.fft.rfftfreq(len(x), 1 / sr)
 cen = lambda y: float((S(y) * fr).sum() / S(y).sum())
 check("and brightens the voice", cen(cute) > cen(sing.sung(v, 220.0, len(x))) * 1.1, True)
 
-check("^+2 is relative", sing.parse_mark("+2"), ("rel", 2.0))
-check("^A3 is a note", sing.parse_mark("A3"), ("abs", 57.0))
-check("^C#4 too", sing.parse_mark("C#4"), ("abs", 61.0))
+check("^+2 is relative", g.parse_mark("+2"), ("rel", 2.0))
+check("^A3 is a note", g.parse_mark("A3"), ("abs", 57.0))
+check("^C#4 too", g.parse_mark("C#4"), ("abs", 61.0))
 check("a melody is moved by octaves to the voice", sing.fit([72, 74, 76], 4, 50.0), [48.0, 50.0, 52.0, 48.0])
-import app.generate as g
 toks = g.tokenize_full("hello^+3 world^A3. plain")
 check("the markup comes off the word", [t["word"] for t in toks], ["hello", "world", "plain"])
 check("and is kept as its note", [t["note"] for t in toks], [("rel", 3.0), ("abs", 57.0), None])
