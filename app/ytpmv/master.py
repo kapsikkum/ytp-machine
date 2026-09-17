@@ -26,8 +26,24 @@ arrangement. Flattening those made mixes measurably tidier and audibly worse.
 So a part near where its job would put it is left alone, and one well outside
 is brought part of the way back. See DEADBAND and STRENGTH.
 
-Setting the level of the finished mix is a separate job and is still done by
-render's own _finish_mix.
+Where "its job would put it" is measured from is the song itself, not a fixed
+level. Every part of one Deltarune arrangement came out 15 to 40 dB under the
+old fixed reference, so nearly every part ran into MAX_MOVE and stopped
+wherever that left it -- toms as loud as the lead, hats well over their place.
+Measured against the song's own level, the same parts land where they should.
+That takes every part measured before any is mixed, which is what render's
+stems are for.
+
+Several parts of one role playing at once share that role's place rather
+than each taking all of it: seven pads stacked on a chorus are one pad's worth
+of loudness spread seven ways, not seven times as loud as the lead.
+
+And a part too loud is brought all the way down, where one too quiet is only
+nudged up. A buried part is an arrangement choice more often than a blaring
+one is, and a blaring one is the thing people hear first.
+
+finish() is the master stage: the whole mix to a streaming loudness, then a
+lookahead limiter so nothing clips.
 
 numpy only, and no filter is run as a recurrence: the weighting is applied in
 the frequency domain, which for measuring a finished buffer is the same thing
@@ -91,6 +107,14 @@ MAX_MOVE = 12.0
 # wrong place; what survives is everything somebody meant.
 DEADBAND = 3.0
 STRENGTH = 0.6
+# The same for a part that is too loud: less leeway, and all of the excess.
+DEADBAND_DOWN = 1.5
+STRENGTH_DOWN = 1.0
+
+TARGET_LUFS = -14.0         # the finished mix, where streaming sites level to
+CEILING = 0.89              # -1 dBFS: headroom for the encoder's own overshoot
+_LOOKAHEAD = 0.005          # the limiter is already down when a peak arrives
+_RELEASE = 0.08             # and comes back up over about this long
 
 _SILENCE = -70.0            # blocks quieter than this are not the performance
 _RELATIVE = -10.0           # nor are blocks this far below the rest of it
@@ -138,6 +162,39 @@ def k_weight(x: np.ndarray, sr: int = SR) -> np.ndarray:
     return np.fft.irfft(np.fft.rfft(x, n) * h, n)[: len(x)].real
 
 
+def block_power(x: np.ndarray, sr: int = SR) -> np.ndarray:
+    """Mean square of *x*, k-weighted, in 400 ms blocks every 100 ms.
+
+    A minute at a time, so a fifteen minute part (or a stem on disk) is never
+    all in memory as float64 at once. A block across a join is lost: three in
+    a minute, which moves nothing.
+    """
+    block, hop = int(0.4 * sr), int(0.1 * sr)
+    step = 600 * hop
+    out = []
+    for i in range(0, max(len(x), 1), step):
+        seg = x[i:i + step + block]
+        # Stereo is the two channels' powers added, as the standard has it:
+        # a centred part is 3 dB louder in two speakers than in one.
+        chans = [seg[:, c] for c in range(seg.shape[1])] if seg.ndim > 1 else [seg]
+        if len(seg) < 64 or not np.any(seg):
+            out.append(np.zeros(max(1, min(step, len(seg)) // hop)))
+            continue
+        total = None
+        for ch in chans:
+            y = k_weight(np.ascontiguousarray(ch, dtype=np.float64), sr)
+            if len(y) < block:
+                y = np.pad(y, (0, block - len(y)))
+            starts = np.arange(0, min(step, len(y) - block + 1), hop)
+            # Every block's mean square in one pass, off a running total,
+            # rather than a thousand overlapping slices each re-adding the last.
+            cs = np.concatenate(([0.0], np.cumsum(y * y)))
+            pw = (cs[starts + block] - cs[starts]) / block
+            total = pw if total is None else total + pw
+        out.append(total)
+    return np.concatenate(out)
+
+
 def loudness(x: np.ndarray, sr: int = SR) -> float:
     """How loud *x* is while it is playing, in LUFS. -inf for silence.
 
@@ -145,23 +202,15 @@ def loudness(x: np.ndarray, sr: int = SR) -> float:
     performance, and for a part that plays four times in a song they are
     nearly all of it.
     """
-    if x.ndim > 1:
-        x = x.mean(axis=1)
-    x = np.ascontiguousarray(x, dtype=np.float64)
-    if len(x) < sr // 10 or not np.any(x):
+    if len(x) < sr // 10:
         return -math.inf
-    y = k_weight(x, sr)
+    return gated(block_power(x, sr))
 
-    block, hop = int(0.4 * sr), int(0.1 * sr)
-    if len(y) < block:
-        y = np.pad(y, (0, block - len(y)))
-    starts = np.arange(0, len(y) - block + 1, hop)
-    if len(starts) == 0:
+
+def gated(power: np.ndarray) -> float:
+    """The gated loudness of block_power()'s blocks, in LUFS."""
+    if not len(power) or not np.any(power):
         return -math.inf
-    # Every block's mean square in one pass, off a running total, rather than
-    # a thousand overlapping slices that each re-add what the last one added.
-    cs = np.concatenate(([0.0], np.cumsum(y * y)))
-    power = (cs[starts + block] - cs[starts]) / block
     lk = -0.691 + 10.0 * np.log10(np.maximum(power, 1e-20))
 
     loud = lk > _SILENCE                       # not silence
@@ -174,7 +223,8 @@ def loudness(x: np.ndarray, sr: int = SR) -> float:
     return -0.691 + 10.0 * math.log10(float(power[keep].mean()))
 
 
-def gain_for(measured: float, role: str, trim_db: float = 0.0) -> float:
+def gain_for(measured: float, role: str, trim_db: float = 0.0,
+             reference: float = REFERENCE, share: float = 1.0) -> float:
     """How far to move a part that measured *measured*, as a factor.
 
     Nudged rather than moved: see DEADBAND and STRENGTH. A part near enough
@@ -184,11 +234,103 @@ def gain_for(measured: float, role: str, trim_db: float = 0.0) -> float:
 
     *trim_db* is whatever the person asked for on top, which is respected in
     full: the measurement only ever suggests, and anyone who disagrees wins.
+
+    *reference* is where the lead sits in this song; *share* is how much of
+    its role's place this part gets, below 1 when others play with it.
     """
     if not math.isfinite(measured):
         return 10.0 ** (trim_db / 20.0)
-    err = REFERENCE + TARGETS.get(role, DEFAULT_TARGET) - measured
-    over = max(0.0, abs(err) - DEADBAND)            # only the part that is out
-    move = math.copysign(over * STRENGTH, err)
+    err = reference + TARGETS.get(role, DEFAULT_TARGET) + 10.0 * math.log10(share) - measured
+    if err < 0:                                     # too loud: all of the excess
+        move = -max(0.0, -err - DEADBAND_DOWN) * STRENGTH_DOWN
+    else:                                           # too quiet: some of it
+        move = max(0.0, err - DEADBAND) * STRENGTH
     move = float(np.clip(move, -MAX_MOVE, MAX_MOVE)) + trim_db
     return float(10.0 ** (move / 20.0))
+
+
+def balance(parts: list[dict]) -> dict[str, tuple[float, float]]:
+    """Every part's (loudness, gain) from all of them measured together.
+
+    *parts* is [{id, role, power, trim_db}], *power* being block_power() of
+    the part on its own, every one the same length. The reference is the
+    song's own: the lead, where there is one, since everything else is placed
+    under it; otherwise the median of where each part says the lead would be.
+    """
+    lufs = {p["id"]: gated(p["power"]) for p in parts}
+    known = [p for p in parts if math.isfinite(lufs[p["id"]])]
+    shares: dict[str, float] = {}
+    by_role: dict[str, list[dict]] = {}
+    for p in known:
+        by_role.setdefault(p["role"], []).append(p)
+    for group in by_role.values():
+        n = len(min((p["power"] for p in group), key=len))
+        # Playing, for this purpose: within 20 dB of how loud the part is.
+        on = {p["id"]: p["power"][:n] > 10.0 ** ((lufs[p["id"]] + 0.691 - 20.0) / 10.0)
+              for p in group}
+        count = np.sum(list(on.values()), axis=0)
+        for p in group:
+            mine = on[p["id"]]
+            shares[p["id"]] = float(np.mean(1.0 / count[mine])) if mine.any() else 1.0
+    implied = [lufs[p["id"]] - TARGETS.get(p["role"], DEFAULT_TARGET)
+               - 10.0 * math.log10(shares[p["id"]]) for p in known]
+    leads = [v for p, v in zip(known, implied) if p["role"] == "lead"]
+    ref = float(np.median(leads or implied)) if known else REFERENCE
+    return {p["id"]: (lufs[p["id"]], gain_for(lufs[p["id"]], p["role"], p.get("trim_db", 0.0),
+                                               ref, shares.get(p["id"], 1.0)))
+            for p in parts}
+
+
+def finish(mix: np.ndarray, sr: int = SR) -> np.ndarray:
+    """Master the mix in place: to TARGET_LUFS, then limited under CEILING."""
+    if not mix.size:
+        return mix
+    was = gated(block_power(mix, sr))
+    if not math.isfinite(was):
+        return mix
+    mix *= 10.0 ** ((TARGET_LUFS - was) / 20.0)
+    limit(mix, CEILING, sr)
+    return mix
+
+
+def limit(mix: np.ndarray, ceiling: float = CEILING, sr: int = SR) -> None:
+    """A lookahead peak limiter, in place, on millisecond blocks.
+
+    Each block's gain is what keeps its own peak and every peak within
+    _LOOKAHEAD either side under *ceiling*, so the gain is down before a peak
+    and between blocks is never above what either side needs; it then comes
+    back up no faster than _RELEASE allows.
+    """
+    blk = max(1, sr // 1000)
+    n = len(mix)
+    nb = -(-n // blk)
+    peak = np.zeros(nb, dtype=np.float64)
+    step = 60000
+    for b in range(0, nb, step):
+        seg = np.abs(mix[b * blk:(b + step) * blk])
+        seg = seg.max(axis=1) if seg.ndim > 1 else seg
+        seg = np.pad(seg, (0, (-len(seg)) % blk))
+        peak[b:b + len(seg) // blk] = seg.reshape(-1, blk).max(axis=1)
+    gain = np.minimum(1.0, ceiling / np.maximum(peak, 1e-12))
+    if gain.min() >= 1.0:
+        return
+    look = max(1, int(round(_LOOKAHEAD * 1000)))
+    gain = np.lib.stride_tricks.sliding_window_view(
+        np.pad(gain, look, mode="edge"), 2 * look + 1).min(axis=1)
+    rel = math.exp(-1.0 / (_RELEASE * 1000))
+    # ponytail: a Python loop over millisecond blocks, about a second for a
+    # fifteen minute song; vectorise it if that ever shows up in a profile.
+    g = gain.tolist()
+    for i in range(1, nb):
+        up = 1.0 - (1.0 - g[i - 1]) * rel
+        if g[i] > up:
+            g[i] = up
+    gain = np.asarray(g)
+    centres = (np.arange(nb) + 0.5) * blk
+    for s in range(0, n, step * blk):
+        e = min(n, s + step * blk)
+        gs = np.interp(np.arange(s, e), centres, gain).astype(mix.dtype)
+        if mix.ndim > 1:
+            mix[s:e] *= gs[:, None]
+        else:
+            mix[s:e] *= gs

@@ -20,6 +20,7 @@ import math
 import os
 import random
 import re
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -435,24 +436,8 @@ def _write_wav(path: str, stereo: np.ndarray) -> None:
 
 
 def _finish_mix(mix: np.ndarray) -> np.ndarray:
-    """Loud, never clipped: level the busy parts, then round off the peaks.
-
-    In place, *mix* included, because a long song is hundreds of megabytes of
-    it and every temporary is another copy.
-    """
-    if not mix.size:
-        return mix
-    mag = np.abs(mix)
-    ref = float(np.percentile(mag, 99.7, overwrite_input=True))
-    del mag
-    if ref <= 1e-6:
-        return mix
-    mix *= 0.8 / ref
-    np.tanh(mix, out=mix)
-    peak = max(float(mix.max()), -float(mix.min()))
-    if peak > 0:
-        mix *= 0.89 / peak
-    return mix
+    """Mastered, in place: see master.finish."""
+    return mastering.finish(mix)
 
 
 def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | None,
@@ -638,6 +623,14 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     traces: dict[str, np.ndarray] = {}
     scratch = np.zeros_like(mix) if balance or synth else None
     levels: dict[str, dict] = {}
+    # With balance, every part is kept as a stem on disk until all of them are
+    # measured, because where one belongs depends on the rest; see
+    # master.balance. Mono float16: the pan is a constant pair of gains, put
+    # back when it is mixed. A three minute song of thirty parts is about half
+    # a gigabyte of these, gone as soon as the mix is made.
+    stems: list[dict] = []
+    stemdir = tempfile.mkdtemp(prefix="ytpmv_stems_") if balance else None
+    chunk = 60 * SR
     for part in wanted.values():
         if part.id not in sample_of:
             continue
@@ -656,18 +649,32 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         if synth and not balance and part.id in playing_ids:
             mix += scratch
         if balance and into is scratch and part.id in playing_ids:
-            was = mastering.loudness(scratch)
+            pan = (settings[part.id]["pan"] + 1) * math.pi / 4
+            gl, gr = math.cos(pan), math.sin(pan)
+            stem = np.lib.format.open_memmap(os.path.join(stemdir, f"{len(stems)}.npy"),
+                                             mode="w+", dtype=np.float16, shape=(N,))
+            for i in range(0, N, chunk):
+                stem[i:i + chunk] = scratch[i:i + chunk].sum(axis=1) / (gl + gr)
             # What the person asked for over and above the old table, kept:
             # the measurement decides where a part sits on its own, and
             # somebody who has moved a slider still outranks it.
             vol = settings[part.id]["volume"]
             ref = _VOLUME.get(part.role, 0.8)
             trim = 20.0 * math.log10(max(vol, 1e-4) / ref) if ref > 0 else 0.0
-            gain = mastering.gain_for(was, part.role, trim)
-            mix += scratch * gain
-            levels[part.id] = {"lufs": round(was, 1) if math.isfinite(was) else None,
-                               "gain_db": round(20.0 * math.log10(max(gain, 1e-6)), 1)}
+            stems.append({"id": part.id, "role": part.role, "trim_db": trim, "stem": stem,
+                          "pan": (gl, gr), "power": mastering.block_power(stem)})
     del scratch
+    if stemdir:
+        placed = mastering.balance(stems) if stems else {}
+        for st in stems:
+            was, gain = placed[st["id"]]
+            pair = np.array(st["pan"], dtype=np.float32) * np.float32(gain)
+            for i in range(0, N, chunk):
+                mix[i:i + chunk] += st["stem"][i:i + chunk, None].astype(np.float32) * pair
+            levels[st["id"]] = {"lufs": round(was, 1) if math.isfinite(was) else None,
+                                "gain_db": round(20.0 * math.log10(max(gain, 1e-6)), 1)}
+        stems.clear()
+        shutil.rmtree(stemdir, ignore_errors=True)
     say("notes", total, total)
 
     tmpdir = tempfile.mkdtemp(prefix="ytpmv_")

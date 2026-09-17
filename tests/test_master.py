@@ -95,9 +95,9 @@ check("so is one that is only a little out",
 near("one well too quiet is brought part of the way up",
      20 * math.log10(master.gain_for(master.REFERENCE - 9.0, "lead")),
      (9.0 - master.DEADBAND) * master.STRENGTH, 0.01)
-near("one well too loud is brought part of the way down",
+near("one well too loud is brought all the way down, bar a little leeway",
      20 * math.log10(master.gain_for(master.REFERENCE + 9.0, "lead")),
-     -(9.0 - master.DEADBAND) * master.STRENGTH, 0.01)
+     -(9.0 - master.DEADBAND_DOWN) * master.STRENGTH_DOWN, 0.01)
 check("and a correction is never the whole of the error",
       abs(20 * math.log10(master.gain_for(master.REFERENCE - 9.0, "lead"))) < 9.0, True)
 near("a trim the person asked for is added on top",
@@ -113,6 +113,30 @@ check("a part nobody can measure is not moved at all",
       master.gain_for(-math.inf, "lead"), 1.0)
 check("and nothing is ever moved further than the limit",
       round(20 * math.log10(master.gain_for(-200.0, "lead")), 1), master.MAX_MOVE)
+print("balancing a whole song against itself")
+sr = SR
+t = np.arange(8 * sr) / sr
+tone = lambda hz, db: (10 ** (db / 20) * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+# A song 30 dB under the fixed reference, with its rhythm part 10 dB too loud.
+lead, loud = tone(440, -50), tone(330, -45)
+got = master.balance([{"id": "lead", "role": "lead", "power": master.block_power(lead)},
+                      {"id": "pad", "role": "rhythm", "power": master.block_power(loud)}])
+after = {k: v[0] + 20 * math.log10(v[1]) for k, v in got.items()}
+check("a quiet song is balanced against its own level, not a fixed one",
+      abs((after["lead"] - after["pad"]) - (-master.TARGETS["rhythm"])) < master.DEADBAND + 0.5, True)
+# Two identical pads playing together share their place.
+pads = [{"id": f"p{i}", "role": "chords", "power": master.block_power(tone(220, -30))} for i in range(2)]
+shared = master.balance(pads + [{"id": "lead", "role": "lead", "power": master.block_power(tone(440, -30))}])
+check("parts playing together share their role's place",
+      shared["p0"][1] < 1.0 and abs(shared["p0"][1] - shared["p1"][1]) < 1e-6, True)
+
+print("mastering")
+mix = np.stack([tone(220, -20), tone(221, -20)], axis=1)
+mix[sr:sr + 50] = 0.99                               # a spike
+master.finish(mix)
+check("the mix is limited under the ceiling", float(np.abs(mix).max()) <= master.CEILING + 1e-3, True)
+near("and sits at the target loudness", master.loudness(mix), master.TARGET_LUFS, 1.0)
+
 check("a kit sits well below a melody, as a kit measures",
       master.TARGETS["drums:hats"] < master.TARGETS["lead"] - 15.0, True)
 
