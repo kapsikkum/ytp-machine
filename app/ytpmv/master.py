@@ -113,6 +113,20 @@ STRENGTH_DOWN = 1.0
 
 TARGET_LUFS = -14.0         # the finished mix, where streaming sites level to
 CEILING = 0.89              # -1 dBFS: headroom for the encoder's own overshoot
+# The rider: a section of a part more than RIDE_ABOVE dB over the part's own
+# loudness, over RIDE_WINDOW seconds, is turned down by RIDE_STRENGTH of the
+# excess. One gain per part cannot tell a lead's quiet verse from the high
+# notes of its chorus, where the same sample sung up two octaves comes out
+# much louder. Quiet sections are never turned up.
+RIDE_WINDOW = 3.0
+RIDE_ABOVE = 2.0
+RIDE_STRENGTH = 0.75
+# The lead sets the level everything is placed under -- unless it is plainly
+# louder than the rest of the song would put it, when it is only trusted to
+# this far above what the other parts imply.
+LEAD_TRUST = 3.0
+_HOP = 0.1                  # block_power's hop, seconds
+_BLOCK = 0.4
 _LOOKAHEAD = 0.005          # the limiter is already down when a peak arrives
 _RELEASE = 0.08             # and comes back up over about this long
 
@@ -249,15 +263,45 @@ def gain_for(measured: float, role: str, trim_db: float = 0.0,
     return float(10.0 ** (move / 20.0))
 
 
-def balance(parts: list[dict]) -> dict[str, tuple[float, float]]:
-    """Every part's (loudness, gain) from all of them measured together.
+def ride(power: np.ndarray) -> np.ndarray:
+    """A gain for each of block_power()'s blocks, turning loud sections down."""
+    L = gated(power)
+    if not math.isfinite(L):
+        return np.ones(len(power))
+    w = max(1, min(len(power), int(round(RIDE_WINDOW / _HOP))))
+    k = np.ones(w)
+    # Divided by how much of the window is inside the song, so the ends are
+    # not read as quiet just for being ends.
+    short = np.convolve(power, k, mode="same") / np.convolve(np.ones(len(power)), k, mode="same")
+    st = -0.691 + 10.0 * np.log10(np.maximum(short, 1e-20))
+    # Measured against the part's typical level while playing, not its gated
+    # loudness: gating throws the quiet sections away, so a part loud half the
+    # time would measure as its loud half and never be ridden at all.
+    playing = st > L - 20.0
+    typical = float(np.median(st[playing])) if playing.any() else L
+    over = st - (typical + RIDE_ABOVE)
+    cut = np.clip(np.maximum(over, 0.0) * RIDE_STRENGTH, 0.0, MAX_MOVE)
+    return 10.0 ** (-cut / 20.0)
+
+
+def envelope(gains: np.ndarray, start: int, stop: int, sr: int = SR) -> np.ndarray:
+    """ride()'s block gains as one per sample, for samples start..stop."""
+    centres = (np.arange(len(gains)) * _HOP + _BLOCK / 2) * sr
+    return np.interp(np.arange(start, stop), centres, gains).astype(np.float32)
+
+
+def balance(parts: list[dict]) -> dict[str, tuple[float, float, np.ndarray]]:
+    """Every part's (loudness, gain, ride) from all of them measured together.
 
     *parts* is [{id, role, power, trim_db}], *power* being block_power() of
-    the part on its own, every one the same length. The reference is the
-    song's own: the lead, where there is one, since everything else is placed
-    under it; otherwise the median of where each part says the lead would be.
+    the part on its own, every one the same length. Each part is ridden
+    first (see ride) and measured as ridden. The reference is the song's own:
+    the lead, where there is one, since everything else is placed under it --
+    but no more than LEAD_TRUST over the median of where every part says the
+    lead would be; with no lead, that median.
     """
-    lufs = {p["id"]: gated(p["power"]) for p in parts}
+    rides = {p["id"]: ride(p["power"]) for p in parts}
+    lufs = {p["id"]: gated(p["power"] * rides[p["id"]] ** 2) for p in parts}
     known = [p for p in parts if math.isfinite(lufs[p["id"]])]
     shares: dict[str, float] = {}
     by_role: dict[str, list[dict]] = {}
@@ -275,9 +319,13 @@ def balance(parts: list[dict]) -> dict[str, tuple[float, float]]:
     implied = [lufs[p["id"]] - TARGETS.get(p["role"], DEFAULT_TARGET)
                - 10.0 * math.log10(shares[p["id"]]) for p in known]
     leads = [v for p, v in zip(known, implied) if p["role"] == "lead"]
-    ref = float(np.median(leads or implied)) if known else REFERENCE
+    ref = REFERENCE
+    if known:
+        ref = float(np.median(implied))
+        if leads:
+            ref = min(float(np.median(leads)), ref + LEAD_TRUST)
     return {p["id"]: (lufs[p["id"]], gain_for(lufs[p["id"]], p["role"], p.get("trim_db", 0.0),
-                                               ref, shares.get(p["id"], 1.0)))
+                                               ref, shares.get(p["id"], 1.0)), rides[p["id"]])
             for p in parts}
 
 

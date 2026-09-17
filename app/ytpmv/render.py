@@ -667,10 +667,12 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     if stemdir:
         placed = mastering.balance(stems) if stems else {}
         for st in stems:
-            was, gain = placed[st["id"]]
+            was, gain, rode = placed[st["id"]]
             pair = np.array(st["pan"], dtype=np.float32) * np.float32(gain)
             for i in range(0, N, chunk):
-                mix[i:i + chunk] += st["stem"][i:i + chunk, None].astype(np.float32) * pair
+                j = min(N, i + chunk)
+                mono = st["stem"][i:j].astype(np.float32) * mastering.envelope(rode, i, j)
+                mix[i:j] += mono[:, None] * pair
             levels[st["id"]] = {"lufs": round(was, 1) if math.isfinite(was) else None,
                                 "gain_db": round(20.0 * math.log10(max(gain, 1e-6)), 1)}
         stems.clear()

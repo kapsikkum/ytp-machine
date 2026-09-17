@@ -130,6 +130,20 @@ shared = master.balance(pads + [{"id": "lead", "role": "lead", "power": master.b
 check("parts playing together share their role's place",
       shared["p0"][1] < 1.0 and abs(shared["p0"][1] - shared["p1"][1]) < 1e-6, True)
 
+# A lead far louder than every other part says it should be is not trusted.
+backing = [{"id": f"b{i}", "role": "rhythm", "power": master.block_power(tone(200 + 50 * i, -45))}
+           for i in range(3)]
+blaring = master.balance(backing + [{"id": "lead", "role": "lead",
+                                     "power": master.block_power(tone(440, -25))}])
+check("a lead far over the rest of the song is brought down", blaring["lead"][1] < 0.6, True)
+
+# The rider: a part whose last three seconds are 12 dB louder has them turned down.
+sect = tone(300, -30)
+sect[5 * sr:] *= 4.0
+rode = master.ride(master.block_power(sect))
+check("a loud section of a part is turned down", float(rode[-15:].max()) < 0.8, True)
+check("and its quiet sections are left alone", float(rode[5:15].min()) > 0.99, True)
+
 print("mastering")
 mix = np.stack([tone(220, -20), tone(221, -20)], axis=1)
 mix[sr:sr + 50] = 0.99                               # a spike
