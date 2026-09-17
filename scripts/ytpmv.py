@@ -71,6 +71,8 @@ def main() -> int:
                          "names synthesise it and the voice is gone; the -voice ones "
                          "keep the voice, played off that machine's own sample channel. "
                          "The picture goes through the same console")
+    ap.add_argument("--accurate", action="store_true",
+                    help="only as many notes at once as the chip had channels for")
     ap.add_argument("--balance", action=argparse.BooleanOptionalAction, default=None,
                     help="measure every part and move it to where its job wants it "
                          "(on by default; --no-balance for the old fixed levels)")
@@ -133,6 +135,8 @@ def main() -> int:
 
     options = {"speed": args.speed, "transpose": args.transpose, "labels": args.labels,
                "chip": args.chip}
+    if args.accurate:
+        options["accurate"] = True
     if args.balance is not None:
         options["balance"] = args.balance
     if args.vary:

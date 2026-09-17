@@ -406,6 +406,28 @@ for chip in _r.CHIPS:
             check(f"on {chip} with no voice, the kit ({kit_auto}) is on the chip's list",
                   kit_auto in dict(_cat["machines"][machine]["drums"]), True)
 
+
+# Accurate channels: no more notes at once than the machine had.
+from app.ytpmv.music import Note as _Note, Part as _Part
+def _np(pid, role, notes):
+    return _Part(pid, pid, 0, 0, 80, [_Note(s, d, p, 100) for s, d, p in notes], role)
+chords = _np("c", "chords", [(0.0, 2.0, 60), (0.0, 2.0, 64)])
+lead = _np("l", "lead", [(1.0, 1.0, 72)])
+cut = tones.allocate([(chords, "pulse"), (lead, "pulse")])
+check("the NES's two pulses are full, so the lead takes one and cuts a chord note off",
+      sorted(cut.items()), [(("c", 0.0, 60), 1.0)])
+check("but the chords cannot take the lead's channel", tones.allocate(
+      [(_np("c", "chords", [(1.0, 1.0, 60), (1.0, 1.0, 64)]), "pulse"),
+       (_np("l", "lead", [(0.0, 2.0, 72), (0.0, 2.0, 76)]), "pulse")]),
+      {("c", 1.0, 60): 1.0, ("c", 1.0, 64): 1.0})
+check("the triangle is a channel of its own", tones.allocate([(chords, "pulse"), (lead, "triangle")]), {})
+check("a note that has ended frees its channel",
+      tones.allocate([(_np("c", "chords", [(0.0, 1.0, 60), (0.0, 1.0, 64), (1.0, 1.0, 67)]), "pulse")]), {})
+check("the Mega Drive loses an FM channel to the DAC when the DAC is in use",
+      len(tones.allocate([(_np("p", "chords", [(0.0, 1.0, 60 + i) for i in range(6)]), "organ"),
+                          (_np("k", "drums:kick", [(0.0, 0.5, 36)]), "dac")])), 1)
+check("and the voice itself is never limited", tones.channel("clean"), None)
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f_ in failures:

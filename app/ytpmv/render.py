@@ -582,6 +582,8 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # Measure every part and set it where its job says it should sit, rather
     # than trusting a table that cannot tell a whisper from a brass patch.
     balance = bool(opts.get("balance", True))
+    # Only as many notes at once as the chip had channels; off by default.
+    accurate = bool(opts.get("accurate", False))
     # One switch for the lot: every part out through an emulated sound chip.
     # Parts that were given a tone of their own keep it.
     chip = which_chip(opts.get("chip", False))
@@ -614,6 +616,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
 
     playing = [p for p in song.parts if settings[p.id]["text"] and not settings[p.id]["mute"]
                and p.notes]
+    # No more notes at once than the machine had channels for; see tones.allocate.
+    cuts = (tones.allocate([(p, settings[p.id].get("tone")) for p in playing], speed)
+            if accurate else None)
     shown = [p for p in song.parts if settings[p.id]["text"] and settings[p.id]["visible"]
              and p.notes]
     wanted = {p.id: p for p in playing + shown}
@@ -690,7 +695,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             scratch.fill(0.0)
             into = scratch
         hits[part.id] = _play(part, settings[part.id], sample_of[part.id], into,
-                              0.0, T, speed, g_transpose, flip, tick, jitter, vary)
+                              0.0, T, speed, g_transpose, flip, tick, jitter, vary, cuts)
         if synth and settings[part.id]["visible"]:
             traces[part.id] = scope.traces(
                 scratch.mean(axis=1), n_frames, spf, max(1, sw - 1),
@@ -831,6 +836,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         "size": [W, H],
         "song": {k: v for k, v in song.summary().items() if k != "parts"},
         "options": {"vary": vary, "jitter": jitter, "speed": speed, "balance": balance,
+                    "accurate": accurate,
                     "screen": screen, "synth": synth, "chip": chip,
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
@@ -853,7 +859,7 @@ def _hit(part: music.Part, s: dict) -> str | None:
 
 def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from: float,
           T: float, speed: float, g_transpose: int, flip: bool, tick=None,
-          jitter: bool = True, vary: str = "rotate") -> list[_Hit]:
+          jitter: bool = True, vary: str = "rotate", cuts: dict | None = None) -> list[_Hit]:
     """Sing every note of *part* between t_from and T into *mix*; return its hits.
 
     *takes* are the Samples to play, rotated between hits (see VARY). Times are
@@ -938,6 +944,14 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
                             key=n.pitch if part.is_drums else None,
                             model="8580" if str(s.get("chip") or "").startswith("sid8580")
                             else "6581")
+        cut = cuts.get((part.id, n.start, n.pitch)) if cuts else None
+        if cut is not None:
+            keep = int(round((cut - t0) * SR))
+            if keep <= 0:
+                continue                      # never got a channel
+            y = y[:keep].copy()
+            fade = min(len(y), int(0.004 * SR))
+            y[len(y) - fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
         if mix is not None and s["volume"] > 0:
             a = int(round((t0 - t_from) * SR))
             k = min(len(y), N - a)

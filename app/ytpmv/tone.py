@@ -76,6 +76,104 @@ SAMPLED = {"md": "dac", "nes": "dpcm", "sms": "psg-pcm", "snes": "brr",
 DAC_RATE = 13300.0
 
 
+# ── Channels ──────────────────────────────────────────────────────────────────
+#
+# How many notes each machine could actually sound at once, and on what. With
+# "accurate" on, a song gets no more than that: a note that finds every
+# channel of its kind busy takes one over and cuts off what was on it, which
+# is exactly what a driver did when a song asked for more than the chip had.
+# The Mega Drive's sixth FM channel is the DAC's when anything uses the DAC.
+CHANNELS = {
+    ("md", "fm"): 6, ("md", "dac"): 1,
+    ("nes", "pulse"): 2, ("nes", "triangle"): 1, ("nes", "noise"): 1, ("nes", "dpcm"): 1,
+    ("sms", "tone"): 3, ("sms", "noise"): 1, ("sms", "pcm"): 1,
+    ("gb", "pulse"): 2, ("gb", "wave"): 1, ("gb", "noise"): 1,
+    ("sid", "voice"): 3, ("sid", "digi"): 1,
+    ("opl2", "fm"): 9, ("opl2", "pcm"): 1, ("opl3", "fm"): 18, ("opl3", "pcm"): 1,
+    ("snes", "voice"): 8,
+}
+# Who keeps a channel when there are not enough: a note only takes one from a
+# note that matters no more than it does, and otherwise is not heard.
+_PRIORITY = {"lead": 4, "bass": 3, "drums": 3}
+
+
+def channel(tone: str | None) -> tuple[str, str] | None:
+    """The (machine, kind of channel) *tone* is played on; None for the voice."""
+    t = resolve(tone)
+    if t in (None, "clean"):
+        return None
+    if t == "dac" or t in ym2612.SAMPLED_DRUMS:
+        return "md", "dac"
+    if t in ym2612.PATCHES:
+        return "md", "fm"
+    if t == "dpcm":
+        return "nes", "dpcm"
+    if t in nes.VOICES:
+        return "nes", nes.VOICES[t].kind
+    if t == "psg-pcm":
+        return "sms", "pcm"
+    if t in sms.VOICES:
+        return "sms", sms.VOICES[t].kind
+    if t == "gb-pcm":
+        return "gb", "wave"                  # the samples went out through the wave table
+    if t in gb.VOICES:
+        return "gb", gb.VOICES[t].kind
+    if t == "sid-digi":
+        return "sid", "digi"
+    if t in sid.VOICES:
+        return "sid", "voice"
+    if t in ("opl2", "opl3"):
+        return t, "fm"
+    if t in ("sb-pcm", "sb16-pcm"):
+        return ("opl2" if t == "sb-pcm" else "opl3"), "pcm"
+    if t in ("snes", "brr"):
+        return "snes", "voice"
+    return None
+
+
+def allocate(parts: list, speed: float = 1.0) -> dict[tuple, float]:
+    """When each note is cut off for want of a channel, in the rendered clock.
+
+    *parts* is [(Part, tone)]. Returns {(part id, note start, pitch): seconds}
+    for the notes that lose their channel -- at or before their own start for
+    a note that never got one. Notes not in it play out as written.
+    """
+    wanted = {channel(t) for _, t in parts} - {None}
+    size = dict(CHANNELS)
+    if ("md", "dac") in wanted:
+        size[("md", "fm")] = 5
+    events = []
+    for part, tone in parts:
+        ch = channel(tone)
+        if ch is None:
+            continue
+        rank = _PRIORITY.get(part.role.split(":")[0], 1)
+        for n in part.notes:
+            events.append((n.start / speed, -rank, n.pitch, part.id, (n.start + n.dur) / speed, ch, n.start))
+    events.sort()
+    busy: dict[tuple, list] = {}              # channel kind -> [[end, rank, key], ...]
+    cuts: dict[tuple, float] = {}
+    for t0, neg_rank, pitch, pid, t1, ch, start in events:
+        rank, key = -neg_rank, (pid, start, pitch)
+        slots = busy.setdefault(ch, [])
+        free = [s for s in slots if s[0] <= t0]
+        if len(slots) < size.get(ch, 1):
+            slots.append([t1, rank, key])
+            continue
+        if free:
+            slot = min(free, key=lambda s: s[0])
+        else:
+            # Everything is still sounding: take the least important, and of
+            # those the one that has been going longest.
+            slot = min(slots, key=lambda s: (s[1], s[0]))
+            if slot[1] > rank:
+                cuts[key] = t0                # nowhere to go: not heard
+                continue
+            cuts[slot[2]] = t0
+        slot[:] = [t1, rank, key]
+    return cuts
+
+
 def resolve(name: str | None) -> str | None:
     """The tone *name* means, or None when it is not one."""
     if not name:

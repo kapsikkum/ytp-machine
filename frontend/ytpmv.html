@@ -268,6 +268,7 @@
       </select>
     </label>
     <label title="Measure how loud each part actually came out and move it to where its job wants it, rather than trusting a fixed table that cannot tell a whisper from a brass patch. Then set the level of the finished mix."><input type="checkbox" id="opt-balance" checked> auto balance</label>
+    <label title="Only as many notes at once as the chip really had channels for. When a song asks for more, a new note takes a channel over and cuts off what was on it, as the drivers did."><input type="checkbox" id="opt-accurate"> accurate channels</label>
     <label title="A hair of level on every hit, and a hair of tuning on drums, so a part sounds played rather than triggered"><input type="checkbox" id="opt-jitter"> jitter</label>
     </div>
     <div class="group"><span class="gl">picture</span>
@@ -780,7 +781,7 @@
     const len = parseInt($('opt-len').value);
     const options = {
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked,
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked, accurate: $('opt-accurate').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked, synth: synthMode,
     };
