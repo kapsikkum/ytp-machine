@@ -2241,6 +2241,11 @@ def resolve_text(text: str, progress=None,
                     "runs": [], "tokens": tokens}
 
     _say("resolving", n, n)
+    # How each word was written, where that is not the word said: a spelt-out
+    # letter reads "L" in the results, not "el".
+    for tok, sh in zip(tokens, shown):
+        if sh.lower() != tok["word"] and "stretched" not in tok:
+            tok["shown"] = sh
     return segments, {
         "found":     found,
         "spliced":   spliced,
