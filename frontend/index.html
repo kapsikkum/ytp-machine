@@ -203,7 +203,6 @@
     .pop .clip .src { color: var(--text); font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pop .clip .meta { color: var(--dim); font-size: .66rem; white-space: nowrap; }
     .pop .clip .play { width: 1.6rem; height: 1.6rem; padding: 0; border-radius: 50%; }
-    .pop video { width: 100%; max-height: 9rem; border-radius: 8px; background: #000; }
     .pop .kinds button { justify-content: flex-start; font-size: .75rem; }
     @media (hover: none) { .word:focus .acts { opacity: 1; pointer-events: auto; } }
     .result-bar { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding: .6rem .15rem .1rem; }
@@ -766,9 +765,9 @@
     box.dataset.corpus = got.data.corpus;
   }
   function playClip(el, c, corpus) {
-    const v = el.querySelector('video');
+    // Audio only: the picture appearing pushed the list down under the pointer.
+    const v = el.querySelector('audio');
     const src = `/api/edit/source/${c.source_id}/video?c=${encodeURIComponent(corpus)}`;
-    v.hidden = false;
     const go = () => { v.currentTime = c.start; v.play().catch(() => {}); };
     v.ontimeupdate = () => { if (v.currentTime >= c.end + 0.03) v.pause(); };
     if (v.dataset.src !== src) { v.dataset.src = src; v.src = src; v.onloadedmetadata = go; } else go();
@@ -791,7 +790,7 @@
         <label class="switch"><input type="checkbox" data-flag="reverse" ${rev ? 'checked' : ''}><span class="track"></span> backwards</label>
       </div>
       <div><div class="section-label" style="margin:.1rem 0 .4rem">recording</div>
-        <video hidden playsinline></video>
+        <audio hidden></audio>
         <div class="clips"><div class="hint">loading the recordings…</div></div></div>`,
       (el) => {
         // Sliders change the text as they move, without redrawing the menu
