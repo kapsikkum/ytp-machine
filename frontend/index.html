@@ -174,6 +174,23 @@
     .word .acts > *:hover { opacity: 1; }
     .word .acts .on { opacity: 1; }
     .word.voted-down { opacity: .55; }
+    .word .acts { }
+    .word:hover .acts, .word:focus-within .acts { max-width: 6rem; }
+    .chip { cursor: pointer; }
+    .chip .fx { color: var(--violet); font-size: .66rem; }
+    .pop {
+      position: absolute; z-index: 60; min-width: 17rem; max-width: calc(100vw - 2rem);
+      background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.55); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .5rem;
+    }
+    .pop .ph { color: var(--text); font-size: .8rem; display: flex; justify-content: space-between; gap: .5rem; }
+    .pop .row { display: grid; grid-template-columns: 5.2rem 1fr; align-items: center; gap: .5rem; }
+    .pop .row > span { color: var(--dim); font-size: .7rem; }
+    .pop .seg { display: flex; flex-wrap: wrap; gap: .25rem; }
+    .pop .seg button { padding: .22rem .5rem; font-size: .7rem; border-radius: 999px; color: var(--muted); }
+    .pop .seg button.on { background: var(--yellow); border-color: var(--yellow); color: #000; }
+    .pop .kinds { display: flex; flex-direction: column; gap: .3rem; }
+    .pop .kinds button { justify-content: flex-start; font-size: .75rem; }
     @media (hover: none) { .word .acts { max-width: 5rem; opacity: 1; } }
     .result-bar { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding: .6rem .15rem .1rem; }
     #summary { color: var(--dim); font-size: .74rem; }
@@ -258,7 +275,7 @@
                 <span id="sing-midi-name" class="hint"></span>
                 <button type="button" class="linkish" id="sing-midi-clear" hidden>use the tune shape</button>
               </div>
-              <div class="hint">On the word chips: <b>click</b> a word to sing it a semitone higher, <b>shift-click</b> lower. Or type it: <b>hello^+2</b>, <b>hello^-3</b>, or a note, <b>hello^A3</b>.</div>
+              <div class="hint"><b>Click a word chip</b> to move that word up or down from the tune.</div>
             </div>
             <div class="voice-settings" id="splice-wrap" hidden>
               <span>for this voice</span>
@@ -613,12 +630,10 @@
     for (let tok of text.split(/\s+/)) {
       if (!tok) continue;
       ti++;
-      const sm = tok.match(NOTE_MARK);
-      const note = sm && sm[1] ? sm[2] : null;
-      if (note) tok = sm[1] + sm[3];
+      const { base, note, fx, punct } = splitTok(tok);
       const at = chips.length;
-      tokens(tok);
-      for (const c of chips.slice(at)) Object.assign(c, { ti, note });
+      tokens(base + punct);
+      for (const c of chips.slice(at)) Object.assign(c, { ti, note, fx: Object.keys(fx).length ? fx : null });
     }
     return chips;
 
@@ -646,31 +661,96 @@
     }
   }
 
-  // hello^+2, hello^A3: where a word sits when it is sung. Same as app/generate.py's MARK.
+  // A word's markup, which the chip menu writes so nobody has to type it:
+  // word^+2{pause=0.5,rate=0.8,pitch=2,vol=6,emph=strong,spell}. The same
+  // patterns as app/generate.py's MARK and FX.
   const NOTE_MARK = /^(.*?)\^([+-]?\d{1,2}|[A-Ga-g][#b]?-?\d)([.,!?;:"')\]]*)$/;
-  function bumpNote(ti, d) {
+  const FX_MARK = /^(.*?)\{([\w=.,+\- ]*)\}([.,!?;:"')\]]*)$/;
+  function splitTok(tok) {
+    let fx = {}, note = null, punct = '';
+    const f = tok.match(FX_MARK);
+    if (f && f[1]) {
+      tok = f[1]; punct = f[3];
+      for (const item of f[2].split(',')) {
+        const [k, v] = item.split('=');
+        if (k) fx[k.trim()] = v === undefined ? true : (k.trim() === 'emph' ? v.trim() : Number(v));
+      }
+    }
+    const m = tok.match(NOTE_MARK);
+    if (m && m[1]) { tok = m[1]; note = m[2]; punct = m[3] + punct; }
+    const b = tok.match(/^(.*?)([.,!?;:"')\]]*)$/);
+    return { base: b[1], note, fx, punct: b[2] + punct };
+  }
+  function joinTok({ base, note, fx, punct }) {
+    const body = Object.entries(fx).filter(([, v]) => v !== undefined && v !== null && v !== false)
+      .map(([k, v]) => v === true ? k : `${k}=${v}`).join(',');
+    return `${base}${note ? `^${note}` : ''}${body ? `{${body}}` : ''}${punct}`;
+  }
+  function editTok(ti, change) {
     const parts = textInput.value.split(/(\s+)/);
     let n = -1;
     for (let j = 0; j < parts.length; j++) {
       if (j % 2 || !parts[j] || ++n !== ti) continue;
-      const m = parts[j].match(NOTE_MARK);
-      if (m && m[1] && !/^[+-]?\d+$/.test(m[2])) return;     // a named note is left as typed
-      const base = m && m[1] ? m[1] + m[3] : parts[j];
-      const v = (m && m[1] ? Number(m[2]) : 0) + d;
-      const b = base.match(/^(.*?)([.,!?;:"')\]]*)$/);
-      parts[j] = v ? `${b[1]}^${v > 0 ? '+' : ''}${v}${b[2]}` : base;
+      const t = splitTok(parts[j]);
+      change(t);
+      parts[j] = joinTok(t);
       break;
     }
     textInput.value = parts.join('');
     textInput.dispatchEvent(new Event('input'));
   }
+  function tokAt(ti) {
+    return splitTok(textInput.value.split(/\s+/).filter(Boolean)[ti] || '');
+  }
+
+  // One floating menu, for a chip's effects or a result word's report.
+  const pop = document.createElement('div');
+  pop.className = 'pop'; pop.hidden = true;
+  document.body.appendChild(pop);
+  function openPop(anchor, html, wire) {
+    pop.innerHTML = html; pop.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = `${Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+    wire(pop);
+  }
+  // composedPath, not contains: a choice redraws the menu, detaching the button that was clicked.
+  document.addEventListener('click', (e) => { const path = e.composedPath(); if (!pop.hidden && !path.includes(pop) && !path.some(n => n.matches && n.matches('.chip, .word .acts'))) pop.hidden = true; });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') pop.hidden = true; });
+
+  // What each row of the chip menu offers: [label, key, [[text, value], ...]].
+  const FX_ROWS = [
+    ['pause after', 'pause', [['none', null], ['short', 0.3], ['medium', 0.7], ['long', 1.5]]],
+    ['speed', 'rate', [['slower', 0.75], ['normal', null], ['faster', 1.35]]],
+    ['pitch', 'pitch', [['lower', -4], ['normal', null], ['higher', 4]]],
+    ['volume', 'vol', [['quieter', -6], ['normal', null], ['louder', 6]]],
+    ['emphasis', 'emph', [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']]],
+    ['spell out', 'spell', [['no', null], ['letter by letter', true]]],
+  ];
+  function drawFxPop(chip) {
+    const ti = Number(chip.dataset.ti), t = tokAt(ti);
+    const seg = (key, choices, cur) => `<div class="seg">${choices.map(([label, v], k) =>
+      `<button type="button" data-key="${key}" data-k="${k}" class="${(cur ?? null) === v ? 'on' : ''}">${esc(label)}</button>`).join('')}</div>`;
+    const noteRow = opts.sing && !/^[A-Ga-g]/.test(t.note || '')
+      ? `<div class="row"><span>sung note</span><div class="seg"><button type="button" data-note="-1">lower</button><button type="button" disabled>${t.note || 'on the tune'}</button><button type="button" data-note="1">higher</button></div></div>` : '';
+    openPop(chip, `<div class="ph"><b>${esc(t.base.replace(/[~*]/g, ''))}</b><button type="button" class="linkish" data-clear>clear</button></div>
+      ${FX_ROWS.map(([label, key, choices]) => `<div class="row"><span>${label}</span>${seg(key, choices, t.fx[key])}</div>`).join('')}${noteRow}`,
+      (el) => { el.onclick = (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        editTok(ti, (tok) => {
+          if (b.dataset.clear !== undefined) { tok.fx = {}; tok.note = null; return; }
+          if (b.dataset.note) {
+            const v = Number(tok.note || 0) + Number(b.dataset.note);
+            tok.note = v ? `${v > 0 ? '+' : ''}${v}` : null; return;
+          }
+          const [, key, choices] = FX_ROWS.find(r => r[1] === b.dataset.key);
+          tok.fx[key] = choices[Number(b.dataset.k)][1];
+        });
+        drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
+      }; });
+  }
   $('chips').addEventListener('click', (e) => {
-    const c = e.target.closest('.chip[data-ti]'); if (!c || !opts.sing) return;
-    bumpNote(Number(c.dataset.ti), e.shiftKey ? -1 : 1);
-  });
-  $('chips').addEventListener('contextmenu', (e) => {
-    const c = e.target.closest('.chip[data-ti]'); if (!c || !opts.sing) return;
-    e.preventDefault(); bumpNote(Number(c.dataset.ti), -1);
+    const c = e.target.closest('.chip[data-ti]'); if (c) drawFxPop(c);
   });
 
   const SHOWN = 60;
@@ -678,7 +758,7 @@
     const chips = preview(textInput.value);
     const el = $('chips');
     el.innerHTML = chips.slice(0, SHOWN).map(c =>
-      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}" data-ti="${c.ti}" title="${esc(c.title)}${opts.sing ? ' · click up, shift-click down' : ''}">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}</span>`).join('')
+      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
       + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;
@@ -908,6 +988,7 @@
         if (Array.isArray(t.clips) && t.clips.length) {
           acts.appendChild(voteButton(t, w, +1, '▲', 'use these clips more for this word'));
           acts.appendChild(voteButton(t, w, -1, '▼', 'use these clips less for this word'));
+          acts.appendChild(reportButton(t));
         }
         w.appendChild(acts);
       }
@@ -932,6 +1013,32 @@
   video.addEventListener('seeked', lightWord);
   // timeupdate fires a few times a second; a frame loop keeps the highlight on the beat.
   (function tick() { if (!video.paused) lightWord(); requestAnimationFrame(tick); })();
+
+  // Where a word is cut wrong, said with one click: the generator avoids the
+  // clip from then on, and the corpus editor lists it until somebody fixes it.
+  const BOUNDARY = [['starts late', 'the start of the word is cut off'],
+                    ['starts early', 'it begins with a bit of the word before'],
+                    ['ends early', 'the end of the word is cut off'],
+                    ['ends late', 'it runs on into the next word']];
+  function reportButton(token) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = '✂'; b.title = 'this word is cut in the wrong place';
+    b.setAttribute('aria-label', `Report where ${token.word} is cut`);
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openPop(b, `<div class="ph"><b>${esc(token.word)}</b> is cut wrong:</div><div class="kinds">${BOUNDARY.map(([k, why]) =>
+        `<button type="button" data-kind="${k}" title="${esc(why)}">${esc(k)} <span class="hint">— ${esc(why)}</span></button>`).join('')}</div>`,
+        (el) => { el.onclick = async (ev) => {
+          const k = ev.target.closest('button[data-kind]'); if (!k) return;
+          const r = await postJson('/api/boundary', { clips: token.clips, kind: k.dataset.kind });
+          el.innerHTML = r.ok ? `<div class="ph">Thanks — <b>${esc(token.word)}</b> reported as ${esc(k.dataset.kind)}. That clip will be used less, and it is flagged in the corpus editor.</div>`
+                              : `<div class="ph err">${esc(r.error || 'could not report it')}</div>`;
+          b.classList.add('on');
+          setTimeout(() => { pop.hidden = true; }, 1800);
+        }; });
+    });
+    return b;
+  }
 
   function voteButton(token, tag, dir, glyph, title) {
     const b = document.createElement('button');

@@ -229,6 +229,17 @@ def init_db() -> None:
             -- User feedback on phoneme splices.  A negative score means "this
             -- clip sounded bad when used to splice this target word", so the
             -- splicer should avoid it for that word unless it has no choice.
+            -- A person saying a clip is cut in the wrong place: kind is
+            -- "starts late", "starts early", "ends early" or "ends late".
+            -- The generator avoids a reported clip; the corpus editor lists
+            -- it; editing the clip's times clears its reports.
+            CREATE TABLE IF NOT EXISTS boundary_reports (
+                clip_id  INTEGER NOT NULL,
+                kind     TEXT NOT NULL,
+                count    INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (clip_id, kind)
+            );
+
             CREATE TABLE IF NOT EXISTS splice_ratings (
                 word     TEXT NOT NULL,
                 clip_id  INTEGER NOT NULL,

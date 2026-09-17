@@ -164,6 +164,13 @@ def source_clips(source_id: int):
                 ratings.setdefault(r["clip_id"], {})[r["word"]] = r["score"]
         except Exception:
             pass                      # a corpus packed before splice_ratings
+        reports: dict[int, list[str]] = {}
+        try:
+            for r in conn.execute("SELECT clip_id, kind, count FROM boundary_reports"):
+                reports.setdefault(r["clip_id"], []).append(
+                    f"reported: {r['kind']}" + (f" ×{r['count']}" if r["count"] > 1 else ""))
+        except Exception:
+            pass                      # a corpus from before boundary reports
 
     for c in rows:
         c["ratings"] = ratings.get(c["id"], {}) if c["kind"] == "word" else {}
@@ -196,6 +203,8 @@ def source_clips(source_id: int):
                          else "no pronunciation")
         elif _phones_moved_off(c.get("phones"), c["end_time"] - c["start_time"]):
             flags.append("alignment moved off")
+        if c["kind"] == "word":
+            flags += reports.get(c["id"], [])
         c["flags"] = flags
     return {"source": dict(src), "clips": rows}
 
@@ -441,6 +450,13 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
                                 detail="a clip must be at least 20ms long")
         conn.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id=?",
                      (*params, clip_id))
+        if moved and kind == "word":
+            # Moved by hand, against the waveform: whatever was reported
+            # about where it was cut is answered.
+            try:
+                conn.execute("DELETE FROM boundary_reports WHERE clip_id=?", (clip_id,))
+            except Exception:
+                pass
 
         # Aligned phoneme times are stored relative to the clip's own
         # start_time, so an edit invalidates them -- and moving the start by

@@ -108,6 +108,7 @@ _idle_clips:          list[dict[str, Any]] = []  # on-screen silent gaps (for pa
 _noise_by_word:       dict[str, list[dict[str, Any]]] = {}  # "click"/"spew"/… → noise clips
 _all_noises:          list[dict[str, Any]] = []  # every noise clip (for the "noise" token)
 _splice_scores:       dict[tuple[str, int], int] | None = None  # (word, clip_id) → user score
+_boundary_reports:    dict[int, int] = {}  # clip_id → times it was reported as badly cut
 
 # How a vote bends the odds. Each net vote multiplies or divides a clip's
 # selection weight by this, so one downvote makes a clip half as likely, three
@@ -219,6 +220,11 @@ def _ensure_cache() -> None:
             noise_rows = conn.execute("SELECT * FROM noise_clips").fetchall()
         except Exception:
             noise_rows = []
+        try:
+            report_rows = conn.execute(
+                "SELECT clip_id, SUM(count) AS n FROM boundary_reports GROUP BY clip_id").fetchall()
+        except Exception:
+            report_rows = []
 
     # Per-source raw counts (for a quality score) and the cleaned ordered list.
     src_total: dict[int, int] = {}
@@ -283,6 +289,8 @@ def _ensure_cache() -> None:
     _noise_by_word       = nbw
     _all_noises          = alln
     _splice_scores       = {(r["word"], r["clip_id"]): r["score"] for r in rating_rows}
+    _boundary_reports.clear()
+    _boundary_reports.update({int(r["clip_id"]): int(r["n"]) for r in report_rows})
     _source_quality      = {
         s: src_good.get(s, 0) / src_total[s] for s in src_total
     }
@@ -342,6 +350,26 @@ def _penalty_for(word: str) -> dict[int, int]:
     word = word.lower()
     return {cid: -score for (w, cid), score in (_splice_scores or {}).items()
             if w == word and score}
+
+
+BOUNDARY_KINDS = ("starts late", "starts early", "ends early", "ends late")
+
+
+def report_boundary(clip_ids: list[int], kind: str) -> dict[int, int]:
+    """Record that these clips are cut in the wrong place; returns each one's total."""
+    if kind not in BOUNDARY_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(BOUNDARY_KINDS)}")
+    ids = sorted({int(c) for c in clip_ids})
+    with get_db() as conn:
+        for cid in ids:
+            conn.execute(
+                "INSERT INTO boundary_reports (clip_id, kind, count) VALUES (?, ?, 1) "
+                "ON CONFLICT(clip_id, kind) DO UPDATE SET count = count + 1", (cid, kind))
+        totals = {cid: int(conn.execute(
+            "SELECT COALESCE(SUM(count), 0) FROM boundary_reports WHERE clip_id=?",
+            (cid,)).fetchone()[0]) for cid in ids}
+    _boundary_reports.update(totals)
+    return totals
 
 
 def rate_splice(word: str, clip_ids: list[int], delta: int = -1) -> dict[str, int]:
@@ -819,6 +847,58 @@ def parse_mark(mark: str | None) -> tuple[str, float] | None:
     return "rel", float(int(mark))
 
 
+# Per-word effects, the SSML ones that mean something for a spliced voice:
+# hello{pause=0.5,rate=0.8,pitch=2,vol=6,emph=strong,spell}. The page writes
+# these; nobody has to type them.
+#   pause  seconds of silence after the word (SSML <break>)
+#   rate   speed, 0.5 to 2 (<prosody rate>)
+#   pitch  semitones, -12 to 12 (<prosody pitch>)
+#   vol    decibels, -12 to 12 (<prosody volume>)
+#   emph   reduced | moderate | strong (<emphasis>)
+#   spell  said letter by letter (<say-as interpret-as="characters">)
+FX = re.compile(r"(.*?)\{([\w=.,+\- ]*)\}([.,!?;:\"')\]]*)")
+_FX_RANGE = {"pause": (0.0, 3.0), "rate": (0.5, 2.0), "pitch": (-12.0, 12.0), "vol": (-12.0, 12.0)}
+EMPHASIS = {"reduced": {"vol": -4.0, "rate": 1.1},
+            "moderate": {"vol": 3.0, "rate": 0.92},
+            "strong": {"vol": 6.0, "rate": 0.82, "pitch": 1.0}}
+LETTERS = dict(zip("abcdefghijklmnopqrstuvwxyz", (
+    "a", "bee", "see", "dee", "ee", "eff", "gee", "aitch", "i", "jay", "kay", "el", "em",
+    "en", "oh", "pee", "queue", "are", "es", "tea", "you", "vee", "double you", "ex",
+    "why", "zed")))
+
+
+def parse_fx(body: str) -> dict[str, Any]:
+    """The effects in the braces of hello{...}, held to their ranges."""
+    fx: dict[str, Any] = {}
+    for item in body.split(","):
+        key, _, val = item.strip().partition("=")
+        key = key.strip().lower()
+        if key == "spell":
+            fx["spell"] = True
+        elif key == "emph" and val.strip() in EMPHASIS:
+            fx["emph"] = val.strip()
+        elif key in _FX_RANGE:
+            try:
+                lo, hi = _FX_RANGE[key]
+                fx[key] = min(hi, max(lo, float(val)))
+            except ValueError:
+                pass
+    return fx
+
+
+def effective_fx(fx: dict[str, Any]) -> dict[str, float]:
+    """rate, pitch, vol and pause with emphasis folded in."""
+    out = dict(EMPHASIS.get(fx.get("emph"), {}))
+    if "rate" in fx:
+        out["rate"] = out.get("rate", 1.0) * fx["rate"]
+    for k in ("pitch", "vol"):
+        if k in fx:
+            out[k] = out.get(k, 0.0) + fx[k]
+    if "pause" in fx:
+        out["pause"] = fx["pause"]
+    return out
+
+
 def tokenize_full(text: str) -> list[dict[str, Any]]:
     """Every word to say, with everything the markup says about it.
 
@@ -829,6 +909,22 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for token in re.split(r"\s+", text.strip()):
         if not token:
+            continue
+        m = FX.fullmatch(token)
+        fx: dict[str, Any] = {}
+        if m and m.group(1):
+            token, fx = m.group(1) + m.group(3), parse_fx(m.group(2))
+        if fx.pop("spell", False):
+            # Letter by letter, each carrying the rest of the effects; the
+            # caption shows the letter, not how it is said.
+            letters = [c for c in token.lower() if c.isalnum()]
+            ends = bool(re.search(r"[.!?][\"')\]]*$", token))
+            for k, c in enumerate(letters):
+                said = LETTERS.get(c) or (_expand_token(c) or [c])[0]
+                for j, w in enumerate(said.split()):
+                    out.append({"word": w, "ends": ends and k == len(letters) - 1 and j == len(said.split()) - 1,
+                                "noise": False, "reverse": False, "stretch": [], "note": None,
+                                "shown": c.upper(), "fx": fx})
             continue
         # hello^+2 or hello^A3: where the word sits when it is sung.
         m = MARK.fullmatch(token)
@@ -844,19 +940,20 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
         m = re.fullmatch(r"\*([A-Za-z]+)\*[.!?]*", token)
         if m:
             out.append({"word": m.group(1).lower(), "ends": ends, "noise": True,
-                        "reverse": rev, "stretch": [], "shown": m.group(1).lower(), "note": note})
+                        "reverse": rev, "stretch": [], "shown": m.group(1).lower(), "note": note,
+                        "fx": fx})
             continue
         stretched = None if _known_word(re.sub(r"[^\w]", "", token).lower()) else unstretch(token)
         if stretched:
             word, marks = stretched
             out.append({"word": word, "ends": ends, "noise": False, "reverse": rev,
-                        "stretch": marks, "note": note,
+                        "stretch": marks, "note": note, "fx": fx,
                         "shown": re.sub(r"[^\w']", "", token).lower()})
             continue
         words = _expand_token(token)
         for k, w in enumerate(words):
             out.append({"word": w, "ends": ends and k == len(words) - 1, "noise": False,
-                        "reverse": rev, "stretch": [], "shown": w, "note": note})
+                        "reverse": rev, "stretch": [], "shown": w, "note": note, "fx": fx})
     if out:
         out[-1]["ends"] = True
     return out
@@ -958,6 +1055,8 @@ def pick_clip(rows: list[dict], word: str, clean: bool = True) -> dict[str, Any]
             cid = r.get("id")
             if cid is not None:
                 w *= _vote_weight(scores.get((key, int(cid)), 0))
+                # Reported as cut in the wrong place: a fifth as likely per report.
+                w *= 0.2 ** _boundary_reports.get(int(cid), 0)
             weights.append(max(w, 1e-6))
         if sum(weights) > 0:
             return random.choices(good, weights=weights, k=1)[0]
@@ -1655,8 +1754,11 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             afilters.append(f"afade=t=out:st={fo_start:.4f}:d={fo:.4f}")
         if pause > 0:
             afilters.append(f"apad=pad_dur={pause:.4f}")
-        if pitch != 0.0:
-            ratio = 2.0 ** (pitch / 12.0)
+        if seg.get("gain_db"):
+            afilters.append(f"volume={float(seg['gain_db']):.2f}dB")
+        seg_pitch = pitch + float(seg.get("pitch") or 0.0)
+        if seg_pitch != 0.0:
+            ratio = 2.0 ** (seg_pitch / 12.0)
             if _rubberband_ok():
                 afilters.append(f"rubberband=pitch={ratio:.5f}:formant=preserved")
             else:
@@ -1927,6 +2029,7 @@ def resolve_text(text: str, progress=None,
     is_rev   = [t["reverse"] for t in full]  # is_rev[i]   = ~wrapped~ reversed token
     stretch  = [t["stretch"] for t in full]  # stretch[i] = held letters: loooong
     shown    = [t["shown"] for t in full]
+    fx       = [effective_fx(t.get("fx") or {}) for t in full]
 
     _say("loading", 0, 1)
     _ensure_cache()
@@ -1993,7 +2096,7 @@ def resolve_text(text: str, progress=None,
 
         # 1) Prefer a contiguous phrase already spoken in some source — but never
         # let a run cross a full stop (the pause belongs at the sentence end).
-        run = _find_run(words, i) if options["phrases"] and not stretch[i] else None
+        run = _find_run(words, i) if options["phrases"] and not stretch[i] and not fx[i] else None
         if run:
             src, s, _e, length = run
             cap = length
@@ -2001,7 +2104,8 @@ def resolve_text(text: str, progress=None,
                 # A run is one clip, so it is reversed or not as a whole. Where
                 # the mark changes, the run has to end -- otherwise marking one
                 # word would quietly reverse the words either side of it.
-                if ends[i + k] or is_rev[i + k] != is_rev[i + k + 1] or stretch[i + k + 1]:
+                if (ends[i + k] or is_rev[i + k] != is_rev[i + k + 1] or stretch[i + k + 1]
+                        or fx[i + k + 1]):
                     cap = k + 1
                     break
             if cap >= 2:
@@ -2114,6 +2218,21 @@ def resolve_text(text: str, progress=None,
                         segments[-1].get("pause_after", 0.0), stop_pause)
             elif last_idx < n - 1 and word_gap > 0:
                 segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), word_gap)
+
+        # Effects apply to this word's own segments (never a run: see above),
+        # not the sentence's idle clip after it.
+        f = fx[i] if cap == 1 else {}
+        if f and len(segments) > seg_before:
+            own = [sg for sg in segments[seg_before:] if sg.get("_tok") is not None]
+            for sg in own:
+                if f.get("rate", 1.0) != 1.0:
+                    sg["stretch"] = float(sg.get("stretch") or 1.0) / f["rate"]
+                if f.get("pitch"):
+                    sg["pitch"] = f["pitch"]
+                if f.get("vol"):
+                    sg["gain_db"] = f["vol"]
+            if "pause" in f and own:
+                own[-1]["pause_after"] = f["pause"]
 
         i += cap
 

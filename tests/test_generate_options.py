@@ -108,6 +108,18 @@ tl = g.timeline(segs, g.generation_options({}))
 check("each word gets a place in the timeline", [w["i"] for w in tl], [0, 1])
 check("the second starts after the first and the pause between", tl[1]["start"] > tl[0]["end"] + 0.4, True)
 
+
+# Per-word effects, the SSML ones: written by the chip menu, never typed.
+toks = g.tokenize_full("word^+2{pause=0.5,emph=strong,rate=9} abc{spell}. plain")
+check("the markup comes off the word", [t["word"] for t in toks], ["word", "a", "bee", "see", "plain"])
+check("its effects are kept, held to their ranges", toks[0]["fx"], {"pause": 0.5, "emph": "strong", "rate": 2.0})
+check("alongside a sung note", toks[0]["note"], ("rel", 2.0))
+check("spelt out, the caption is the letter", [t["shown"] for t in toks[1:4]], ["A", "B", "C"])
+check("and the sentence still ends where it did", [t["ends"] for t in toks], [False, False, False, True, True])
+check("emphasis is louder and slower", g.effective_fx({"emph": "strong"})["vol"] > 0
+      and g.effective_fx({"emph": "strong"})["rate"] < 1, True)
+check("a report must say what is wrong", g.BOUNDARY_KINDS, ("starts late", "starts early", "ends early", "ends late"))
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f in failures:

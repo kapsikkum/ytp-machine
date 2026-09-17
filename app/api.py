@@ -52,6 +52,25 @@ class RateRequest(BaseModel):
     rating: int = -1   # < 0 down-vote, > 0 up-vote, 0 clears the vote
 
 
+class BoundaryReport(BaseModel):
+    clips: list[int]
+    kind: str
+
+
+@router.post("/boundary")
+def boundary(req: BoundaryReport):
+    """Report the clips behind a word as cut in the wrong place."""
+    if not req.clips:
+        raise HTTPException(status_code=400, detail="clips are required")
+    from app.generate import report_boundary
+    try:
+        totals = report_boundary(req.clips, req.kind)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("BOUNDARY  clips=%s  %s", req.clips, req.kind)
+    return {"status": "ok", "reports": totals}
+
+
 @router.post("/generate")
 def generate(req: GenerateRequest, wait: bool = False):
     """Queue a video and return its id.
