@@ -343,12 +343,44 @@ def _assign_roles(parts: list[Part]) -> None:
             p.role = "lead" if p is lead else "rhythm"
 
 
+def _salvage(data: bytes) -> "mido.MidiFile":
+    """The tracks of *data* that read, when one that does not sinks the file.
+
+    A Deltarune arrangement had a stray 0xF4 -- a status byte MIDI never
+    defined -- in one short track of fifty-nine, and mido refuses the whole
+    file for it. Each track is tried on its own and the broken ones left out.
+    """
+    if data[:4] != b"MThd":
+        raise ValueError("not a MIDI file")
+    hlen = int.from_bytes(data[4:8], "big")
+    head, i, good = data[8:8 + hlen], 8 + hlen, []
+    while i + 8 <= len(data):
+        n = int.from_bytes(data[i + 4:i + 8], "big")
+        chunk = data[i:i + 8 + n]
+        i += 8 + n
+        if chunk[:4] != b"MTrk":
+            continue
+        one = b"MThd" + (6).to_bytes(4, "big") + bytes((0, 1, 0, 1)) + head[4:6] + chunk
+        try:
+            good.append(mido.MidiFile(file=io.BytesIO(one), clip=True).tracks[0])
+        except (OSError, EOFError, KeyError, ValueError):
+            pass                             # a broken track is left out
+    if not good:
+        raise ValueError("no track in the file could be read")
+    mf = mido.MidiFile(type=1, ticks_per_beat=int.from_bytes(head[4:6], "big"))
+    mf.tracks.extend(good)
+    return mf
+
+
 def parse(data: bytes, title: str = "") -> Song:
     # clip=True: a data byte over 127 is clamped rather than refused. Files in
     # the wild have them -- one exported "Chaos King" has a velocity out of
     # range -- and mido's default is to raise, which threw away a whole song
     # over one byte in one note.
-    mf = mido.MidiFile(file=io.BytesIO(data), clip=True)
+    try:
+        mf = mido.MidiFile(file=io.BytesIO(data), clip=True)
+    except (OSError, EOFError, KeyError, ValueError):
+        mf = _salvage(data)
     tpb = mf.ticks_per_beat or 480
 
     tempo_changes: list[tuple[int, int]] = []
