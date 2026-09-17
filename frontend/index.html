@@ -184,12 +184,14 @@
     .chip { cursor: pointer; }
     .chip .fx { color: var(--violet); font-size: .66rem; }
     .pop {
-      position: absolute; z-index: 60; min-width: 17rem; max-width: calc(100vw - 2rem);
+      position: absolute; z-index: 60; width: 34rem; max-width: calc(100vw - 2rem);
       background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px;
       box-shadow: 0 12px 40px rgba(0,0,0,.55); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .5rem;
     }
     .pop .ph { color: var(--text); font-size: .8rem; display: flex; justify-content: space-between; gap: .5rem; }
     .pop .row { display: grid; grid-template-columns: 5.2rem 1fr; align-items: center; gap: .5rem; }
+    .pop { gap: .85rem; padding: .9rem 1rem; }
+    .pop .sliders { grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
     .pop .row > span { color: var(--dim); font-size: .7rem; }
     .pop .seg { display: flex; flex-wrap: wrap; gap: .25rem; }
     .pop .seg button { padding: .22rem .5rem; font-size: .7rem; border-radius: 999px; color: var(--muted); }
@@ -723,36 +725,61 @@
   document.addEventListener('click', (e) => { const path = e.composedPath(); if (!pop.hidden && !path.includes(pop) && !path.some(n => n.matches && n.matches('.chip, .word .acts'))) pop.hidden = true; });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') pop.hidden = true; });
 
-  // What each row of the chip menu offers: [label, key, [[text, value], ...]].
-  const FX_ROWS = [
-    ['pause after', 'pause', [['none', null], ['short', 0.3], ['medium', 0.7], ['long', 1.5]]],
-    ['speed', 'rate', [['slower', 0.75], ['normal', null], ['faster', 1.35]]],
-    ['pitch', 'pitch', [['lower', -4], ['normal', null], ['higher', 4]]],
-    ['volume', 'vol', [['quieter', -6], ['normal', null], ['louder', 6]]],
-    ['emphasis', 'emph', [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']]],
-    ['spell out', 'spell', [['no', null], ['letter by letter', true]]],
+  // A word's own settings, laid out like the sentence's: sliders, then
+  // switches. A slider at its "as the sentence" end removes the setting.
+  // [key, name, min, max, step, neutral, format]
+  const FX_SLIDERS = [
+    ['pause', 'pause after', -0.05, 3, 0.05, -0.05, v => v < 0 ? 'the usual gap' : `${v.toFixed(2)} s`],
+    ['rate', 'speed', 0.5, 2, 0.05, 1, v => `${v.toFixed(2)}×`],
+    ['pitch', 'pitch', -12, 12, 1, 0, v => v === 0 ? 'as recorded' : `${v > 0 ? '+' : ''}${v} semitones`],
+    ['vol', 'volume', -12, 12, 1, 0, v => v === 0 ? 'as recorded' : `${v > 0 ? '+' : ''}${v} dB`],
   ];
+  const NOTE_SLIDER = ['note', 'sung note', -12, 12, 1, 0, v => v === 0 ? 'on the tune' : `${v > 0 ? '+' : ''}${v} from the tune`];
+  const EMPH = [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']];
   function drawFxPop(chip) {
     const ti = Number(chip.dataset.ti), t = tokAt(ti);
-    const seg = (key, choices, cur) => `<div class="seg">${choices.map(([label, v], k) =>
-      `<button type="button" data-key="${key}" data-k="${k}" class="${(cur ?? null) === v ? 'on' : ''}">${esc(label)}</button>`).join('')}</div>`;
-    const noteRow = opts.sing && !/^[A-Ga-g]/.test(t.note || '')
-      ? `<div class="row"><span>sung note</span><div class="seg"><button type="button" data-note="-1">lower</button><button type="button" disabled>${t.note || 'on the tune'}</button><button type="button" data-note="1">higher</button></div></div>` : '';
-    openPop(chip, `<div class="ph"><b>${esc(t.base.replace(/[~*]/g, ''))}</b><button type="button" class="linkish" data-clear>clear</button></div>
-      ${FX_ROWS.map(([label, key, choices]) => `<div class="row"><span>${label}</span>${seg(key, choices, t.fx[key])}</div>`).join('')}${noteRow}`,
-      (el) => { el.onclick = (e) => {
-        const b = e.target.closest('button'); if (!b) return;
-        editTok(ti, (tok) => {
-          if (b.dataset.clear !== undefined) { tok.fx = {}; tok.note = null; return; }
-          if (b.dataset.note) {
-            const v = Number(tok.note || 0) + Number(b.dataset.note);
-            tok.note = v ? `${v > 0 ? '+' : ''}${v}` : null; return;
-          }
-          const [, key, choices] = FX_ROWS.find(r => r[1] === b.dataset.key);
-          tok.fx[key] = choices[Number(b.dataset.k)][1];
-        });
-        drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
-      }; });
+    const named = /^[A-Ga-g]/.test(t.note || '');
+    const rows = [...FX_SLIDERS, ...(opts.sing && !named ? [NOTE_SLIDER] : [])];
+    const valueOf = ([key, , , , , neutral]) => key === 'note' ? Number(t.note || 0) : (t.fx[key] ?? neutral);
+    const rev = /^~.+~$/.test(t.base);
+    openPop(chip, `<div class="ph"><b>${esc(t.base.replace(/[~*]/g, ''))}</b><button type="button" class="linkish" data-clear>reset this word</button></div>
+      <div class="sliders">${rows.map(r => `
+        <label class="slider"><span class="name">${r[1]}</span><output data-out="${r[0]}">${r[6](valueOf(r))}</output>
+          <input type="range" data-fx="${r[0]}" min="${r[2]}" max="${r[3]}" step="${r[4]}" value="${valueOf(r)}"></label>`).join('')}</div>
+      <div class="row"><span>emphasis</span><div class="seg">${EMPH.map(([label, v]) =>
+        `<button type="button" data-emph="${v ?? ''}" class="${(t.fx.emph ?? null) === v ? 'on' : ''}">${label}</button>`).join('')}</div></div>
+      <div class="toggles">
+        <label class="switch"><input type="checkbox" data-flag="spell" ${t.fx.spell ? 'checked' : ''}><span class="track"></span> spell it out</label>
+        <label class="switch"><input type="checkbox" data-flag="reverse" ${rev ? 'checked' : ''}><span class="track"></span> backwards</label>
+      </div>`,
+      (el) => {
+        // Sliders change the text as they move, without redrawing the menu
+        // under the pointer mid-drag.
+        el.oninput = (e) => {
+          const key = e.target.dataset.fx; if (!key) return;
+          const r = rows.find(x => x[0] === key), v = Number(e.target.value);
+          el.querySelector(`output[data-out="${key}"]`).textContent = r[6](v);
+          editTok(ti, (tok) => {
+            if (key === 'note') tok.note = v ? `${v > 0 ? '+' : ''}${v}` : null;
+            else tok.fx[key] = v === r[5] ? undefined : v;
+          });
+        };
+        el.onchange = (e) => {
+          const flag = e.target.dataset.flag; if (!flag) return;
+          editTok(ti, (tok) => {
+            if (flag === 'spell') tok.fx.spell = e.target.checked || undefined;
+            else tok.base = e.target.checked ? `~${tok.base.replace(/^~|~$/g, '')}~` : tok.base.replace(/^~(.+)~$/, '$1');
+          });
+        };
+        el.onclick = (e) => {
+          const b = e.target.closest('button'); if (!b) return;
+          editTok(ti, (tok) => {
+            if (b.dataset.clear !== undefined) { tok.fx = {}; tok.note = null; tok.base = tok.base.replace(/^~(.+)~$/, '$1'); }
+            else if (b.dataset.emph !== undefined) tok.fx.emph = b.dataset.emph || undefined;
+          });
+          drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
+        };
+      });
   }
   $('chips').addEventListener('click', (e) => {
     const c = e.target.closest('.chip[data-ti]'); if (c) drawFxPop(c);
