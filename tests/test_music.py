@@ -153,6 +153,14 @@ check("a tune at C5 for a voice at C3: down two", music.auto_octave(72, 48), -2)
 check("close enough stays put", music.auto_octave(50, 48), 0)
 check("no pitch, no move", music.auto_octave(50, None), 0)
 
+# A track with a status byte MIDI never defined (0xF4) is left out, not the file.
+data = song(track(0, [(0, 1, 60), (1, 1, 62)], program=0))
+bad = bytes((0x00, 0xF4, 0x00, 0x00, 0xFF, 0x2F, 0x00))
+data = data[:10] + (int.from_bytes(data[10:12], "big") + 1).to_bytes(2, "big") + data[12:]
+data += b"MTrk" + len(bad).to_bytes(4, "big") + bad
+s = music.parse(data, "broken")
+check("a broken track does not sink the file", [n.pitch for p in s.parts for n in p.notes], [60, 62])
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f in failures:
