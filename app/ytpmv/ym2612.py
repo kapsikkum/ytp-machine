@@ -542,6 +542,101 @@ PATCHES: dict[str, Patch] = {
 }
 
 
+# The rest of what General MIDI asks for, so a song's guitar is a guitar and
+# not whichever of the seven above its role fell to. Algorithm 4 -- two
+# modulator/carrier pairs -- does most of the heavy lifting on this console,
+# as it did in the games: one pair for the body, one detuned or an octave out
+# for width.
+PATCHES.update({
+    # Streets of Rage, Thunder Force, every Mega Drive metal track: feedback
+    # all the way up on the first modulator, both modulators hot, the two
+    # carriers a few cents apart. Overdriven is what FM does when pushed.
+    "dist-guitar": Patch(
+        "dist-guitar", "the distorted guitar: feedback all the way up, both pairs driven",
+        alg=4, fb=7, gain=1.0,
+        ops=(
+            Op(mul=1, tl=14, ar=31, d1r=6, sl=3, d2r=2, rr=9, ks=1),
+            Op(mul=1, dt=1, tl=6, ar=31, d1r=4, sl=2, d2r=2, rr=9, ks=1),
+            Op(mul=2, dt=5, tl=22, ar=31, d1r=8, sl=4, d2r=3, rr=9, ks=1),
+            Op(mul=1, dt=2, tl=8, ar=31, d1r=4, sl=2, d2r=2, rr=9, ks=1),
+        )),
+    "clean-guitar": Patch(
+        "clean-guitar", "a plucked guitar: a bright attack that dies back to the note",
+        alg=4, fb=3, gain=2.0,
+        ops=(
+            Op(mul=3, tl=26, ar=31, d1r=20, sl=10, d2r=10, rr=10, ks=2),
+            Op(mul=1, tl=6, ar=31, d1r=9, sl=5, d2r=6, rr=9, ks=1),
+            Op(mul=1, dt=1, tl=30, ar=31, d1r=16, sl=8, d2r=8, rr=10, ks=2),
+            Op(mul=2, tl=16, ar=31, d1r=11, sl=6, d2r=7, rr=9, ks=1),
+        )),
+    "synth-bass": Patch(
+        "synth-bass", "a synth bass: fat, buzzy and held",
+        alg=4, fb=5, gain=1.3, transpose=12,   # the sub carrier runs at half the note
+        ops=(
+            Op(mul=1, tl=18, ar=31, d1r=10, sl=5, d2r=2, rr=12, ks=0),
+            Op(mul=1, tl=4, ar=31, d1r=6, sl=2, d2r=1, rr=12, ks=0),
+            Op(mul=1, dt=1, tl=28, ar=31, d1r=14, sl=8, d2r=3, rr=12, ks=0),
+            Op(mul=0.5, tl=10, ar=31, d1r=6, sl=2, d2r=1, rr=12, ks=0),
+        )),
+    # A modulator at twice the carrier leaves only odd harmonics, which is
+    # what a square is made of.
+    "square-lead": Patch(
+        "square-lead", "a square lead: odd harmonics only, like the handhelds",
+        alg=4, fb=0, gain=1.0,
+        ops=(
+            Op(mul=2, tl=34, ar=31, d1r=0, sl=0, d2r=0, rr=9),
+            Op(mul=1, tl=6, ar=31, d1r=2, sl=1, d2r=1, rr=9),
+            Op(mul=2, dt=1, tl=36, ar=31, d1r=0, sl=0, d2r=0, rr=9),
+            Op(mul=1, dt=1, tl=10, ar=31, d1r=2, sl=1, d2r=1, rr=9),
+        )),
+    "reed": Patch(
+        "reed", "a reed: sax, clarinet, harmonica, with the buzz up front",
+        alg=2, fb=4, gain=1.0,
+        ops=(
+            Op(mul=3, tl=34, ar=26, d1r=8, sl=4, d2r=2, rr=9, ks=1),
+            Op(mul=1, tl=28, ar=25, d1r=6, sl=3, d2r=1, rr=9, ks=1),
+            Op(mul=2, tl=32, ar=26, d1r=7, sl=3, d2r=1, rr=9, ks=1),
+            Op(mul=1, tl=8, ar=24, d1r=4, sl=1, d2r=1, rr=9, ks=1),
+        )),
+    "flute": Patch(
+        "flute", "a flute or whistle: nearly a sine, breathed into",
+        alg=4, fb=6, gain=1.6,
+        ops=(
+            Op(mul=4, tl=56, ar=26, d1r=10, sl=6, d2r=4, rr=8, ks=1),
+            Op(mul=1, tl=8, ar=22, d1r=2, sl=1, d2r=1, rr=8, ks=1),
+            Op(mul=1, tl=44, ar=24, d1r=4, sl=2, d2r=1, rr=8, ks=1),
+            Op(mul=2, tl=34, ar=22, d1r=2, sl=1, d2r=1, rr=8, ks=1),
+        )),
+    "marimba": Patch(
+        "marimba", "mallets: a woody knock gone in a moment",
+        alg=4, fb=0, gain=2.4,
+        ops=(
+            Op(mul=4, tl=30, ar=31, d1r=24, sl=15, d2r=0, rr=12, ks=2),
+            Op(mul=1, tl=4, ar=31, d1r=15, sl=10, d2r=12, rr=10, ks=2),
+            Op(mul=10, tl=40, ar=31, d1r=28, sl=15, d2r=0, rr=12, ks=2),
+            Op(mul=3, tl=26, ar=31, d1r=20, sl=12, d2r=14, rr=10, ks=2),
+        )),
+    "choir": Patch(
+        "choir", "voices: a slow, hollow aah",
+        alg=4, fb=1, gain=1.3,
+        ops=(
+            Op(mul=2, tl=40, ar=16, d1r=3, sl=2, d2r=1, rr=6, ks=1),
+            Op(mul=1, tl=10, ar=15, d1r=2, sl=1, d2r=1, rr=5, ks=1),
+            Op(mul=3, dt=2, tl=46, ar=16, d1r=3, sl=2, d2r=1, rr=6, ks=1),
+            Op(mul=1, dt=6, tl=12, ar=15, d1r=2, sl=1, d2r=1, rr=5, ks=1),
+        )),
+    "stab": Patch(
+        "stab", "an orchestra hit: everything at once, then gone",
+        alg=5, fb=6, gain=2.2,
+        ops=(
+            Op(mul=1, tl=16, ar=31, d1r=14, sl=8, d2r=10, rr=12, ks=1),
+            Op(mul=1, tl=6, ar=31, d1r=12, sl=8, d2r=12, rr=12, ks=1),
+            Op(mul=2, dt=1, tl=10, ar=31, d1r=12, sl=8, d2r=12, rr=12, ks=1),
+            Op(mul=3, dt=5, tl=14, ar=31, d1r=13, sl=9, d2r=12, rr=12, ks=1),
+        )),
+})
+
+
 # Drums. The console normally sampled these and played them off the DAC, and
 # that is still here as the "dac" tone -- but the chip can synthesise a kit
 # and plenty of games did, so this is what the song-wide switch uses: with it
@@ -599,27 +694,39 @@ DRUMS = {"kick": "md-kick", "snare": "md-snare", "hats": "md-hat",
          "toms": "md-tom", "cymbals": "md-cymbal", "perc": "md-perc"}
 
 
-# What each General MIDI family sounds most like on this chip. The role the
-# song analysis worked out wins where there is one, since it knows what the
-# part is *doing*; the program number only says what it was called.
+# What each General MIDI instrument sounds most like on this chip.
+#
+# The instrument decides, where the file named one: a distorted guitar is a
+# distorted guitar whatever it is doing, and the song needs it to sound like
+# one. It used to be the other way round -- the role the analysis worked out
+# won everywhere -- which left every part of every song one of four patches.
+#
+# Except the pianos. Program 0 is also what a file gets that never chose an
+# instrument at all, and a song that is all "piano" for that reason is better
+# served by the roles. And a bass line is played by a bass whatever it was
+# called, since nothing else sits under a song.
 _BY_ROLE = {"bass": "bass", "lead": "lead", "chords": "organ", "rhythm": "brass"}
 _BY_PROGRAM = (
-    (0, 7, "piano"), (8, 15, "bell"), (16, 23, "organ"), (24, 31, "lead"),
-    (32, 39, "bass"), (40, 51, "strings"), (52, 55, "organ"), (56, 63, "brass"),
-    (64, 79, "lead"), (80, 87, "lead"), (88, 95, "strings"), (96, 103, "bell"),
-    (104, 111, "piano"), (112, 119, "bell"), (120, 127, "lead"),
+    (0, 7, "piano"), (8, 10, "bell"), (11, 13, "marimba"), (14, 15, "bell"),
+    (16, 20, "organ"), (21, 23, "reed"), (24, 28, "clean-guitar"), (29, 31, "dist-guitar"),
+    (32, 37, "bass"), (38, 39, "synth-bass"), (40, 44, "strings"), (45, 46, "clean-guitar"),
+    (47, 47, "marimba"), (48, 51, "strings"), (52, 54, "choir"), (55, 55, "stab"),
+    (56, 63, "brass"), (64, 71, "reed"), (72, 79, "flute"), (80, 80, "square-lead"),
+    (81, 81, "lead"), (82, 83, "flute"), (84, 84, "clean-guitar"), (85, 85, "choir"),
+    (86, 87, "lead"), (88, 95, "strings"), (96, 103, "bell"), (104, 107, "clean-guitar"),
+    (108, 108, "marimba"), (109, 111, "reed"), (112, 119, "marimba"), (120, 127, "lead"),
 )
 
 
 def patch_for(role: str, program: int | None = None) -> Patch:
-    """The chip voice to play a part with, from what the song analysis found."""
+    """The chip voice to play a part with, from its instrument and its role."""
     head = (role or "").split(":")[0]
     if head == "drums":
         return PATCHES[DRUMS.get((role or "").split(":")[-1], "md-perc")]
-    name = _BY_ROLE.get(head)
-    if name is None and program is not None:
-        for lo, hi, guess in _BY_PROGRAM:
-            if lo <= program <= hi:
-                name = guess
-                break
-    return PATCHES[name or "lead"]
+    named = next((guess for lo, hi, guess in _BY_PROGRAM
+                  if program is not None and lo <= program <= hi), None)
+    if head == "bass":
+        return PATCHES["synth-bass" if named == "synth-bass" else "bass"]
+    if named and named != "piano":
+        return PATCHES[named]
+    return PATCHES[_BY_ROLE.get(head) or named or "lead"]

@@ -46,6 +46,8 @@ _SUSTAINS = {"note", "ring"}
 _TONES = {"clean", "voice", "dac", "dpcm",
           # the Mega Drive's
           "bass", "lead", "organ", "brass", "bell", "piano", "strings",
+          "dist-guitar", "clean-guitar", "synth-bass", "square-lead", "reed", "flute",
+          "marimba", "choir", "stab",
           "md-kick", "md-snare", "md-hat", "md-tom", "md-cymbal", "md-perc",
           # the NES's
           "pulse", "pulse-thin", "pulse-full", "triangle",

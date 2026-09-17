@@ -192,6 +192,10 @@ for name, patch in chip.PATCHES.items():
 check("a bass part is played by the bass patch", chip.patch_for("bass", 33).name, "bass")
 check("drums have no program, and the role decides", chip.patch_for("chords", None).name, "organ")
 check("with no role the program decides", chip.patch_for("", 56).name, "brass")
+check("a distorted guitar is one whatever its role", chip.patch_for("lead", 30).name, "dist-guitar")
+check("and so is a flute", chip.patch_for("rhythm", 73).name, "flute")
+check("but a piano program is also the default, so the role decides", chip.patch_for("chords", 0).name, "organ")
+check("a synth bass in the bass stays a synth bass", chip.patch_for("bass", 38).name, "synth-bass")
 check("the same note twice is the same sound",
       bool((chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)
             == chip.render_note(chip.PATCHES["bass"], 110.0, 0.2)).all()), True)
