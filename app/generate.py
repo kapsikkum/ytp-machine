@@ -856,6 +856,7 @@ def parse_mark(mark: str | None) -> tuple[str, float] | None:
 #   vol    decibels, -12 to 12 (<prosody volume>)
 #   emph   reduced | moderate | strong (<emphasis>)
 #   spell  said letter by letter (<say-as interpret-as="characters">)
+#   clip   this recording of the word, by clip id, instead of letting it choose
 FX = re.compile(r"(.*?)\{([\w=.,+\- ]*)\}([.,!?;:\"')\]]*)")
 _FX_RANGE = {"pause": (0.0, 3.0), "rate": (0.5, 2.0), "pitch": (-12.0, 12.0), "vol": (-12.0, 12.0)}
 EMPHASIS = {"reduced": {"vol": -4.0, "rate": 1.1},
@@ -875,6 +876,8 @@ def parse_fx(body: str) -> dict[str, Any]:
         key = key.strip().lower()
         if key == "spell":
             fx["spell"] = True
+        elif key == "clip" and val.strip().isdigit():
+            fx["clip"] = int(val)
         elif key == "emph" and val.strip() in EMPHASIS:
             fx["emph"] = val.strip()
         elif key in _FX_RANGE:
@@ -896,7 +899,37 @@ def effective_fx(fx: dict[str, Any]) -> dict[str, float]:
             out[k] = out.get(k, 0.0) + fx[k]
     if "pause" in fx:
         out["pause"] = fx["pause"]
+    if "clip" in fx:
+        out["clip"] = fx["clip"]
     return out
+
+
+def clip_choices(word: str, limit: int = 60) -> list[dict[str, Any]]:
+    """Every recording of *word*, most likely to be picked first, described."""
+    _ensure_cache()
+    word = re.sub(r"[^\w']", "", word).lower()
+    rows = (_clips_by_word_cache or {}).get(word) or []
+    if not rows:
+        return []
+    with get_db() as conn:
+        titles = {r["id"]: r["title"] for r in conn.execute("SELECT id, title FROM sources")}
+    scores = _splice_scores or {}
+    out = []
+    for r in rows:
+        cid = int(r["id"])
+        score = scores.get((word, cid), 0)
+        weight = (_source_quality.get(r["source_id"], 1.0) ** 3 * _edge_weight(r)
+                  * _vote_weight(score) * 0.2 ** _boundary_reports.get(cid, 0))
+        out.append({"id": cid, "source_id": r["source_id"],
+                    "source": titles.get(r["source_id"]) or f"source {r['source_id']}",
+                    "start": round(r["start_time"], 3), "end": round(r["end_time"], 3),
+                    "clean": _edge_weight(r) > 1.0, "score": score,
+                    "reports": _boundary_reports.get(cid, 0),
+                    "vetoed": _vetoed(word, r), "_w": weight})
+    out.sort(key=lambda c: -c["_w"])
+    for c in out:
+        del c["_w"]
+    return out[:limit]
 
 
 def tokenize_full(text: str) -> list[dict[str, Any]]:
@@ -2145,7 +2178,10 @@ def resolve_text(text: str, progress=None,
         if not used_run:
             cap = 1
             word = words[i]
-            clip = _find_clip(word, cbw, options["clean_takes"])   # noises only via explicit *word* tokens
+            chosen = fx[i].get("clip")
+            clip = next((r for r in cbw.get(word) or [] if chosen is not None and int(r["id"]) == chosen), None)
+            if clip is None:
+                clip = _find_clip(word, cbw, options["clean_takes"])   # noises only via explicit *word* tokens
             if clip:
                 found.append(word)
                 tokens.append({

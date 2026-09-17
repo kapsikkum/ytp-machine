@@ -197,6 +197,13 @@
     .pop .seg button { padding: .22rem .5rem; font-size: .7rem; border-radius: 999px; color: var(--muted); }
     .pop .seg button.on { background: var(--yellow); border-color: var(--yellow); color: #000; }
     .pop .kinds { display: flex; flex-direction: column; gap: .3rem; }
+    .pop .clips { display: flex; flex-direction: column; gap: .25rem; max-height: 13rem; overflow-y: auto; }
+    .pop .clip { display: grid; grid-template-columns: 1.6rem 1fr auto; gap: .5rem; align-items: center; padding: .3rem .45rem; border-radius: 7px; text-align: left; white-space: normal; justify-content: stretch; }
+    .pop .clip.on { border-color: var(--yellow); }
+    .pop .clip .src { color: var(--text); font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pop .clip .meta { color: var(--dim); font-size: .66rem; white-space: nowrap; }
+    .pop .clip .play { width: 1.6rem; height: 1.6rem; padding: 0; border-radius: 50%; }
+    .pop video { width: 100%; max-height: 9rem; border-radius: 8px; background: #000; }
     .pop .kinds button { justify-content: flex-start; font-size: .75rem; }
     @media (hover: none) { .word:focus .acts { opacity: 1; pointer-events: auto; } }
     .result-bar { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding: .6rem .15rem .1rem; }
@@ -736,6 +743,37 @@
   ];
   const NOTE_SLIDER = ['note', 'sung note', -12, 12, 1, 0, v => v === 0 ? 'on the tune' : `${v > 0 ? '+' : ''}${v} from the tune`];
   const EMPH = [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']];
+  // Which recording a word uses. Fetched once a word, and played in the menu
+  // from the source video itself, from the clip's start to its end.
+  const clipCache = {};
+  const mmss = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+  async function drawClips(el, ti) {
+    const t = tokAt(ti);
+    const word = t.base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase();
+    const box = el.querySelector('.clips'); if (!box || !word) return;
+    const got = clipCache[word] || (clipCache[word] = await fetchJson(`/api/clips/${encodeURIComponent(word)}`));
+    if (!got.ok || !got.data.clips.length) {
+      box.innerHTML = `<div class="hint">${got.ok ? 'No recording of this word — it is built from pieces of others.' : esc(got.error || 'could not load the clips')}</div>`;
+      return;
+    }
+    const cur = tokAt(ti).fx.clip;
+    box.innerHTML = `<button type="button" class="clip${cur ? '' : ' on'}" data-clip=""><span></span><span class="src">let it choose</span><span class="meta">${got.data.clips.length} recordings</span></button>` +
+      got.data.clips.map(c => `<button type="button" class="clip${cur === c.id ? ' on' : ''}" data-clip="${c.id}">
+        <span class="play" data-play="${c.id}" title="hear it">▶</span>
+        <span class="src" title="${esc(c.source)}">${esc(c.source)}</span>
+        <span class="meta">at ${mmss(c.start)} · ${Math.round((c.end - c.start) * 1000)} ms${c.clean ? ' · clean' : ''}${c.score ? ` · ${c.score > 0 ? '▲' : '▼'}${Math.abs(c.score)}` : ''}${c.reports ? ` · ✂${c.reports}` : ''}${c.vetoed ? ' · turned down' : ''}</span>
+      </button>`).join('');
+    box.dataset.corpus = got.data.corpus;
+  }
+  function playClip(el, c, corpus) {
+    const v = el.querySelector('video');
+    const src = `/api/edit/source/${c.source_id}/video?c=${encodeURIComponent(corpus)}`;
+    v.hidden = false;
+    const go = () => { v.currentTime = c.start; v.play().catch(() => {}); };
+    v.ontimeupdate = () => { if (v.currentTime >= c.end + 0.03) v.pause(); };
+    if (v.dataset.src !== src) { v.dataset.src = src; v.src = src; v.onloadedmetadata = go; } else go();
+  }
+
   function drawFxPop(chip) {
     const ti = Number(chip.dataset.ti), t = tokAt(ti);
     const named = /^[A-Ga-g]/.test(t.note || '');
@@ -751,7 +789,10 @@
       <div class="toggles">
         <label class="switch"><input type="checkbox" data-flag="spell" ${t.fx.spell ? 'checked' : ''}><span class="track"></span> spell it out</label>
         <label class="switch"><input type="checkbox" data-flag="reverse" ${rev ? 'checked' : ''}><span class="track"></span> backwards</label>
-      </div>`,
+      </div>
+      <div><div class="section-label" style="margin:.1rem 0 .4rem">recording</div>
+        <video hidden playsinline></video>
+        <div class="clips"><div class="hint">loading the recordings…</div></div></div>`,
       (el) => {
         // Sliders change the text as they move, without redrawing the menu
         // under the pointer mid-drag.
@@ -772,6 +813,19 @@
           });
         };
         el.onclick = (e) => {
+          const play = e.target.closest('[data-play]');
+          if (play) {
+            const word = tokAt(ti).base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase();
+            const c = clipCache[word].data.clips.find(x => x.id === Number(play.dataset.play));
+            playClip(el, c, clipCache[word].data.corpus);
+            return;
+          }
+          const pick = e.target.closest('button[data-clip]');
+          if (pick) {
+            editTok(ti, (tok) => { tok.fx.clip = pick.dataset.clip ? Number(pick.dataset.clip) : undefined; });
+            el.querySelectorAll('.clip').forEach(x => x.classList.toggle('on', x === pick));
+            return;
+          }
           const b = e.target.closest('button'); if (!b) return;
           editTok(ti, (tok) => {
             if (b.dataset.clear !== undefined) { tok.fx = {}; tok.note = null; tok.base = tok.base.replace(/^~(.+)~$/, '$1'); }
@@ -779,6 +833,7 @@
           });
           drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
         };
+        drawClips(el, ti);
       });
   }
   $('chips').addEventListener('click', (e) => {

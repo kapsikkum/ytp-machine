@@ -71,6 +71,14 @@ def boundary(req: BoundaryReport):
     return {"status": "ok", "reports": totals}
 
 
+@router.get("/clips/{word}")
+def clips_for(word: str):
+    """The recordings a word can be said with, and where each came from."""
+    from app.database import active
+    from app.generate import clip_choices
+    return {"corpus": active()["slug"], "clips": clip_choices(word)}
+
+
 @router.post("/generate")
 def generate(req: GenerateRequest, wait: bool = False):
     """Queue a video and return its id.
