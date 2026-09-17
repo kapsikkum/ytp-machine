@@ -10,6 +10,23 @@
     .card { width: calc(100% - 2rem); max-width: 1000px; margin: 0 auto 1rem; padding: 1.25rem; }
     body > .card:first-of-type { margin-top: 1.25rem; }
     .lede { color: var(--muted); font-size: .8rem; margin-bottom: .9rem; }
+    #library summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .6rem; }
+    #library summary::-webkit-details-marker { display: none; }
+    #library summary::before { content: '▸'; color: var(--dim); transition: transform .15s; }
+    #library[open] summary::before { transform: rotate(90deg); }
+    #library summary .count { color: var(--dim); font-size: .72rem; }
+    .lib-tools { display: flex; gap: .5rem; margin: .8rem 0 .6rem; flex-wrap: wrap; }
+    .lib-tools input { flex: 1; min-width: 10rem; }
+    .lib-list { display: flex; flex-direction: column; gap: .3rem; max-height: 26rem; overflow-y: auto; }
+    .lib-row {
+      display: grid; grid-template-columns: 1fr auto; gap: .15rem 1rem; text-align: left; align-items: baseline;
+      padding: .55rem .7rem; border-radius: 8px; white-space: normal; justify-content: stretch;
+    }
+    .lib-row.on { border-color: var(--yellow); }
+    .lib-row .t { color: var(--text); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-row .when { color: var(--dim); font-size: .68rem; }
+    .lib-row .meta { grid-column: 1 / -1; color: var(--muted); font-size: .7rem; }
+    .lib-row .desc { grid-column: 1 / -1; color: var(--dim); font-size: .68rem; }
     .lede b { font-family: Impact, 'Arial Black', sans-serif; font-weight: 400; letter-spacing: 1px; color: var(--yellow); font-size: 1.05rem; margin-right: .5rem; }
     #voice-select:disabled { opacity: .5; cursor: wait; }
     #voice-note { color: var(--dim); font-size: .72rem; }
@@ -147,6 +164,21 @@
   <input type="file" id="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
   <div id="upload-status" class="hint"></div>
 </div>
+
+<details class="card" id="library" hidden>
+  <summary><span class="section-label" style="margin:0">midi library</span><span class="count" id="lib-count"></span></summary>
+  <div class="lib-tools">
+    <input type="search" id="lib-search" placeholder="search titles, keys, instruments…">
+    <select id="lib-sort" title="Order by">
+      <option value="added">newest</option>
+      <option value="title">title</option>
+      <option value="duration">longest</option>
+      <option value="bpm">fastest</option>
+      <option value="parts">most parts</option>
+    </select>
+  </div>
+  <div class="lib-list" id="lib-list"></div>
+</details>
 
 <div class="card" id="song" hidden>
   <h2 id="song-title"></h2>
@@ -380,6 +412,7 @@
       const data = await api('/api/ytpmv/midi', { method: 'POST', body: fd });
       $('upload-status').textContent = '';
       load(data, null);
+      loadLibrary();
     } catch (e) {
       $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
     }
@@ -819,6 +852,48 @@
         · ${r.duration}s · ${r.size[0]}×${r.size[1]}
       </div>`;
   }
+
+  // ── library: every MIDI anyone has uploaded, kept on the server ─────────
+  let library = [];
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+  const ago = t => {
+    const d = (Date.now() / 1000 - t) / 86400;
+    return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 30 ? `${Math.floor(d)} days ago` : new Date(t * 1000).toLocaleDateString();
+  };
+  async function loadLibrary() {
+    try { library = await api('/api/ytpmv/library'); } catch { return; }
+    $('library').hidden = !library.length;
+    drawLibrary();
+  }
+  function drawLibrary() {
+    const q = $('lib-search').value.trim().toLowerCase();
+    const by = $('lib-sort').value;
+    const rows = library
+      .filter(m => !q || `${m.title} ${m.key} ${m.description}`.toLowerCase().includes(q))
+      .sort((a, b) => by === 'title' ? (a.title || '').localeCompare(b.title || '') : b[by] - a[by]);
+    $('lib-count').textContent = `${library.length} song${library.length === 1 ? '' : 's'}`;
+    const current = song && song.midi_id;
+    $('lib-list').innerHTML = rows.map(m => `
+      <button type="button" class="lib-row${m.midi_id === current ? ' on' : ''}" data-mid="${esc(m.midi_id)}">
+        <span class="t">${esc(m.title || 'untitled')}</span><span class="when">${ago(m.added)}</span>
+        <span class="meta">${mmss(m.duration)} · ${m.bpm} BPM${m.tempo_changes ? ' (changes)' : ''} · ${esc(m.key)} · ${esc(m.time_signature)} · ${m.parts} part${m.parts === 1 ? '' : 's'}${m.drums ? ` + ${m.drums} drum${m.drums === 1 ? '' : 's'}` : ''} · ${m.notes.toLocaleString()} notes · ${Math.max(1, Math.round(m.bytes / 1024))} KB</span>
+        <span class="desc">${esc(m.description)}</span>
+      </button>`).join('') || '<div class="hint">nothing matches</div>';
+  }
+  $('lib-search').addEventListener('input', drawLibrary);
+  $('lib-sort').addEventListener('change', drawLibrary);
+  $('lib-list').addEventListener('click', async (e) => {
+    const row = e.target.closest('.lib-row'); if (!row) return;
+    $('upload-status').textContent = 'loading it and picking sounds…';
+    try {
+      load(await api(`/api/ytpmv/midi/${row.dataset.mid}`), null);
+      $('upload-status').textContent = '';
+      drawLibrary();
+    } catch (err) {
+      $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(err.message)}</span>`;
+    }
+  });
+  loadLibrary();
 
   // ── come back to where we were ───────────────────────────────────────────
   if (synthMode) setSynth(true);

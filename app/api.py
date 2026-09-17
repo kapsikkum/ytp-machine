@@ -494,6 +494,13 @@ async def ytpmv_upload(midi: UploadFile = File(...)):
     return await run_in_threadpool(_ytpmv_call, render.analyse, midi_id)
 
 
+@router.get("/ytpmv/library")
+def ytpmv_library():
+    """Every MIDI file kept, newest first, with what is worth knowing about each."""
+    from app.ytpmv import render
+    return render.library()
+
+
 @router.get("/ytpmv/midi/{midi_id}")
 def ytpmv_describe(midi_id: str):
     """The same description for a file already uploaded."""

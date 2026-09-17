@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import json
 import logging
 import math
 import os
@@ -115,6 +116,56 @@ def load_song(midi_id: str) -> music.Song:
     if not song.parts:
         raise YtpmvError("That MIDI file has no notes in it.")
     return song
+
+
+def library() -> list[dict]:
+    """Every MIDI file ever uploaded, newest first, each described.
+
+    The description is cached beside the file, because a big arrangement
+    takes a second or two to read and the list is read every time the page
+    opens. It is redone when the file or its title is newer than the cache.
+    """
+    try:
+        names = os.listdir(MIDI_DIR)
+    except FileNotFoundError:
+        return []
+    out = []
+    for name in names:
+        mid = name[:-4]
+        if not name.endswith(".mid") or not _ID_RE.match(mid):
+            continue
+        path = os.path.join(MIDI_DIR, name)
+        cache = path + ".info.json"
+        newest = max(os.path.getmtime(p) for p in (path, path + ".title") if os.path.exists(p))
+        info = None
+        if os.path.exists(cache) and os.path.getmtime(cache) >= newest:
+            try:
+                with open(cache, encoding="utf-8") as fh:
+                    info = json.load(fh)
+            except (OSError, ValueError):
+                info = None
+        if info is None:
+            try:
+                song = load_song(mid)
+            except YtpmvError:
+                continue                        # unreadable: nothing to offer
+            drums = [p for p in song.parts if p.is_drums]
+            info = {"title": song.title, "duration": round(song.duration, 1),
+                    "bpm": round(song.bpm), "key": song.key,
+                    "time_signature": f"{song.time_signature[0]}/{song.time_signature[1]}",
+                    "tempo_changes": song.tempo_changes,
+                    "parts": len(song.parts) - len(drums), "drums": len(drums),
+                    "notes": sum(len(p.notes) for p in song.parts),
+                    "description": song.describe()}
+            try:
+                with open(cache, "w", encoding="utf-8") as fh:
+                    json.dump(info, fh)
+            except OSError:
+                pass
+        out.append({"midi_id": mid, **info, "bytes": os.path.getsize(path),
+                    "added": round(os.path.getmtime(path))})
+    out.sort(key=lambda m: -m["added"])
+    return out
 
 
 def analyse(midi_id: str, progress=None) -> dict:

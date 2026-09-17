@@ -154,6 +154,27 @@ else:
             if f and os.path.exists(f):
                 os.remove(f)
 
+# The MIDI library: every uploaded file described, and the description cached.
+import mido, tempfile, time as _time
+_lib = tempfile.mkdtemp()
+_was = render.MIDI_DIR
+render.MIDI_DIR = _lib
+try:
+    mf = mido.MidiFile()
+    tr = mido.MidiTrack()
+    tr += [mido.Message("note_on", note=60, velocity=90, time=0), mido.Message("note_off", note=60, time=960)]
+    mf.tracks.append(tr)
+    buf = io.BytesIO(); mf.save(file=buf)
+    mid = render.save_midi(buf.getvalue(), "little tune.mid")
+    lib = render.library()
+    check("an upload is in the library", [m["midi_id"] for m in lib], [mid])
+    check("with its title and what is in it", (lib[0]["title"], lib[0]["parts"], lib[0]["notes"]), ("little tune", 1, 1))
+    check("and its description is cached beside it", os.path.exists(os.path.join(_lib, mid + ".mid.info.json")), True)
+    check("which a second read uses", render.library(), lib)
+finally:
+    render.MIDI_DIR = _was
+    shutil.rmtree(_lib, ignore_errors=True)
+
 print()
 print(f"{len(failures)} failures" if failures else "ALL PASS")
 for f in failures:
