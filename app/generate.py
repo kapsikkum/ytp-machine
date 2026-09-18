@@ -68,6 +68,8 @@ OPTIONS = {
     "sing_cute":      (0.0, 0.0, 1.0),     # higher, and a smaller throat
     "sing_midi":      ("", None, None),    # an uploaded YTPMV MIDI to take the tune from
     "sing_part":      ("", None, None),    # which part of it; the lead when empty
+    "chaos":          (0.0, 0.0, 1.0),     # how often a word gets wrecked, YTP style
+    "seed":           ("", None, None),    # same seed, same video; empty picks a new one
 }
 
 _MAX_STRETCH_ADD = 3.0   # no one word grows by more than this
@@ -868,6 +870,60 @@ LETTERS = dict(zip("abcdefghijklmnopqrstuvwxyz", (
     "why", "zed")))
 
 
+# The glitch vocabulary: name -> (video filters, audio filters).
+#
+# Two rules, both of which break the whole encode rather than one word:
+#   * every video entry must end back at 480x270. concat=n=N:v=1:a=1 demands
+#     identical size and SAR from every segment in a chunk.
+#   * no commas inside an expression. The chain is ",".join()ed, so a comma
+#     would be read as the end of the filter.
+GLITCH = {
+    "shake":   (["crop=w=440:h=250:x='20+18*sin(t*31)':y='10+12*sin(t*43)'",
+                 "scale=480:270"], []),
+    "punch":   (["scale=600:338", "crop=480:270"], []),
+    "spin":    (["rotate='0.5*sin(t*9)':c=black"], []),
+    "rainbow": (["hue=h='t*900':s=2"], []),
+    "invert":  (["negate"], []),
+    "flip":    (["hflip"], []),
+    "strobe":  (["eq=brightness='0.45*sin(t*38)':contrast=1.6:eval=frame"], []),
+    "crunch":  (["scale=64:36:flags=neighbor", "scale=480:270:flags=neighbor"], []),
+    "fringe":  (["rgbashift=rh=7:bh=-7"], []),
+    "earrape": ([], ["volume=17dB", "acrusher=bits=5:mode=lin", "alimiter=limit=0.95"]),
+    # Not vibrato: it hands the encoder NaN on some runs and not others,
+    # which fails the whole video. A fast flanger warbles much the same.
+    "wobble":  ([], ["flanger=delay=3:depth=9:speed=6:width=100"]),
+    "cave":    ([], ["aecho=0.8:0.85:55:0.45"]),
+    "stutter": (["loop=loop=3:size=4:start=0"], ["aloop=loop=3:size=3600:start=0"]),
+}
+
+
+def _glitch_ok(name: str) -> bool:
+    """Is every filter this effect needs in the ffmpeg we actually have?"""
+    gv, ga = GLITCH.get(name, ((), ()))
+    return all(_has_filter(f.split("=")[0]) for f in (*gv, *ga))
+
+
+def _boom_copies(seg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The word forwards, backwards, forwards -- the SUS-meme boomerang.
+
+    Doing this as one filter would take a split/reverse/concat sub-graph, and
+    the encoder builds a single comma-joined chain per segment. It does not
+    need one: it already knows how to reverse a segment, so a boomerang is
+    three copies of the same clip with the middle one turned round. Each copy
+    is measured by segment_durations on its own, so nothing desynchronises,
+    and the turn is a mirror around a sample, so it does not click.
+    """
+    out = []
+    for k in range(3):
+        c = dict(seg)
+        if k == 1:
+            c["reverse"] = not seg.get("reverse")
+        if k != 2:                    # only the last copy keeps the gap after
+            c["pause_after"] = 0.0
+        out.append(c)
+    return out
+
+
 def parse_fx(body: str) -> dict[str, Any]:
     """The effects in the braces of hello{...}, held to their ranges."""
     fx: dict[str, Any] = {}
@@ -876,6 +932,10 @@ def parse_fx(body: str) -> dict[str, Any]:
         key = key.strip().lower()
         if key == "spell":
             fx["spell"] = True
+        elif key in GLITCH and not val:
+            fx.setdefault("glitch", []).append(key)
+        elif key == "boom" and not val:
+            fx["boom"] = True
         elif key == "clip" and val.strip().isdigit():
             fx["clip"] = int(val)
         elif key == "emph" and val.strip() in EMPHASIS:
@@ -889,7 +949,7 @@ def parse_fx(body: str) -> dict[str, Any]:
     return fx
 
 
-def effective_fx(fx: dict[str, Any]) -> dict[str, float]:
+def effective_fx(fx: dict[str, Any]) -> dict[str, Any]:
     """rate, pitch, vol and pause with emphasis folded in."""
     out = dict(EMPHASIS.get(fx.get("emph"), {}))
     if "rate" in fx:
@@ -901,6 +961,10 @@ def effective_fx(fx: dict[str, Any]) -> dict[str, float]:
         out["pause"] = fx["pause"]
     if "clip" in fx:
         out["clip"] = fx["clip"]
+    if fx.get("glitch"):
+        out["glitch"] = list(fx["glitch"])
+    if fx.get("boom"):
+        out["boom"] = True
     return out
 
 
@@ -1550,14 +1614,25 @@ def _rubberband_ok() -> bool:
     return _has_filter("rubberband")
 
 
-@lru_cache(maxsize=4)
-def _has_filter(name: str) -> bool:
+@lru_cache(maxsize=1)
+def _filters() -> frozenset[str]:
+    """Every filter this build of ffmpeg has, asked for once.
+
+    It used to be one cached answer per name, four deep -- which meant the
+    fifth filter anyone asked about re-ran ffmpeg, and from then on every
+    question did. There are a dozen glitch effects to check now.
+    """
     try:
         out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
                              capture_output=True, text=True).stdout
     except OSError:
-        return False
-    return any(line.split()[1:2] == [name] for line in out.splitlines() if line.strip())
+        return frozenset()
+    return frozenset(parts[1] for parts in (line.split() for line in out.splitlines())
+                     if len(parts) > 1)
+
+
+def _has_filter(name: str) -> bool:
+    return name in _filters()
 
 
 def _atempo_chain(factor: float) -> list[str]:
@@ -1731,6 +1806,18 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             vfilters.append("reverse")
         if pause > 0:
             vfilters.append(f"tpad=stop_mode=clone:stop_duration={pause:.4f}")
+        # Glitches here and nowhere else: after the reversal, which buffers the
+        # whole segment anyway; after the pause padding, so the frozen frame
+        # the joke lands on is wrecked too; before the captions, so they stay
+        # readable; before the speed change, so a fast video shakes fast; and
+        # before the trim below, which is why none of this can change how long
+        # the segment is.
+        for _name in seg.get("glitch") or ():
+            vfilters += GLITCH.get(_name, ((), ()))[0]
+        if seg.get("glitch"):
+            # A crop and a scale back leave the pixel aspect slightly off,
+            # and concat refuses a segment whose SAR differs from the rest.
+            vfilters.append("setsar=1")
         # After the pause padding, so a held frame keeps the word on screen,
         # and after any reversal -- the text is the same on every frame, so it
         # reads forwards either way.
@@ -1801,6 +1888,12 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
                              *_atempo_chain(1.0 / ratio)]
         if speed != 1.0:
             afilters += _atempo_chain(speed)
+        # After the fades, so an echo smears past the dry word rather than
+        # being faded out with it, and after the gain and the speed, so
+        # earrape's limiter is the last thing before the trim -- which is what
+        # a limiter is for.
+        for _name in seg.get("glitch") or ():
+            afilters += GLITCH.get(_name, ((), ()))[1]
         # The audio is made exactly as long as the video, which is not the
         # same as being as long as the source span.
         #
@@ -1883,6 +1976,14 @@ def generate_video(text: str, progress=None,
     until a long sentence outlasted the proxy and returned 504.
     """
     options = generation_options(options)
+    # One seed decides everything this video leaves to chance -- which take of
+    # each word, where the chaos lands -- so the same seed gives back the same
+    # video, and an empty one (what "again" sends) gives a different one.
+    options["seed"] = options["seed"] or str(random.randrange(1 << 30))
+    _ensure_cache()                 # before seeding: building it draws numbers too
+    random.seed(options["seed"])    # ponytail: the module's own generator, because
+                                    # pick_clip uses random.choices. jobs.py is one
+                                    # worker, so nothing else is drawing from it.
     segments, report = resolve_text(text, progress=progress, options=options)
     if not segments:
         return {**report, "video_url": None, "options": options}
@@ -2033,6 +2134,37 @@ def _stretch_word(segs: list[dict[str, Any]], word: str, marks, per_letter: floa
         segs = segs[:at] + _hold(piece, a, b, factor) + segs[at + 1:]
         added += span * (factor - 1.0)
     return segs
+
+
+def _sprinkle(segments: list[dict[str, Any]], chaos: float) -> None:
+    """Wreck words at random, the way a YTP is actually edited.
+
+    Words only: the idle clip that makes a full stop is left alone, so the
+    sentence still has somewhere to breathe. Everything reached for here is a
+    key the encoder already honours and segment_durations already measures --
+    so however dense this gets, the picture cannot drift from the sound.
+    """
+    names = [n for n in GLITCH if _glitch_ok(n)]
+    out: list[dict[str, Any]] = []
+    for sg in segments:
+        spoken = sg.get("_tok") is not None or sg.get("_tokens")
+        if not spoken or random.random() >= chaos:
+            out.append(sg)
+            continue
+        if names:
+            sg["glitch"] = random.sample(names, 1 if random.random() < 0.7 else min(2, len(names)))
+        r = random.random()
+        if r < 0.12:
+            sg["reverse"] = not sg.get("reverse")
+        elif r < 0.30:
+            sg["pitch"] = float(sg.get("pitch") or 0.0) + random.choice((-7.0, -5.0, 5.0, 7.0, 12.0))
+        elif r < 0.44:
+            sg["stretch"] = float(sg.get("stretch") or 1.0) * random.choice((0.6, 1.8))
+        elif r < 0.52:                 # rare: a boomerang makes the word three times as long
+            out.extend(_boom_copies(sg))
+            continue
+        out.append(sg)
+    segments[:] = out
 
 
 def resolve_text(text: str, progress=None,
@@ -2267,10 +2399,20 @@ def resolve_text(text: str, progress=None,
                     sg["pitch"] = f["pitch"]
                 if f.get("vol"):
                     sg["gain_db"] = f["vol"]
+                if f.get("glitch"):
+                    sg["glitch"] = list(f["glitch"])
             if "pause" in f and own:
                 own[-1]["pause_after"] = f["pause"]
+            if f.get("boom") and own:
+                keep = {id(sg) for sg in own}
+                segments[seg_before:] = [
+                    c for sg in segments[seg_before:]
+                    for c in (_boom_copies(sg) if id(sg) in keep else [sg])]
 
         i += cap
+
+    if options["chaos"] > 0:
+        _sprinkle(segments, options["chaos"])
 
     if not segments:
         return [], {"found": [], "spliced": [], "missing": missing,
