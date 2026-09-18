@@ -160,6 +160,11 @@ jobs:
         # effects change, and a stretched run's highlights move with it.
         run: python tests/test_run_fx.py
 
+      - name: Voices talking
+        # A word given another corpus's voice comes from that corpus's clips
+        # and files, while the active corpus never moves.
+        run: python tests/test_voices.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

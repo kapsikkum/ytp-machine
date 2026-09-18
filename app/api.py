@@ -72,11 +72,11 @@ def boundary(req: BoundaryReport):
 
 
 @router.get("/clips/{word}")
-def clips_for(word: str):
+def clips_for(word: str, voice: str = ""):
     """The recordings a word can be said with, and where each came from."""
     from app.database import active
     from app.generate import clip_choices
-    return {"corpus": active()["slug"], "clips": clip_choices(word)}
+    return {"corpus": voice or active()["slug"], "clips": clip_choices(word, voice=voice or None)}
 
 
 @router.post("/generate")

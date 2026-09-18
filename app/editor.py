@@ -355,15 +355,22 @@ def align_source(source_id: int, redo: bool = False):
 def source_video(source_id: int, c: str = ""):
     """The video itself, so the browser can seek around in it.
 
-    `c` is the corpus slug. It is unused here -- the active corpus already
-    decided which file this id means -- and exists only so the URL differs
-    between corpora, because source ids start again at 1 in each one and a
-    cached /source/1/video from another corpus is the wrong video entirely.
+    `c` is the corpus slug. Source ids start again at 1 in each corpus, so
+    it decides which video this id means when it names another voice than
+    the active one (a word said in another voice, auditioned from the word
+    menu) -- and it keeps the URL different between corpora, since a cached
+    /source/1/video from another corpus is the wrong video entirely.
 
     no-cache rather than no-store: revalidating on the ETag is enough to
     notice the file changed, and still lets seeking reuse what it has.
     """
-    return FileResponse(_source_path(source_id), media_type="video/mp4",
+    path = None
+    if c and c != active()["slug"]:
+        from app.generate import voice_source
+        path = voice_source(c, source_id)
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"no source {source_id} in {c}")
+    return FileResponse(path or _source_path(source_id), media_type="video/mp4",
                         headers={"Cache-Control": "no-cache"})
 
 

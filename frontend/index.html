@@ -41,6 +41,7 @@
     .chip.missing { color: var(--red); border-color: #5a1f1f; background: #220f0f; }
     .chip .mark { opacity: .7; font-size: .7rem; }
     .chip.more { color: var(--dim); border-style: dashed; }
+    .chip .vo { font-size: .6rem; color: var(--violet); margin-left: .25rem; }
     .chip.sel { outline: 2px solid var(--yellow); outline-offset: 1px; }
     .pop .ph .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -522,9 +523,14 @@
     const d = r.data;
     $('stats').innerHTML = `<b>${d.total_clips.toLocaleString()}</b> clips · <b>${d.unique_words.toLocaleString()}</b> words · <b>${d.sources.toLocaleString()}</b> videos`;
   }
+  // Every corpus, for giving words another voice. The first is the active one.
+  let voices = [];
+  const voiceName = (slug) => (voices.find(c => c.slug === slug) || { name: slug }).name;
   async function loadCorpora() {
     const r = await fetchJson('/api/corpora');
-    if (!r.ok || !r.data.corpora || r.data.corpora.length < 2) return;
+    if (!r.ok || !r.data.corpora) return;
+    voices = r.data.corpora.filter(c => !c.error).sort((a, b) => b.active - a.active);
+    if (r.data.corpora.length < 2) return;
     $('corpus-select').innerHTML = r.data.corpora.map(c =>
       `<option value="${esc(c.slug)}"${c.active ? ' selected' : ''}${c.error ? ' disabled' : ''}>${esc(c.name)}${c.error ? ' (unreadable)' : ''}</option>`).join('');
     $('corpus-wrap').hidden = false;
@@ -696,7 +702,7 @@
       tok = f[1]; punct = f[3];
       for (const item of f[2].split(',')) {
         const [k, v] = item.split('=');
-        if (k) fx[k.trim()] = v === undefined ? true : (k.trim() === 'emph' ? v.trim() : Number(v));
+        if (k) fx[k.trim()] = v === undefined ? true : (['emph', 'v'].includes(k.trim()) ? v.trim() : Number(v));
       }
     }
     const m = tok.match(NOTE_MARK);
@@ -779,11 +785,16 @@
   // from the source video itself, from the clip's start to its end.
   const clipCache = {};
   const mmss = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
-  async function drawClips(el, ti) {
+  // A word's recordings are its voice's: the same word in another corpus is
+  // other clips entirely, with ids that mean something else here.
+  const clipKey = (ti) => {
     const t = tokAt(ti);
-    const word = t.base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase();
+    return [t.fx.v || '', t.base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase()];
+  };
+  async function drawClips(el, ti) {
+    const [voice, word] = clipKey(ti), key = `${voice}:${word}`;
     const box = el.querySelector('.clips'); if (!box || !word) return;
-    const got = clipCache[word] || (clipCache[word] = await fetchJson(`/api/clips/${encodeURIComponent(word)}`));
+    const got = clipCache[key] || (clipCache[key] = await fetchJson(`/api/clips/${encodeURIComponent(word)}?voice=${encodeURIComponent(voice)}`));
     if (!got.ok || !got.data.clips.length) {
       box.innerHTML = `<div class="hint">${got.ok ? 'No recording of this word — it is built from pieces of others.' : esc(got.error || 'could not load the clips')}</div>`;
       return;
@@ -821,6 +832,8 @@
       <div class="sliders">${rows.map(r => `
         <label class="slider"><span class="name">${r[1]}</span><output data-out="${r[0]}">${r[6](valueOf(r))}</output>
           <input type="range" data-fx="${r[0]}" min="${r[2]}" max="${r[3]}" step="${r[4]}" value="${valueOf(r)}"></label>`).join('')}</div>
+      ${voices.length > 1 ? `<div class="row"><span>voice</span><select data-voice>${voices.map((c, k) =>
+        `<option value="${k ? esc(c.slug) : ''}"${(t.fx.v || '') === (k ? c.slug : '') ? ' selected' : ''}>${esc(c.name)}${k ? '' : ' (this one)'}</option>`).join('')}</select></div>` : ''}
       <div class="row"><span>emphasis</span><div class="seg">${EMPH.map(([label, v]) =>
         `<button type="button" data-emph="${v ?? ''}" class="${(t.fx.emph ?? null) === v ? 'on' : ''}">${label}</button>`).join('')}</div></div>
       <div class="toggles">
@@ -846,6 +859,11 @@
           });
         };
         el.onchange = (e) => {
+          if (e.target.dataset.voice !== undefined) {
+            editTok(tis, (tok) => { tok.fx.v = e.target.value || undefined; tok.fx.clip = undefined; });
+            drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
+            return;
+          }
           const flag = e.target.dataset.flag; if (!flag) return;
           editTok(tis, (tok) => {
             if (flag === 'spell') tok.fx.spell = e.target.checked || undefined;
@@ -855,9 +873,9 @@
         el.onclick = (e) => {
           const play = e.target.closest('[data-play]');
           if (play) {
-            const word = tokAt(ti).base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase();
-            const c = clipCache[word].data.clips.find(x => x.id === Number(play.dataset.play));
-            playClip(el, c, clipCache[word].data.corpus);
+            const got = clipCache[clipKey(ti).join(':')];
+            const c = got.data.clips.find(x => x.id === Number(play.dataset.play));
+            playClip(el, c, got.data.corpus);
             return;
           }
           const pick = e.target.closest('button[data-clip]');
@@ -902,7 +920,7 @@
     const chips = preview(textInput.value);
     const el = $('chips');
     el.innerHTML = chips.slice(0, SHOWN).map(c =>
-      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
+      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx && c.fx.v ? `<span class="vo" title="said by ${esc(voiceName(c.fx.v))}">${esc(voiceName(c.fx.v).split(/[\s-]/)[0])}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
       + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;
@@ -1120,7 +1138,8 @@
       const label = document.createElement('span');
       label.textContent = t.stretched || t.shown || t.word;
       w.appendChild(label);
-      if (cls !== 'missing') {
+      if (t.voice) w.title += ` · said by ${voiceName(t.voice)}`;
+      if (cls !== 'missing' && !t.voice) {
         const acts = document.createElement('span');
         acts.className = 'acts';
         const first = Array.isArray(t.clips) ? t.clips[0] : null;

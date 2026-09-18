@@ -174,44 +174,104 @@ def _vetoed(word: str, clip: dict) -> bool:
     return (_splice_scores or {}).get((word.lower(), int(cid)), 0) <= _VETO_SCORE
 
 
+# One pool of the structures above per corpus, built on first use. The
+# globals are whichever pool is installed: the active corpus's, or -- for the
+# words of a sentence given another voice -- that voice's. Everything that
+# reads them is unchanged; only which pool they hold moves.
+_POOLS: dict[str, dict[str, Any]] = {}
+_POOL_KEYS = ("clips_by_word", "ordered_by_source", "word_positions", "source_quality",
+              "idle_clips", "noise_by_word", "all_noises", "splice_scores", "boundary_reports")
+
+
 def _ensure_cache() -> None:
-    """Build all lookup structures from the DB in a single pass.
+    """The active corpus's clips, installed. See _pool for what is in them."""
+    _use_voice(None)
+
+
+def _use_voice(slug: str | None) -> dict[str, Any]:
+    """Install *slug*'s clips -- the active corpus's when None or unknown.
+
+    Which corpus the installed pool belongs to is checked rather than assumed.
+    Every clip path in a pool is absolute, made against that corpus's own
+    directory, so the wrong pool sends ffmpeg to a michael-rosen video inside
+    james-channel's directory. And database._active is never touched: moving
+    it for a read is what caused exactly that, once (tests/test_corpus_select).
+
+    ponytail: a process-global swap. jobs.py runs one generation at a time;
+    a vote arriving mid-sentence while another voice is installed lands in
+    that voice's in-memory scores (the database write is still right). A lock
+    or an explicit pool argument if two generations ever run at once.
+    """
+    from app.database import active, list_corpora
+    corpus = active()
+    if slug and slug != corpus["slug"]:
+        corpus = next((c for c in list_corpora() if c["slug"] == slug), corpus)
+    if _clips_by_word_cache is None or corpus["slug"] != _cache_corpus:
+        _install(_pool(corpus))
+    return _POOLS[corpus["slug"]]
+
+
+def _install(pool: dict[str, Any]) -> None:
+    global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
+    global _noise_by_word, _all_noises, _splice_scores, _boundary_reports, _cache_corpus
+    (_clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips,
+     _noise_by_word, _all_noises, _splice_scores, _boundary_reports) = (pool[k] for k in _POOL_KEYS)
+    _cache_corpus = pool["slug"]
+
+
+def voice_source(slug: str, source_id: int) -> str | None:
+    """Where one of *slug*'s source videos is, without switching to it."""
+    from app.database import list_corpora
+    corpus = next((c for c in list_corpora() if c["slug"] == slug), None)
+    seq = _pool(corpus)["ordered_by_source"].get(source_id) if corpus else None
+    return seq[0]["source_file"] if seq else None
+
+
+def _pool(corpus: dict) -> dict[str, Any]:
+    """Build all lookup structures for one corpus from its DB in a single pass.
 
     Structures (sharing the same clip dicts):
-      • _clips_by_word_cache : word → clips usable solo (≥ _MIN_DUR)
-      • _ordered_by_source   : source_id → clips in spoken order
-      • _word_positions      : word → (source_id, index) for phrase matching
-      • _source_quality      : source_id → fraction of clips that are well-aligned
+      • clips_by_word     : word → clips usable solo (≥ _MIN_DUR)
+      • ordered_by_source : source_id → clips in spoken order
+      • word_positions    : word → (source_id, index) for phrase matching
+      • source_quality    : source_id → fraction of clips that are well-aligned
 
     Degenerate zero-duration clips (Whisper dumping several words on one
     timestamp — common in fast/rapped videos) cannot be extracted meaningfully
     and would corrupt adjacency, so they are dropped from every structure.
     Adjacency and the position index are otherwise built from the full set so
     short function words ("i", "it", "a") don't break contiguous-phrase runs.
-    """
-    global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
-    global _noise_by_word, _all_noises, _splice_scores, _cache_corpus
-    # Which corpus the cache holds, checked rather than assumed. Every clip
-    # path in here was made absolute against whatever corpus was active while
-    # it was built, so a cache built under another one sends ffmpeg to a
-    # michael-rosen video inside james-channel's directory. That is not
-    # hypothetical: listing the corpora switches the active one to count each
-    # in turn, and a request arriving mid-count rebuilt the cache against the
-    # wrong voice.
-    from app.database import active as _active_corpus
-    slug = _active_corpus()["slug"]
-    if _clips_by_word_cache is not None:
-        if slug == _cache_corpus:
-            return
-        log.warning("clip cache was built for %s, now serving %s: rebuilding",
-                    _cache_corpus, slug)
-        invalidate_cache()
-    _cache_corpus = slug
 
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM word_clips ORDER BY source_id, start_time"
-        ).fetchall()
+    Another corpus is read straight from its own file, read-only, and its
+    paths made against its own directory -- never resolve_path, which means
+    the active corpus's.
+    """
+    import sqlite3
+    from contextlib import closing
+    from app.database import active, normalise_sep
+    slug = corpus["slug"]
+    if slug in _POOLS:
+        return _POOLS[slug]
+
+    def here(p: str) -> str:
+        p = normalise_sep(p)
+        return p if os.path.isabs(p) else os.path.join(corpus["dir"], p)
+
+    if slug == active()["slug"]:
+        opened = get_db()                    # creates the database if it is new
+    else:
+        conn = sqlite3.connect(f"file:{corpus['db']}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        opened = closing(conn)
+    with opened as conn:
+        # Each table on its own: a corpus made before one of them existed, or
+        # not yet made at all, is an empty pool rather than no pool.
+        try:
+            rows = conn.execute(
+                "SELECT * FROM word_clips ORDER BY source_id, start_time"
+            ).fetchall()
+        except Exception:
+            rows = []
         try:
             rating_rows = conn.execute(
                 "SELECT word, clip_id, score FROM splice_ratings"
@@ -227,6 +287,14 @@ def _ensure_cache() -> None:
                 "SELECT clip_id, SUM(count) AS n FROM boundary_reports GROUP BY clip_id").fetchall()
         except Exception:
             report_rows = []
+        try:
+            titles = {r["id"]: r["title"] for r in conn.execute("SELECT id, title FROM sources")}
+        except Exception:
+            titles = {}
+        try:
+            settings = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
+        except Exception:
+            settings = {}
 
     # Per-source raw counts (for a quality score) and the cleaned ordered list.
     src_total: dict[int, int] = {}
@@ -234,7 +302,7 @@ def _ensure_cache() -> None:
     ordered:   dict[int, list[dict]] = {}
     for r in rows:
         clip = dict(r)
-        clip["source_file"] = resolve_path(clip["source_file"])   # → absolute
+        clip["source_file"] = here(clip["source_file"])   # → absolute
         sid  = clip["source_id"]
         dur  = clip["end_time"] - clip["start_time"]
         src_total[sid] = src_total.get(sid, 0) + 1
@@ -278,24 +346,23 @@ def _ensure_cache() -> None:
     alln: list[dict] = []
     for r in noise_rows:
         c = dict(r)
-        c["source_file"] = resolve_path(c["source_file"])
+        c["source_file"] = here(c["source_file"])
         c["prev_end"]   = c["start_time"]
         c["next_start"] = c["end_time"]
         nbw.setdefault(c["word"], []).append(c)
         alln.append(c)
 
-    _clips_by_word_cache = by_word
-    _ordered_by_source   = ordered
-    _word_positions      = positions
-    _idle_clips          = idle
-    _noise_by_word       = nbw
-    _all_noises          = alln
-    _splice_scores       = {(r["word"], r["clip_id"]): r["score"] for r in rating_rows}
-    _boundary_reports.clear()
-    _boundary_reports.update({int(r["clip_id"]): int(r["n"]) for r in report_rows})
-    _source_quality      = {
-        s: src_good.get(s, 0) / src_total[s] for s in src_total
+    pool = {
+        "slug": slug, "titles": titles, "settings": settings,
+        "clips_by_word": by_word, "ordered_by_source": ordered,
+        "word_positions": positions, "idle_clips": idle,
+        "noise_by_word": nbw, "all_noises": alln,
+        "splice_scores": {(r["word"], r["clip_id"]): r["score"] for r in rating_rows},
+        "boundary_reports": {int(r["clip_id"]): int(r["n"]) for r in report_rows},
+        "source_quality": {s: src_good.get(s, 0) / src_total[s] for s in src_total},
     }
+    _POOLS[slug] = pool
+    return pool
 
 
 def _get_clips_by_word() -> dict[str, list[dict[str, Any]]]:
@@ -315,6 +382,7 @@ def invalidate_cache(alignments: bool = True) -> None:
     _noise_by_word       = {}
     _all_noises          = []
     _splice_scores       = None
+    _POOLS.clear()
     # The CSV is per-corpus, so switching corpus or reloading must drop it too.
     try:
         from app.phonemes import invalidate_user_dict
@@ -859,6 +927,7 @@ def parse_mark(mark: str | None) -> tuple[str, float] | None:
 #   emph   reduced | moderate | strong (<emphasis>)
 #   spell  said letter by letter (<say-as interpret-as="characters">)
 #   clip   this recording of the word, by clip id, instead of letting it choose
+#   v      said in another corpus's voice, by its slug: v=james-channel
 FX = re.compile(r"(.*?)\{([\w=.,+\- ]*)\}([.,!?;:\"')\]]*)")
 _FX_RANGE = {"pause": (0.0, 3.0), "rate": (0.5, 2.0), "pitch": (-12.0, 12.0), "vol": (-12.0, 12.0)}
 EMPHASIS = {"reduced": {"vol": -4.0, "rate": 1.1},
@@ -936,6 +1005,8 @@ def parse_fx(body: str) -> dict[str, Any]:
             fx.setdefault("glitch", []).append(key)
         elif key == "boom" and not val:
             fx["boom"] = True
+        elif key in ("v", "voice") and val.strip():
+            fx["voice"] = re.sub(r"[^\w-]", "", val.strip())[:40]
         elif key == "clip" and val.strip().isdigit():
             fx["clip"] = int(val)
         elif key == "emph" and val.strip() in EMPHASIS:
@@ -965,18 +1036,24 @@ def effective_fx(fx: dict[str, Any]) -> dict[str, Any]:
         out["glitch"] = list(fx["glitch"])
     if fx.get("boom"):
         out["boom"] = True
+    if fx.get("voice"):
+        out["voice"] = fx["voice"]
     return out
 
 
-def clip_choices(word: str, limit: int = 60) -> list[dict[str, Any]]:
-    """Every recording of *word*, most likely to be picked first, described."""
-    _ensure_cache()
+def clip_choices(word: str, limit: int = 60, voice: str | None = None) -> list[dict[str, Any]]:
+    """Every recording of *word* in *voice*, most likely to be picked first, described."""
+    try:
+        return _clip_choices(word, limit, _use_voice(voice)["titles"])
+    finally:
+        _use_voice(None)
+
+
+def _clip_choices(word: str, limit: int, titles: dict[int, str]) -> list[dict[str, Any]]:
     word = re.sub(r"[^\w']", "", word).lower()
     rows = (_clips_by_word_cache or {}).get(word) or []
     if not rows:
         return []
-    with get_db() as conn:
-        titles = {r["id"]: r["title"] for r in conn.execute("SELECT id, title FROM sources")}
     scores = _splice_scores or {}
     out = []
     for r in rows:
@@ -2214,15 +2291,25 @@ def resolve_text(text: str, progress=None,
 
     from app.phonemes import find_phoneme_splice
     from app.database import max_units, splice_mode
-    mode = splice_mode()
-    # Read once, not per word: it is the corpus's answer to how badly it wants
-    # to say something it has no recording of.
-    units_cap = max_units()
+    # Read per voice, not per word: it is that corpus's answer to how badly it
+    # wants to say something it has no recording of.
+    voice, borrowed = None, False
+    pool = own_pool = _use_voice(None)
+    mode, units_cap = splice_mode(pool["settings"]), max_units(pool["settings"])
     i = 0
     n = len(words)
     while i < n:
         _say("resolving", i, n)
+        # Characters talking: these words in another corpus's voice. The
+        # clips, runs, pauses and splice settings are all that voice's own.
+        if fx[i].get("voice") != voice:
+            voice = fx[i].get("voice")
+            pool = _use_voice(voice)
+            borrowed = pool is not own_pool
+            cbw = _clips_by_word_cache  # type: ignore[assignment]
+            mode, units_cap = splice_mode(pool["settings"]), max_units(pool["settings"])
         seg_before = len(segments)
+        tok_before = len(tokens)
         used_run = False
 
         # 0) Explicit *noise* token (e.g. *spew*) → a non-verbal clip when the
@@ -2419,8 +2506,15 @@ def resolve_text(text: str, progress=None,
                     c for sg in segments[seg_before:]
                     for c in (_boom_copies(sg) if id(sg) in keep else [sg])]
 
+        # A borrowed voice's clip ids mean other clips in this corpus, so the
+        # page must not vote on them here.
+        if borrowed:
+            for t in tokens[tok_before:]:
+                t["voice"] = pool["slug"]
+
         i += cap
 
+    _use_voice(None)
     if options["chaos"] > 0:
         _sprinkle(segments, options["chaos"])
 

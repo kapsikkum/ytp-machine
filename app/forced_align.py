@@ -66,7 +66,9 @@ def _load_wav_mono16k(path: str):
 
 
 # ── Per-clip character timings ───────────────────────────────────────────────
-_char_cache: dict[int, list[tuple[str, float, float]] | None] = {}
+# Keyed on (source file, clip id): ids start again at 1 in every corpus, and
+# a sentence can now hold words from two of them.
+_char_cache: dict[tuple, list[tuple[str, float, float]] | None] = {}
 
 
 def invalidate(clip_id: int | None = None) -> None:
@@ -89,19 +91,21 @@ def invalidate(clip_id: int | None = None) -> None:
     if clip_id is None:
         _char_cache.clear()
     else:
-        _char_cache.pop(clip_id, None)
+        for key in [k for k in _char_cache if k[1] == clip_id]:
+            del _char_cache[key]
 
 
 def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     """Return [(char, start_s, end_s), …] for *clip*'s word, times relative to
     the clip's own start_time.  None if alignment fails."""
     cid = clip.get("id")
-    if cid is not None and cid in _char_cache:
-        return _char_cache[cid]
+    key = (clip.get("source_file"), cid)
+    if cid is not None and key in _char_cache:
+        return _char_cache[key]
 
     result = _align(clip)
     if cid is not None:
-        _char_cache[cid] = result
+        _char_cache[key] = result
     return result
 
 

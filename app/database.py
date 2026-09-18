@@ -336,9 +336,10 @@ def set_setting(key: str, value: str) -> None:
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 
-def splice_mode() -> str:
-    """The active corpus's splice mode, validated."""
-    mode = (get_setting("splice_mode") or DEFAULT_SPLICE_MODE).lower()
+def splice_mode(settings: dict | None = None) -> str:
+    """The active corpus's splice mode, validated -- or the one in *settings*."""
+    raw = settings.get("splice_mode") if settings is not None else get_setting("splice_mode")
+    mode = (raw or DEFAULT_SPLICE_MODE).lower()
     return mode if mode in SPLICE_MODES else DEFAULT_SPLICE_MODE
 
 
@@ -359,10 +360,11 @@ MIN_MAX_UNITS = 2
 MAX_MAX_UNITS = 24
 
 
-def max_units() -> int:
-    """The active corpus's splice-piece limit, validated."""
+def max_units(settings: dict | None = None) -> int:
+    """The active corpus's splice-piece limit, validated -- or the one in *settings*."""
+    raw = settings.get("max_units") if settings is not None else get_setting("max_units")
     try:
-        n = int(get_setting("max_units") or DEFAULT_MAX_UNITS)
+        n = int(raw or DEFAULT_MAX_UNITS)
     except (TypeError, ValueError):
         return DEFAULT_MAX_UNITS
     return max(MIN_MAX_UNITS, min(MAX_MAX_UNITS, n))
