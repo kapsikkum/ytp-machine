@@ -43,6 +43,17 @@ S = lambda y: np.abs(np.fft.rfft(y)); fr = np.fft.rfftfreq(len(x), 1 / sr)
 cen = lambda y: float((S(y) * fr).sum() / S(y).sum())
 check("and brightens the voice", cen(cute) > cen(sing.sung(v, 220.0, len(x))) * 1.1, True)
 
+# The vocoder: the speech's loudness, on the synth's notes. Root and fifth
+# of 220Hz share a 110Hz fundamental, so the sound sits on its harmonics.
+voc = sing.vocode(x, 220.0)
+check("vocoded: as long as the speech", len(voc), len(x))
+rms = lambda y: float(np.sqrt(np.mean(y ** 2)))
+check("and as loud", abs(rms(voc) / rms(x) - 1) < 0.01, True)
+spec = np.abs(np.fft.rfft(voc)) ** 2
+on = np.abs(fr - 110 * np.round(fr / 110)) < 6
+check("on the synth's notes, not the voice's", spec[on & (fr > 100)].sum() / spec[fr > 100].sum() > 0.6, True)
+check("silence stays silence", float(np.abs(sing.vocode(np.zeros(sr // 2, np.float32), 220.0)).max()), 0.0)
+
 check("^+2 is relative", g.parse_mark("+2"), ("rel", 2.0))
 check("^A3 is a note", g.parse_mark("A3"), ("abs", 57.0))
 check("^C#4 too", g.parse_mark("C#4"), ("abs", 61.0))

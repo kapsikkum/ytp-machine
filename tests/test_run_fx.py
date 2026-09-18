@@ -59,6 +59,19 @@ segs, rep = resolve("what are you doing")
 plain = g.timeline([next(s for s in segs if s.get("_tokens"))], OPTS)
 check("last word starts twice as late", round(slow[-1]["start"], 2), round(plain[-1]["start"] * 2, 2))
 
+# What a full stop does: footage of silence, a held frame, or nothing.
+def stop(style):
+    random.seed(1)
+    segs, _ = g.resolve_text("what are you doing. what", options={"pause_style": style, "sentence_pause": 0.6})
+    silent = [s.get("word") == "" and s.get("_tok") is None and not s.get("_tokens") for s in segs]
+    return silent, max(s.get("pause_after", 0.0) for s in segs)
+idle0, held0 = stop(0)
+idle1, held1 = stop(1)
+idle2, held2 = stop(2)
+check("full stop: a silent clip by default", any(idle0), True)
+check("freeze: no clip, the frame held instead", (any(idle1), held1 >= 0.6), (False, True))
+check("none: neither", (any(idle2), held2), (False, 0.0))
+
 print()
 print(f"{len(failures)} failure(s)" if failures else "all ok")
 sys.exit(1 if failures else 0)

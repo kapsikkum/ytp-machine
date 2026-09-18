@@ -24,6 +24,15 @@
       caret-color: var(--yellow);
     }
     #text-input:focus-visible { outline: none; }
+    #text-view {
+      font-size: clamp(1.15rem, 3.2vw, 1.5rem); line-height: 1.45;
+      padding: .5rem .35rem .25rem; min-height: 5.5rem; max-height: 50vh; overflow-y: auto;
+      white-space: pre-wrap; overflow-wrap: anywhere; cursor: text;
+    }
+    #text-view:focus-visible { outline: 1px dashed var(--line-2); border-radius: 6px; }
+    #text-view .fxw { color: var(--yellow); border-bottom: 1px dashed rgba(255, 229, 0, .4); }
+    #text-view .fxw.voiced { color: var(--violet); border-bottom-color: rgba(167, 139, 250, .5); }
+    #text-view sup { font-size: .5em; margin-left: .1em; opacity: .75; }
     #text-input::placeholder { color: #3e3e45; }
 
     /* Live read of what will be said, word by word, as it is typed. */
@@ -261,6 +270,8 @@
       <div id="input-wrap">
         <textarea id="text-input" rows="2" spellcheck="false" aria-label="What should be said"
                   placeholder="type something for the voice to say…"></textarea>
+        <div id="text-view" tabindex="0" role="button" hidden
+             title="click to edit; words with effects are marked, hover one to see them"></div>
         <div id="suggest-box" role="listbox"></div>
       </div>
       <div id="chips" class="chips" aria-live="polite"></div>
@@ -285,7 +296,7 @@
             <div class="sliders" id="sliders"></div>
             <div class="toggles" id="toggles"></div>
             <div class="sing-panel" id="sing-panel" hidden>
-              <div class="section-label" style="margin:0">singing</div>
+              <div class="section-label" style="margin:0">the tune</div>
               <div class="sliders" id="sing-sliders"></div>
               <div class="sing-midi">
                 <label title="Sing to the top line of a MIDI file instead of a tune shape, one note a word">tune from a MIDI
@@ -393,6 +404,9 @@
     { key: 'chaos', name: 'chaos', min: 0, max: 1, step: 0.05, def: 0,
       fmt: v => v ? `${Math.round(v * 100)}% of words` : 'none',
       hint: 'How many words get wrecked at random: shaking, colours, earrape, stutters, boomerangs. The YTP knob.' },
+    { key: 'pause_style', name: 'at a full stop', min: 0, max: 2, step: 1, def: 0,
+      fmt: v => ['cut to them saying nothing', 'freeze on the last frame', 'no pause at all'][v],
+      hint: 'What happens for the length of the full-stop pause: footage of the speaker being quiet, the last frame held still, or straight on to the next sentence.' },
     { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
       hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
     { key: 'sing_amount', name: 'tune strength', min: 0, max: 1, step: 0.05, def: 1, sing: true,
@@ -416,7 +430,11 @@
       hint: 'When several words were said together somewhere, play that recording instead of cutting word by word. Off is choppier.' },
     { key: 'sing', name: 'sing', def: false,
       hint: 'Every word tuned onto a note of a tune, autotune style. Held letters make longer notes.' },
+    { key: 'vocode', name: 'vocoder', def: false,
+      hint: 'Every word played by a synth chord that speaks it, robot-choir style. It plays the same tune singing would: the key, the tune shape, a MIDI melody, or a note set on a word.' },
   ];
+  // Singing and the vocoder both put words on a tune, and share its controls.
+  const tuned = () => opts.sing || opts.vocode;
   const DEFAULTS = Object.fromEntries([...SLIDERS, ...TOGGLES].map(o => [o.key, o.def]));
   Object.assign(DEFAULTS, { sing_midi: '', sing_part: '' });
   const PRESETS = [
@@ -458,7 +476,7 @@
     const same = (p) => Object.keys(DEFAULTS).every(k => (k in p.opts ? p.opts[k] : DEFAULTS[k]) === opts[k]);
     document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', same(PRESETS[b.dataset.preset])));
     $('tweak-btn').classList.toggle('changed', !same(PRESETS[0]));
-    $('sing-panel').hidden = !opts.sing;
+    $('sing-panel').hidden = !tuned();
     drawSingMidi();
     store.set('ytp-opts', opts);
   }
@@ -530,6 +548,7 @@
     const r = await fetchJson('/api/corpora');
     if (!r.ok || !r.data.corpora) return;
     voices = r.data.corpora.filter(c => !c.error).sort((a, b) => b.active - a.active);
+    drawView();                       // the folded text names voices by name, not slug
     if (r.data.corpora.length < 2) return;
     $('corpus-select').innerHTML = r.data.corpora.map(c =>
       `<option value="${esc(c.slug)}"${c.active ? ' selected' : ''}${c.error ? ' disabled' : ''}>${esc(c.name)}${c.error ? ' (unreadable)' : ''}</option>`).join('');
@@ -827,7 +846,7 @@
     const tis = sel.length ? sel : [ti], many = tis.length > 1;
     const title = many ? `${tis.length} words: ${tis.map(k => tokAt(k).base.replace(/[~*]/g, '')).join(' ')}` : t.base.replace(/[~*]/g, '');
     const named = /^[A-Ga-g]/.test(t.note || '');
-    const rows = [...FX_SLIDERS, ...(opts.sing && !named ? [NOTE_SLIDER] : [])];
+    const rows = [...FX_SLIDERS, ...(tuned() && !named ? [NOTE_SLIDER] : [])];
     const valueOf = ([key, , , , , neutral]) => key === 'note' ? Number(t.note || 0) : (t.fx[key] ?? neutral);
     const rev = /^~.+~$/.test(t.base);
     openPop(chip, `<div class="ph"><b class="title" title="${esc(title)}">${esc(title)}</b>
@@ -925,7 +944,7 @@
     const chips = preview(textInput.value);
     const el = $('chips');
     el.innerHTML = chips.slice(0, SHOWN).map(c =>
-      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx && c.fx.v ? `<span class="vo" title="said by ${esc(voiceName(c.fx.v))}">${esc(voiceName(c.fx.v).split(/[\s-]/)[0])}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
+      `<span class="chip ${c.cls}${tuned() ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${tuned() && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx && c.fx.v ? `<span class="vo" title="said by ${esc(voiceName(c.fx.v))}">${esc(voiceName(c.fx.v).split(/[\s-]/)[0])}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
       + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;
@@ -939,15 +958,66 @@
   // The box grows with what is in it.
   function fit() { textInput.style.height = 'auto'; textInput.style.height = `${textInput.scrollHeight}px`; }
 
+  // The text as it reads, while you are not typing in it: the markup the
+  // word menu writes -- {pitch=3,shake,v=james-channel}, ^+2, ~backwards~ --
+  // folded into a marked word you can hover. Click it to edit the real text,
+  // with the caret after the word you clicked.
+  const MARKUP = /[{^~]/;
+  function drawView() {
+    const view = $('text-view');
+    const fold = document.activeElement !== textInput && MARKUP.test(textInput.value);
+    view.hidden = !fold; textInput.hidden = fold;
+    if (!fold) { fit(); return; }
+    let at = 0;
+    view.innerHTML = textInput.value.split(/(\s+)/).map((part, j) => {
+      at += part.length;
+      if (j % 2 || !part) return esc(part);
+      const t = splitTok(part), rev = /^~.+~$/.test(t.base);
+      const fx = Object.entries(t.fx).filter(([, x]) => x !== undefined && x !== null);
+      if (!fx.length && !t.note && !rev) return `<span data-end="${at}">${esc(part)}</span>`;
+      const what = [...fx.map(([k, x]) => x === true ? k : k === 'v' ? `said by ${voiceName(x)}` : `${k} ${x}`),
+                    ...(t.note ? [`note ${t.note}`] : []), ...(rev ? ['backwards'] : [])].join(', ');
+      return `<span class="fxw${t.fx.v ? ' voiced' : ''}" data-end="${at}" title="${esc(what)}">${esc(t.base.replace(/^~(.+)~$/, '$1'))}`
+        + `<sup>${rev ? '↺' : ''}${t.note ? '♪' : ''}${fx.length ? '✦' : ''}</sup></span>${esc(t.punct)}`;
+    }).join('');
+  }
+  function unfold(pos = textInput.value.length) {
+    $('text-view').hidden = true; textInput.hidden = false; fit();
+    textInput.focus(); textInput.setSelectionRange(pos, pos);
+  }
+  $('text-view').addEventListener('click', (e) => {
+    const w = e.target.closest('[data-end]');
+    unfold(w ? Number(w.dataset.end) : undefined);
+  });
+  $('text-view').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); unfold(); } });
+  // Folded only once the pointer is let go: folding on the press would move
+  // whatever you were clicking out from under the pointer before the click.
+  // A press can end without a release reaching the page (let go outside the
+  // window), so a cancel or the window losing focus counts as one too, and a
+  // second at most is waited for either way.
+  let pressing = false, foldLater = false;
+  const released = () => {
+    pressing = false;
+    if (foldLater) { foldLater = false; setTimeout(drawView); }
+  };
+  addEventListener('pointerdown', () => { pressing = true; }, true);
+  for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, released, true);
+  addEventListener('blur', (e) => { if (e.target === window) released(); });   // not every element's blur
+  textInput.addEventListener('blur', () => {
+    if (!pressing) return drawView();
+    foldLater = true;
+    setTimeout(released, 1000);
+  });
+
   let chipTimer = null;
   textInput.addEventListener('input', () => {
-    fit();
+    if (document.activeElement === textInput) fit(); else drawView();
     clearTimeout(chipTimer); chipTimer = setTimeout(drawChips, 60);
     queueSuggest();
     store.set('ytp-draft', textInput.value);
   });
   textInput.value = store.get('ytp-draft', '');
-  fit();
+  drawView();
 
   document.querySelector('.helpers').addEventListener('click', (e) => {
     if (e.target.closest('[data-more-noises]')) return drawNoises(true);

@@ -68,6 +68,8 @@ OPTIONS = {
     "sing_cute":      (0.0, 0.0, 1.0),     # higher, and a smaller throat
     "sing_midi":      ("", None, None),    # an uploaded YTPMV MIDI to take the tune from
     "sing_part":      ("", None, None),    # which part of it; the lead when empty
+    "vocode":         (False, None, None), # said by a synth playing the tune; see app/sing.py
+    "pause_style":    (0.0, 0.0, 2.0),     # a full stop: 0 silent footage, 1 frozen frame, 2 none
     "chaos":          (0.0, 0.0, 1.0),     # how often a word gets wrecked, YTP style
     "seed":           ("", None, None),    # same seed, same video; empty picks a new one
 }
@@ -2089,7 +2091,7 @@ def generate_video(text: str, progress=None,
     _build_video(segments, final_path, progress=progress, subtitles=subtitles,
                  options=options)
     spans = timeline(segments, options)
-    if options["sing"]:
+    if options["sing"] or options["vocode"]:
         from app import sing
         if progress:
             progress("singing", 0, 1)
@@ -2289,6 +2291,12 @@ def _resolve_text(text: str, progress=None,
 
     options = generation_options(options)
     word_gap, stop_pause = options["word_gap"], options["sentence_pause"]
+    # What a full stop does: cut to footage of the speaker saying nothing (the
+    # default), hold the last frame of the sentence, or carry straight on.
+    pause_style = int(round(options["pause_style"]))
+    if pause_style == 2:
+        stop_pause = 0.0
+    idle_ok = pause_style == 0
     full = tokenize_full(text)
     if not full:
         return [], {"found": [], "spliced": [], "missing": [], "runs": [],
@@ -2360,7 +2368,7 @@ def _resolve_text(text: str, progress=None,
                     seg["reverse"] = True
             if len(segments) > seg_before:
                 if ends[i]:
-                    idle = _pick_idle(stop_pause) if stop_pause >= 0.1 else None
+                    idle = _pick_idle(stop_pause) if stop_pause >= 0.1 and idle_ok else None
                     if idle is not None:
                         segments.append(idle)
                     elif stop_pause > 0:
@@ -2498,7 +2506,7 @@ def _resolve_text(text: str, progress=None,
         # words — but only if this word actually produced audio.
         if len(segments) > seg_before:
             if ends[last_idx]:
-                idle = _pick_idle(stop_pause) if stop_pause >= 0.1 else None
+                idle = _pick_idle(stop_pause) if stop_pause >= 0.1 and idle_ok else None
                 if idle is not None:
                     segments.append(idle)
                 elif stop_pause > 0:

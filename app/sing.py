@@ -153,6 +153,62 @@ def sung(v: pitch.Voice, hz: float, n_out: int, amount: float = 1.0,
     return pitch._fade(y, sr, min(n_out, len(x)))
 
 
+# The vocoder: speech's spectral shape, imposed frame by frame on a synth.
+#
+# A channel vocoder, done in the frequency domain: the speech's spectrum,
+# smoothed across frequency so it keeps the formants (the vowel) and loses the
+# harmonics (the pitch), multiplies a carrier whose own smoothed spectrum has
+# been divided out. What is left is the carrier's pitch saying the speech's
+# words. The carrier is a root, fifth and octave of sawtooth -- the classic
+# vocoder chord -- with a little noise, so consonants have something to hiss
+# with.
+_V_FFT = 1024            # 23ms at 44.1kHz: vowels resolve, consonants still move
+_V_HOP = 256
+_V_SMOOTH = 9            # bins either side (~390Hz): formants, not harmonics
+_V_CHORD = ((1.0, 1.0), (1.5, 0.5), (2.0, 0.35))
+_V_NOISE = 0.06
+
+
+def _stft(x: np.ndarray) -> np.ndarray:
+    win = np.hanning(_V_FFT).astype(np.float32)
+    xp = np.pad(x, (_V_FFT, _V_FFT + _V_HOP))
+    frames = np.lib.stride_tricks.sliding_window_view(xp, _V_FFT)[::_V_HOP]
+    return np.fft.rfft(frames * win, axis=1)
+
+
+def _istft(spec: np.ndarray, n: int) -> np.ndarray:
+    win = np.hanning(_V_FFT).astype(np.float32)
+    frames = np.fft.irfft(spec, n=_V_FFT, axis=1) * win
+    total = (len(frames) - 1) * _V_HOP + _V_FFT
+    out, norm = np.zeros(total), np.zeros(total)
+    for k, f in enumerate(frames):
+        out[k * _V_HOP:k * _V_HOP + _V_FFT] += f
+        norm[k * _V_HOP:k * _V_HOP + _V_FFT] += win * win
+    out /= np.maximum(norm, 1e-6)
+    return out[_V_FFT:_V_FFT + n]
+
+
+def _envelope(mag: np.ndarray) -> np.ndarray:
+    """Each frame's spectrum smoothed across frequency: its shape, not its detail."""
+    k = 2 * _V_SMOOTH + 1
+    c = np.cumsum(np.pad(mag, ((0, 0), (_V_SMOOTH + 1, _V_SMOOTH)), mode="edge"), axis=1)
+    return (c[:, k:] - c[:, :-k]) / k
+
+
+def vocode(x: np.ndarray, hz: float, sr: int = pitch.SR) -> np.ndarray:
+    """*x* said by a synth chord on *hz*, at *x*'s own loudness."""
+    n = len(x)
+    if n < _V_FFT // 4:
+        return x
+    t = np.arange(n) / sr
+    carrier = sum(g * (2.0 * ((hz * r * t) % 1.0) - 1.0) for r, g in _V_CHORD)
+    carrier = carrier + _V_NOISE * np.random.default_rng(n).standard_normal(n)
+    speech, synth = _stft(x), _stft(carrier)
+    y = _istft(synth * _envelope(np.abs(speech)) / (_envelope(np.abs(synth)) + 1e-6), n)
+    level = float(np.sqrt(np.mean(x ** 2)))
+    return (y * level / max(float(np.sqrt(np.mean(y ** 2))), 1e-9)).astype(np.float32)
+
+
 def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
          seed: int = 0) -> None:
     """Re-sing the video at *path* in place.
@@ -171,11 +227,13 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
             cuts.append((s["i"], a, b))
     voices = [pitch.Voice(x[a:b], sr, aperiodic=_APERIODIC) for _, a, b in cuts]
     f0s = [v.info.f0 for v in voices if v.info.f0]
-    if not f0s:
+    vocoding = bool(options.get("vocode"))
+    if not f0s and not vocoding:
         return
     cute = float(options.get("sing_cute", 0.0))
-    # Somebody small has a higher voice as well as a smaller throat.
-    centre = pitch.hz_to_midi(float(np.median(f0s))) + 9.0 * cute
+    # Somebody small has a higher voice as well as a smaller throat. A vocoder
+    # needs no voiced speech to play, so it starts from A3 when there is none.
+    centre = (pitch.hz_to_midi(float(np.median(f0s))) if f0s else 57.0) + 9.0 * cute
 
     tune: list[float] = []
     if options.get("sing_midi"):
@@ -194,6 +252,11 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
         mark = marks[i] if marks and i < len(marks) else None
         if mark:
             m = mark[1] if mark[0] == "abs" else m + mark[1]
+        if vocoding:
+            # Every word, voiced or not: a whispered "s" on a synth is still
+            # the synth hissing an "s", which is the sound.
+            y[a:b] = vocode(x[a:b], pitch.midi_to_hz(m), sr)
+            continue
         if not v.info.f0:
             continue                          # nothing voiced to put on a note
         y[a:b] = sung(v, pitch.midi_to_hz(m), b - a,
