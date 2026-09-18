@@ -210,11 +210,14 @@ def vocode(x: np.ndarray, hz: float, sr: int = pitch.SR) -> np.ndarray:
 
 
 def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
-         seed: int = 0) -> None:
+         seed: int = 0, vocoded: list | None = None) -> None:
     """Re-sing the video at *path* in place.
 
     *spans* is generate.timeline(); *options* is generation_options(); *marks*
     is each token's parse_mark(), by token index, where the text had any.
+    *vocoded* says, by token index, which words were marked {vocode}: those
+    go on the synth even when nothing else is sung, and the rest are left as
+    they were said unless singing or the vocoder is on for everything.
     """
     if not spans:
         return
@@ -228,7 +231,7 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
     voices = [pitch.Voice(x[a:b], sr, aperiodic=_APERIODIC) for _, a, b in cuts]
     f0s = [v.info.f0 for v in voices if v.info.f0]
     vocoding = bool(options.get("vocode"))
-    if not f0s and not vocoding:
+    if not f0s and not vocoding and not any(vocoded or ()):
         return
     cute = float(options.get("sing_cute", 0.0))
     # Somebody small has a higher voice as well as a smaller throat. A vocoder
@@ -252,13 +255,13 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
         mark = marks[i] if marks and i < len(marks) else None
         if mark:
             m = mark[1] if mark[0] == "abs" else m + mark[1]
-        if vocoding:
+        if vocoding or (vocoded and i < len(vocoded) and vocoded[i]):
             # Every word, voiced or not: a whispered "s" on a synth is still
             # the synth hissing an "s", which is the sound.
             y[a:b] = vocode(x[a:b], pitch.midi_to_hz(m), sr)
             continue
-        if not v.info.f0:
-            continue                          # nothing voiced to put on a note
+        if not options.get("sing") or not v.info.f0:
+            continue                          # not sung, or nothing voiced to put on a note
         y[a:b] = sung(v, pitch.midi_to_hz(m), b - a,
                       amount=float(options.get("sing_amount", 1.0)),
                       vibrato=float(options.get("sing_vibrato", 0.0)),

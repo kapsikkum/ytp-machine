@@ -803,7 +803,8 @@
   const NOTE_SLIDER = ['note', 'sung note', -12, 12, 1, 0, v => v === 0 ? 'on the tune' : `${v > 0 ? '+' : ''}${v} from the tune`];
   // The same names as GLITCH in app/generate.py, plus the boomerang.
   const GLITCHES = ['shake', 'punch', 'spin', 'rainbow', 'invert', 'flip', 'strobe', 'crunch',
-                    'fringe', 'earrape', 'wobble', 'cave', 'stutter', 'boom'];
+                    'fringe', 'earrape', 'wobble', 'cave', 'stutter', 'boom', 'vocode'];
+  const GLITCH_LABEL = { boom: 'boomerang', vocode: 'vocoder' };
   const EMPH = [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']];
   // Which recording a word uses. Fetched once a word, and played in the menu
   // from the source video itself, from the clip's start to its end.
@@ -866,7 +867,7 @@
       </div>
       <div><div class="section-label" style="margin:.1rem 0 .4rem">glitch</div>
         <div class="glitches">${GLITCHES.map(g =>
-          `<button type="button" data-glitch="${g}" class="${t.fx[g] ? 'on' : ''}">${g === 'boom' ? 'boomerang' : g}</button>`).join('')}</div></div>
+          `<button type="button" data-glitch="${g}" class="${t.fx[g] ? 'on' : ''}">${GLITCH_LABEL[g] || g}</button>`).join('')}</div></div>
       ${many ? '' : `<div><div class="section-label" style="margin:.1rem 0 .4rem">recording</div>
         <audio hidden></audio>
         <div class="clips"><div class="hint">loading the recordings…</div></div></div>`}`,

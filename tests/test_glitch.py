@@ -83,6 +83,19 @@ got = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=d
                             "-of", "csv=p=0", out], capture_output=True, text=True).stdout)
 check("effects did not change the length", got, want, tol=0.1)
 
+print("joined")
+# A video long enough to be encoded in parts and joined. Copying the parts
+# together left repeated and missing frames at every join on ffmpeg 7.1 (the
+# server's): a corrupt-looking picture in every long video.
+many = [dict(segs[k % len(segs)], glitch=[]) for k in range(g._MAX_INPUTS_PER_CALL + 6)]
+joined = os.path.join(tmp, "joined.mp4")
+g._build_video(many, joined, options=opts)
+rows = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                       "packet=pts_time", "-of", "csv=p=0", joined], capture_output=True, text=True).stdout.split()
+pts = sorted(float(r.strip(",")) for r in rows)
+check("every frame 40ms after the last, joins included",
+      [round(b - a, 3) for a, b in zip(pts, pts[1:]) if not 0.035 < b - a < 0.045], [])
+
 print()
 print(f"{len(failures)} failure(s)" if failures else "all ok")
 sys.exit(1 if failures else 0)

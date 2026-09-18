@@ -54,6 +54,10 @@ on = np.abs(fr - 110 * np.round(fr / 110)) < 6
 check("on the synth's notes, not the voice's", spec[on & (fr > 100)].sum() / spec[fr > 100].sum() > 0.6, True)
 check("silence stays silence", float(np.abs(sing.vocode(np.zeros(sr // 2, np.float32), 220.0)).max()), 0.0)
 
+check("{vocode} marks one word", g.effective_fx(g.parse_fx("vocode,pitch=2")), {"vocode": True, "pitch": 2.0})
+check("and the tokeniser keeps it", [bool(t["fx"].get("vocode")) for t in g.tokenize_full("hello there{vocode} you")],
+      [False, True, False])
+
 check("^+2 is relative", g.parse_mark("+2"), ("rel", 2.0))
 check("^A3 is a note", g.parse_mark("A3"), ("abs", 57.0))
 check("^C#4 too", g.parse_mark("C#4"), ("abs", 61.0))

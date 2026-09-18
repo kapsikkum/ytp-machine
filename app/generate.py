@@ -1020,6 +1020,8 @@ def parse_fx(body: str) -> dict[str, Any]:
             fx.setdefault("glitch", []).append(key)
         elif key == "boom" and not val:
             fx["boom"] = True
+        elif key == "vocode" and not val:
+            fx["vocode"] = True
         elif key in ("v", "voice") and val.strip():
             fx["voice"] = re.sub(r"[^\w-]", "", val.strip())[:40]
         elif key == "clip" and val.strip().isdigit():
@@ -1051,6 +1053,8 @@ def effective_fx(fx: dict[str, Any]) -> dict[str, Any]:
         out["glitch"] = list(fx["glitch"])
     if fx.get("boom"):
         out["boom"] = True
+    if fx.get("vocode"):
+        out["vocode"] = True
     if fx.get("voice"):
         out["voice"] = fx["voice"]
     return out
@@ -1617,9 +1621,18 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
         with open(list_path, "w", encoding="utf-8") as f:
             for p in part_paths:
                 f.write(f"file '{os.path.abspath(p).replace(chr(92), '/')}'\n")
+        # The picture is encoded again rather than copied. Each part starts a
+        # frame's fraction late (the encoder lines its video up behind the
+        # audio's priming), and copying carried that into the join: on the
+        # server's ffmpeg 7.1 every join left two frames on one timestamp or
+        # a gap, which players showed as a corrupt, stuttering picture in any
+        # video long enough to be made in parts. A constant 25fps rebuilds
+        # the timing; at 480x270 on ultrafast it costs about a second.
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "concat", "-safe", "0", "-i", list_path,
-               "-c", "copy", "-movflags", "+faststart", out_path]
+               "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+               "-fps_mode", "cfr", "-r", str(_FPS),
+               "-c:a", "copy", "-movflags", "+faststart", out_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             log.error("FFmpeg concat failed:\n%s", result.stderr[-2000:])
@@ -2091,14 +2104,18 @@ def generate_video(text: str, progress=None,
     _build_video(segments, final_path, progress=progress, subtitles=subtitles,
                  options=options)
     spans = timeline(segments, options)
-    if options["sing"] or options["vocode"]:
+    toks = tokenize_full(text)
+    # word{vocode}: that word alone on the synth, the rest left as said.
+    vocoded = [bool((t.get("fx") or {}).get("vocode")) for t in toks]
+    if options["sing"] or options["vocode"] or any(vocoded):
         from app import sing
         if progress:
             progress("singing", 0, 1)
-        marks = [t["note"] for t in tokenize_full(text)]
-        sing.sing(final_path, spans, options,
-                  marks if len(marks) == len(report.get("tokens", [])) else None,
-                  seed=sum(map(ord, text)) & 0xFFFF)
+        marks = [t["note"] for t in toks]
+        lined_up = len(toks) == len(report.get("tokens", []))
+        sing.sing(final_path, spans, options, marks if lined_up else None,
+                  seed=sum(map(ord, text)) & 0xFFFF,
+                  vocoded=vocoded if lined_up else None)
     return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
             "timeline": spans}
 
