@@ -1699,9 +1699,13 @@ def timeline(segments: list[dict[str, Any]], options: dict[str, Any]) -> list[di
         win = extract_window(seg, pad)
         _span, sounding, total = segment_durations(seg, win, options)
         if seg.get("_tokens"):
+            # Source seconds into this run, slowed or sped as the run is
+            # played. A run could not be stretched until effects could land
+            # on one, which is why this went unnoticed.
+            st = float(seg.get("stretch") or 1.0)
             for i, a, b in seg["_tokens"]:
-                lo = t + max(0.0, a - win[0]) / options["speed"]
-                hi = t + min(sounding, max(0.0, b - win[0])) / options["speed"]
+                lo = t + max(0.0, a - win[0]) * st / options["speed"]
+                hi = t + min(sounding, max(0.0, b - win[0]) * st) / options["speed"]
                 s = spans.setdefault(i, [lo, hi])
                 s[0], s[1] = min(s[0], lo), max(s[1], hi)
         elif seg.get("_tok") is not None:
@@ -2261,7 +2265,10 @@ def resolve_text(text: str, progress=None,
 
         # 1) Prefer a contiguous phrase already spoken in some source — but never
         # let a run cross a full stop (the pause belongs at the sentence end).
-        run = _find_run(words, i) if options["phrases"] and not stretch[i] and not fx[i] else None
+        # Effects do not stop a run: a sentence given one pitch is still one
+        # spoken phrase. A pinned recording does, being one word's own clip.
+        run = (_find_run(words, i) if options["phrases"] and not stretch[i]
+               and "clip" not in fx[i] else None)
         if run:
             src, s, _e, length = run
             cap = length
@@ -2269,8 +2276,10 @@ def resolve_text(text: str, progress=None,
                 # A run is one clip, so it is reversed or not as a whole. Where
                 # the mark changes, the run has to end -- otherwise marking one
                 # word would quietly reverse the words either side of it.
+                # Effects the same way: a run carries one set, so it ends
+                # where the next word's differ.
                 if (ends[i + k] or is_rev[i + k] != is_rev[i + k + 1] or stretch[i + k + 1]
-                        or fx[i + k + 1]):
+                        or fx[i + k + 1] != fx[i]):
                     cap = k + 1
                     break
             if cap >= 2:
@@ -2387,11 +2396,12 @@ def resolve_text(text: str, progress=None,
             elif last_idx < n - 1 and word_gap > 0:
                 segments[-1]["pause_after"] = max(segments[-1].get("pause_after", 0.0), word_gap)
 
-        # Effects apply to this word's own segments (never a run: see above),
-        # not the sentence's idle clip after it.
-        f = fx[i] if cap == 1 else {}
+        # Effects apply to this word's own segments -- or the run's, whose
+        # words all share them -- not the sentence's idle clip after it.
+        f = fx[i]
         if f and len(segments) > seg_before:
-            own = [sg for sg in segments[seg_before:] if sg.get("_tok") is not None]
+            own = [sg for sg in segments[seg_before:]
+                   if sg.get("_tok") is not None or sg.get("_tokens")]
             for sg in own:
                 if f.get("rate", 1.0) != 1.0:
                     sg["stretch"] = float(sg.get("stretch") or 1.0) / f["rate"]

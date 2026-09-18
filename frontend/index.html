@@ -41,6 +41,8 @@
     .chip.missing { color: var(--red); border-color: #5a1f1f; background: #220f0f; }
     .chip .mark { opacity: .7; font-size: .7rem; }
     .chip.more { color: var(--dim); border-style: dashed; }
+    .chip.sel { outline: 2px solid var(--yellow); outline-offset: 1px; }
+    .pop .ph .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
 
     .bar {
@@ -707,15 +709,17 @@
       .map(([k, v]) => v === true ? k : `${k}=${v}`).join(',');
     return `${base}${note ? `^${note}` : ''}${body ? `{${body}}` : ''}${punct}`;
   }
+  // One word by its index, or several: a selection is edited in one go, so
+  // the chips and the text redraw once rather than once a word.
   function editTok(ti, change) {
+    const want = new Set([].concat(ti));
     const parts = textInput.value.split(/(\s+)/);
     let n = -1;
     for (let j = 0; j < parts.length; j++) {
-      if (j % 2 || !parts[j] || ++n !== ti) continue;
+      if (j % 2 || !parts[j] || !want.has(++n)) continue;
       const t = splitTok(parts[j]);
       change(t);
       parts[j] = joinTok(t);
-      break;
     }
     textInput.value = parts.join('');
     textInput.dispatchEvent(new Event('input'));
@@ -736,8 +740,26 @@
     wire(pop);
   }
   // composedPath, not contains: a choice redraws the menu, detaching the button that was clicked.
-  document.addEventListener('click', (e) => { const path = e.composedPath(); if (!pop.hidden && !path.includes(pop) && !path.some(n => n.matches && n.matches('.chip, .word .acts'))) pop.hidden = true; });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') pop.hidden = true; });
+  function closePop() {
+    pop.hidden = true;
+    if (sel.length) { sel = []; drawChips(); }
+  }
+  document.addEventListener('click', (e) => { const path = e.composedPath(); if (!pop.hidden && !path.includes(pop) && !path.some(n => n.matches && n.matches('.chip, .word .acts'))) closePop(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePop(); });
+
+  // The words the menu is editing, by token index. Click a word to pick it,
+  // shift-click another to take in everything between; "whole sentence"
+  // widens it to the full stops either side.
+  let sel = [], selAnchor = null;
+  const span = (a, b) => Array.from({ length: Math.abs(b - a) + 1 }, (_, k) => Math.min(a, b) + k);
+  function sentenceOf(ti) {
+    const toks = textInput.value.split(/\s+/).filter(Boolean);
+    const stop = (t) => /[.!?]["')\]]*$/.test(splitTok(t).punct);
+    let a = ti, b = ti;
+    while (a > 0 && !stop(toks[a - 1])) a--;
+    while (b < toks.length - 1 && !stop(toks[b])) b++;
+    return span(a, b);
+  }
 
   // A word's own settings, laid out like the sentence's: sliders, then
   // switches. A slider at its "as the sentence" end removes the setting.
@@ -786,11 +808,16 @@
 
   function drawFxPop(chip) {
     const ti = Number(chip.dataset.ti), t = tokAt(ti);
+    const tis = sel.length ? sel : [ti], many = tis.length > 1;
+    const title = many ? `${tis.length} words: ${tis.map(k => tokAt(k).base.replace(/[~*]/g, '')).join(' ')}` : t.base.replace(/[~*]/g, '');
     const named = /^[A-Ga-g]/.test(t.note || '');
     const rows = [...FX_SLIDERS, ...(opts.sing && !named ? [NOTE_SLIDER] : [])];
     const valueOf = ([key, , , , , neutral]) => key === 'note' ? Number(t.note || 0) : (t.fx[key] ?? neutral);
     const rev = /^~.+~$/.test(t.base);
-    openPop(chip, `<div class="ph"><b>${esc(t.base.replace(/[~*]/g, ''))}</b><button type="button" class="linkish" data-clear>reset this word</button></div>
+    openPop(chip, `<div class="ph"><b class="title" title="${esc(title)}">${esc(title)}</b>
+        <button type="button" class="linkish" data-sentence>whole sentence</button>
+        <button type="button" class="linkish" data-clear>reset ${many ? 'these' : 'this word'}</button></div>
+      ${many ? '' : '<div class="hint" style="margin:-.2rem 0 .1rem">shift-click another word to edit a run of them together</div>'}
       <div class="sliders">${rows.map(r => `
         <label class="slider"><span class="name">${r[1]}</span><output data-out="${r[0]}">${r[6](valueOf(r))}</output>
           <input type="range" data-fx="${r[0]}" min="${r[2]}" max="${r[3]}" step="${r[4]}" value="${valueOf(r)}"></label>`).join('')}</div>
@@ -803,9 +830,9 @@
       <div><div class="section-label" style="margin:.1rem 0 .4rem">glitch</div>
         <div class="glitches">${GLITCHES.map(g =>
           `<button type="button" data-glitch="${g}" class="${t.fx[g] ? 'on' : ''}">${g === 'boom' ? 'boomerang' : g}</button>`).join('')}</div></div>
-      <div><div class="section-label" style="margin:.1rem 0 .4rem">recording</div>
+      ${many ? '' : `<div><div class="section-label" style="margin:.1rem 0 .4rem">recording</div>
         <audio hidden></audio>
-        <div class="clips"><div class="hint">loading the recordings…</div></div></div>`,
+        <div class="clips"><div class="hint">loading the recordings…</div></div></div>`}`,
       (el) => {
         // Sliders change the text as they move, without redrawing the menu
         // under the pointer mid-drag.
@@ -813,14 +840,14 @@
           const key = e.target.dataset.fx; if (!key) return;
           const r = rows.find(x => x[0] === key), v = Number(e.target.value);
           el.querySelector(`output[data-out="${key}"]`).textContent = r[6](v);
-          editTok(ti, (tok) => {
+          editTok(tis, (tok) => {
             if (key === 'note') tok.note = v ? `${v > 0 ? '+' : ''}${v}` : null;
             else tok.fx[key] = v === r[5] ? undefined : v;
           });
         };
         el.onchange = (e) => {
           const flag = e.target.dataset.flag; if (!flag) return;
-          editTok(ti, (tok) => {
+          editTok(tis, (tok) => {
             if (flag === 'spell') tok.fx.spell = e.target.checked || undefined;
             else tok.base = e.target.checked ? `~${tok.base.replace(/^~|~$/g, '')}~` : tok.base.replace(/^~(.+)~$/, '$1');
           });
@@ -842,22 +869,32 @@
           const gl = e.target.closest('button[data-glitch]');
           if (gl) {
             const g = gl.dataset.glitch, on = !gl.classList.contains('on');
-            editTok(ti, (tok) => { tok.fx[g] = on || undefined; });
+            editTok(tis, (tok) => { tok.fx[g] = on || undefined; });
             gl.classList.toggle('on', on);
             return;
           }
           const b = e.target.closest('button'); if (!b) return;
-          editTok(ti, (tok) => {
+          if (b.dataset.sentence !== undefined) {
+            sel = sentenceOf(ti); selAnchor = sel[0]; drawChips();
+            drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
+            return;
+          }
+          editTok(tis, (tok) => {
             if (b.dataset.clear !== undefined) { tok.fx = {}; tok.note = null; tok.base = tok.base.replace(/^~(.+)~$/, '$1'); }
             else if (b.dataset.emph !== undefined) tok.fx.emph = b.dataset.emph || undefined;
           });
           drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || chip);
         };
-        drawClips(el, ti);
+        if (!many) drawClips(el, ti);
       });
   }
   $('chips').addEventListener('click', (e) => {
-    const c = e.target.closest('.chip[data-ti]'); if (c) drawFxPop(c);
+    const c = e.target.closest('.chip[data-ti]'); if (!c) return;
+    const ti = Number(c.dataset.ti);
+    if (e.shiftKey && selAnchor !== null) sel = span(selAnchor, ti);
+    else { sel = [ti]; selAnchor = ti; }
+    drawChips();
+    drawFxPop($('chips').querySelector(`.chip[data-ti="${ti}"]`) || c);
   });
 
   const SHOWN = 60;
@@ -865,7 +902,7 @@
     const chips = preview(textInput.value);
     const el = $('chips');
     el.innerHTML = chips.slice(0, SHOWN).map(c =>
-      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
+      `<span class="chip ${c.cls}${opts.sing ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${opts.sing && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
       + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;

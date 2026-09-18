@@ -146,11 +146,19 @@ jobs:
         # Ends with a real render through ffmpeg.
         run: python tests/test_synth_mode.py
 
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Glitches
         # The YTP effects: markup, the seeded chaos sprinkler, the boomerang,
         # and every effect rendered through ffmpeg in one chunk -- a filter
         # that breaks the frame size or hands over NaN fails the whole video.
         run: python tests/test_glitch.py
+
+      - name: Effects on a phrase
+        # Words sharing effects stay one real recording, split where the
+        # effects change, and a stretched run's highlights move with it.
+        run: python tests/test_run_fx.py
 
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
