@@ -49,7 +49,8 @@
     .chip.noise   { color: var(--violet); border-color: #463763; background: #1a1526; }
     .chip.missing { color: var(--red); border-color: #5a1f1f; background: #220f0f; }
     .chip .mark { opacity: .7; font-size: .7rem; }
-    .chip.more { color: var(--dim); border-style: dashed; }
+    .chip.more { color: var(--dim); border-style: dashed; background: transparent; cursor: pointer; font: inherit; }
+    .chip.more:hover { color: var(--text); }
     .chip .vo { font-size: .6rem; color: var(--violet); margin-left: .25rem; }
     .chip.sel { outline: 2px solid var(--yellow); outline-offset: 1px; }
     .pop .ph .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -104,9 +105,10 @@
     .presets button:hover { color: var(--text); border-color: #4a4a52; }
     .presets button.on { color: #000; background: var(--yellow); border-color: var(--yellow); }
     .sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem 1.4rem; }
-    .slider { display: grid; grid-template-columns: 1fr auto; gap: .35rem .5rem; align-items: center; }
-    .slider .name { color: var(--muted); font-size: .75rem; }
-    .slider output { color: var(--text); font-size: .75rem; font-variant-numeric: tabular-nums; }
+    .slider { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .35rem .5rem; align-items: center; }
+    .slider .name { color: var(--muted); font-size: .75rem; white-space: nowrap; }
+    .slider output { color: var(--text); font-size: .75rem; font-variant-numeric: tabular-nums;
+                     text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .slider input { grid-column: 1 / -1; }
     .toggles { display: flex; flex-wrap: wrap; gap: .6rem 1.4rem; }
     .sing-panel { border-top: 1px dashed var(--line); padding-top: .9rem; display: flex; flex-direction: column; gap: .9rem; }
@@ -239,6 +241,14 @@
     .past .play { color: var(--yellow); font-size: .8rem; }
     .past .said { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; }
     .past .when { color: var(--dim); font-size: .7rem; white-space: nowrap; }
+    .past .use { padding: .15rem .5rem; font-size: .7rem; border-radius: 999px; white-space: nowrap; opacity: .75; }
+    .past:hover .use, .past .use:focus-visible { opacity: 1; }
+    .past .replay { display: flex; align-items: center; gap: .75rem; flex: 1; min-width: 0; text-align: left;
+                    background: none; border: none; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+    .history-head { display: flex; align-items: center; gap: .75rem; }
+    .history-head h3 { flex: 1; }
+    #history-find { max-width: 16rem; font-size: .78rem; padding: .3rem .6rem; }
+    #history-more { margin: .4rem .7rem; }
 
     footer { text-align: center; color: #3c3c43; font-size: .7rem; padding: 0 1rem 2rem; line-height: 1.9; }
     footer b { color: var(--dim); font-weight: 500; }
@@ -359,8 +369,12 @@
   </section>
 
   <section class="history" id="history" hidden>
-    <h3>recent</h3>
+    <div class="history-head">
+      <h3>recent</h3>
+      <input type="search" id="history-find" placeholder="find a past video…" aria-label="Find in history" hidden>
+    </div>
     <div id="history-list"></div>
+    <button type="button" class="linkish" id="history-more" hidden></button>
   </section>
 </main>
 
@@ -405,7 +419,7 @@
       fmt: v => v ? `${Math.round(v * 100)}% of words` : 'none',
       hint: 'How many words get wrecked at random: shaking, colours, earrape, stutters, boomerangs. The YTP knob.' },
     { key: 'pause_style', name: 'at a full stop', min: 0, max: 2, step: 1, def: 0,
-      fmt: v => ['cut to them saying nothing', 'freeze on the last frame', 'no pause at all'][v],
+      fmt: v => ['silent clip', 'freeze frame', 'no pause'][v],
       hint: 'What happens for the length of the full-stop pause: footage of the speaker being quiet, the last frame held still, or straight on to the next sentence.' },
     { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
       hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
@@ -932,6 +946,7 @@
       });
   }
   $('chips').addEventListener('click', (e) => {
+    if (e.target.closest('[data-more]')) { allChips = !allChips; drawChips(); return; }
     const c = e.target.closest('.chip[data-ti]'); if (!c) return;
     const ti = Number(c.dataset.ti);
     if (e.shiftKey && selAnchor !== null) sel = span(selAnchor, ti);
@@ -941,12 +956,13 @@
   });
 
   const SHOWN = 60;
+  let allChips = false;              // "+N more" pressed: every word's chip, not the first SHOWN
   function drawChips() {
     const chips = preview(textInput.value);
     const el = $('chips');
-    el.innerHTML = chips.slice(0, SHOWN).map(c =>
+    el.innerHTML = chips.slice(0, allChips ? chips.length : SHOWN).map(c =>
       `<span class="chip ${c.cls}${tuned() ? ' sung' : ''}${sel.includes(c.ti) ? ' sel' : ''}" data-ti="${c.ti}" title="${esc(c.title)} · click for pause, speed, pitch, volume, emphasis">${c.rev ? '<span class="mark">↺</span>' : ''}${esc(c.label)}${c.held ? '<span class="mark">⟷</span>' : ''}${tuned() && c.note ? `<span class="note">♪${esc(c.note)}</span>` : ''}${c.fx && c.fx.v ? `<span class="vo" title="said by ${esc(voiceName(c.fx.v))}">${esc(voiceName(c.fx.v).split(/[\s-]/)[0])}</span>` : ''}${c.fx ? `<span class="fx" title="${esc(Object.entries(c.fx).map(([k, v]) => v === true ? k : `${k} ${v}`).join(', '))}">✦</span>` : ''}</span>`).join('')
-      + (chips.length > SHOWN ? `<span class="chip more">+${chips.length - SHOWN} more</span>` : '');
+      + (chips.length > SHOWN ? `<button type="button" class="chip more" data-more>${allChips ? 'show fewer' : `+${chips.length - SHOWN} more`}</button>` : '');
     // Roughly how long it will take: clips are quick, spliced words are not.
     const n = chips.length, splice = chips.filter(c => c.cls === 'splice').length;
     const secs = Math.round(n * 0.15 + splice * 1.6);
@@ -1012,9 +1028,12 @@
 
   let chipTimer = null;
   textInput.addEventListener('input', () => {
-    if (document.activeElement === textInput) fit(); else drawView();
+    const typing = document.activeElement === textInput;
+    if (typing) fit(); else drawView();
     clearTimeout(chipTimer); chipTimer = setTimeout(drawChips, 60);
-    queueSuggest();
+    // Suggestions follow the typing only: text changed by the word menu or
+    // put back from the history is not somebody mid-word.
+    if (typing) queueSuggest(); else closeSuggest();
     store.set('ytp-draft', textInput.value);
   });
   textInput.value = store.get('ytp-draft', '');
@@ -1308,7 +1327,9 @@
   // ── Recent ────────────────────────────────────────────────────────────────
   // The last few videos made in this browser, to go back to. Old ones may
   // have been cleared off the server, in which case they are dropped.
-  const KEEP = 8;
+  const KEEP = 100;                   // remembered; the server keeps the videos a week
+  const HISTORY_SHOWN = 8;             // listed before "show all"
+  let allHistory = false;
   function remember(entry) {
     const list = store.get('ytp-history', []).filter(h => h.url !== entry.url);
     list.unshift(entry);
@@ -1322,17 +1343,40 @@
   function drawHistory() {
     const list = store.get('ytp-history', []);
     $('history').hidden = !list.length;
-    $('history-list').innerHTML = list.map((h, i) =>
-      `<button type="button" class="past${current && current.url === h.url ? ' current' : ''}" data-i="${i}">
-         <span class="play">▶</span><span class="said">${esc(h.text)}</span><span class="when">${ago(h.at)}</span>
-       </button>`).join('');
+    const find = $('history-find').value.trim().toLowerCase();
+    const found = list.map((h, i) => [h, i]).filter(([h]) => !find || h.text.toLowerCase().includes(find));
+    const shown = allHistory || find ? found : found.slice(0, HISTORY_SHOWN);
+    $('history-find').hidden = list.length <= HISTORY_SHOWN;
+    $('history-more').hidden = !!find || list.length <= HISTORY_SHOWN;
+    $('history-more').textContent = allHistory ? 'show fewer' : `show all ${list.length}`;
+    $('history-list').innerHTML = shown.map(([h, i]) =>
+      `<div class="past${current && current.url === h.url ? ' current' : ''}">
+         <button type="button" class="replay" data-i="${i}" title="play it">
+           <span class="play">▶</span><span class="said">${esc(h.text)}</span><span class="when">${ago(h.at)}</span>
+         </button>
+         <button type="button" class="use" data-use="${i}" title="put this text, effects and all, back in the box">use this text</button>
+       </div>`).join('') || '<div class="hint">nothing matches</div>';
   }
-  $('history-list').addEventListener('click', (e) => {
-    const b = e.target.closest('.past'); if (!b) return;
-    const h = store.get('ytp-history', [])[Number(b.dataset.i)];
+  $('history-more').addEventListener('click', () => { allHistory = !allHistory; drawHistory(); });
+  $('history-find').addEventListener('input', drawHistory);
+  function playPast(i) {
+    const h = store.get('ytp-history', [])[i];
     if (!h) return;
     lastText = h.text;
     show(h, true);
+  }
+  $('history-list').addEventListener('click', (e) => {
+    const use = e.target.closest('[data-use]');
+    if (use) {
+      const h = store.get('ytp-history', [])[Number(use.dataset.use)];
+      if (!h) return;
+      textInput.value = h.text;
+      textInput.dispatchEvent(new Event('input'));
+      $('input-wrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setStatus('That text is back in the box: change it, or say it again.');
+      return;
+    }
+    const b = e.target.closest('.replay'); if (b) playPast(Number(b.dataset.i));
   });
   // An error is not the same as the video being gone. A connection dropped
   // mid-play -- the server restarting, a network blip -- raised it too, and
