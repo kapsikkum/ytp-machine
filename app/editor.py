@@ -721,10 +721,12 @@ def splice_word(word: str, mode: str = "strict"):
                     for s in segs]
 
     saved = ph.user_recipe(word)
+    entry = ph.user_entry(word)
     return {
         "word": word,
         "phones": phones,
         "known": ph.word_to_phonemes(word) is not None,
+        "pron": {"scope": entry[0], "value": entry[1]} if entry else None,
         "exact": exact,
         "exact_total": len(cbw.get(word, [])),
         "plan": plan,
@@ -732,6 +734,68 @@ def splice_word(word: str, mode: str = "strict"):
                     for grp, pref, cut in saved] if saved else None),
         "mode": mode,
     }
+
+
+# How a word is pronounced, from the splice editor. The splicer can only build
+# a word out of the sounds it is told the word has, so this is the other half
+# of fixing one: the pieces are chosen against these sounds.
+class Pronunciation(BaseModel):
+    value: str
+    scope: str = "all"                 # "all": every voice; "voice": this one only
+
+
+def _pron_word(word: str) -> str:
+    word = re.sub(r"[^\w']", "", word).lower()
+    if not word:
+        raise HTTPException(status_code=400, detail="need a word")
+    return word
+
+
+def _pron_changed() -> None:
+    """Everything worked out from the old pronunciations is out of date."""
+    import app.generate as g
+    g.invalidate_cache(alignments=False)
+    g._known_spelling.cache_clear()
+
+
+@router.post("/pronunciation/{word}/try")
+def try_pronunciation(word: str, p: Pronunciation):
+    """The sounds a pronunciation would give, without saving it."""
+    from app import phonemes as ph
+    word = _pron_word(word)
+    try:
+        phones, stored, guessed = ph.try_pronunciation(word, p.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"word": word, "phones": phones, "stored": stored, "guessed": guessed}
+
+
+@router.put("/pronunciation/{word}")
+def save_pronunciation(word: str, p: Pronunciation):
+    """Say *word* this way from now on, in this voice or every voice."""
+    from app import phonemes as ph
+    word = _pron_word(word)
+    if p.scope not in ("all", "voice"):
+        raise HTTPException(status_code=400, detail="scope is all or voice")
+    try:
+        phones, stored, guessed = ph.try_pronunciation(word, p.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ph.set_pronunciation(word, stored, p.scope)
+    _pron_changed()
+    log.info("PRONOUNCE  %s = %s (%s)", word, stored, p.scope)
+    return {"word": word, "phones": phones, "stored": stored, "scope": p.scope}
+
+
+@router.delete("/pronunciation/{word}")
+def delete_pronunciation(word: str, scope: str = "all"):
+    """Back to the dictionary for *word*."""
+    from app import phonemes as ph
+    word = _pron_word(word)
+    ph.set_pronunciation(word, None, "voice" if scope == "voice" else "all")
+    _pron_changed()
+    log.info("PRONOUNCE  %s cleared (%s)", word, scope)
+    return {"word": word}
 
 
 @router.get("/splice-sources")

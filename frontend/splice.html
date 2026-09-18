@@ -74,6 +74,12 @@
   .clip button { padding: .05rem .4rem; font-size: .7rem; border-radius: 6px; }
   .clip.playing button { border-color: var(--green); color: var(--green); }
   .trim { margin-top: .55rem; }
+  .pron { border-top: 1px dashed var(--line); margin-top: .2rem; padding-top: .7rem; }
+  .pron .from { color: var(--muted); margin-bottom: .45rem; }
+  .pron .from b { color: var(--text); font-weight: 500; }
+  #pron-preview { display: flex; gap: .3rem; flex-wrap: wrap; align-items: center; min-height: 1.9rem; }
+  #pron-preview .ph { font-size: .8rem; padding: .2rem .45rem; }
+  #pron-preview.err { color: var(--red); }
   .trim canvas { width: 100%; height: 88px; display: block; background: #0b0b0c; border: 1px solid var(--line); border-radius: 8px; }
   .trim .bar { display: flex; gap: .45rem; align-items: center; margin-top: .35rem; font-size: .72rem; color: var(--dim); flex-wrap: wrap; }
   .trim .bar .t { flex: 1; }
@@ -115,6 +121,23 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
         what the splicer currently does with it, and every word in the corpus
         that could supply each piece.</div>
       <div id="phones"></div>
+      <div id="pron" class="pron" hidden>
+        <div class="from" id="pron-from"></div>
+        <div class="row">
+          <input id="pron-input" style="flex:1" spellcheck="false"
+                 placeholder="sounds like: mick nug   or ARPAbet: M IH K N AH G">
+          <select id="pron-scope" title="every voice: one entry for everyone who says the word. this voice: only this corpus, winning over the shared one.">
+            <option value="all">every voice</option>
+            <option value="voice">this voice only</option>
+          </select>
+          <button id="pron-save">use this</button>
+          <button id="pron-clear" hidden>back to the dictionary</button>
+        </div>
+        <div id="pron-preview" class="meta"></div>
+        <div class="hint">Write words that already sound right (<b>mick nug</b>), a
+          lone consonant for its sound (<b>zoo p</b>), ARPAbet if you know it,
+          <b>=letters</b> to spell it out, or <b>=skip</b> to never build it.</div>
+      </div>
       <div class="hint">Click the gaps between sounds to move the cuts. Each
         piece is then taken from one word, whole or trimmed. Every candidate
         clip can be heard before you choose it, and each piece shows its clip's
@@ -163,6 +186,7 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
 
 <script>
 const $ = id => document.getElementById(id);
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let phones = [];            // the sounds the target word needs
 let cuts = new Set();       // indices where one piece ends and the next starts
 let picks = {};             // group key -> {source, clip_id}
@@ -229,10 +253,13 @@ async function look() {
     picks = {}; sources = {};
     renderSummary(d);
     renderCurrent(d);
+    renderPron(d);
     // A saved recipe is the grouping to start from -- you came here to change
     // it, not to retype it. Otherwise start from the splicer's own plan, and
     // only then from one piece per sound.
-    if (d.recipe) {
+    const spells = d.recipe && d.recipe.flatMap(g => g.phones).join(' ') === (d.phones || []).join(' ');
+    if (d.recipe && !spells) say('the saved recipe was for another pronunciation, so it is not used: save a new one', 'err');
+    if (spells) {
       loadGroups(d.recipe.map(g => ({ phones: g.phones, from: (g.from || [])[0],
                                       clip_id: g.clip_id, start: g.start, end: g.end })));
     } else if (d.plan) {
@@ -248,7 +275,7 @@ function renderSummary(d) {
   const bits = [];
   if (!d.phones) {
     bits.push(`<b>${d.word}</b> has no known pronunciation, so it cannot be `
-            + `spliced at all. Give it one in the pronunciation dictionary first.`);
+            + `spliced at all. Give it one just below.`);
   } else {
     bits.push(`<b>${d.word}</b> needs <b>${d.phones.length}</b> sounds.`);
     if (d.exact_total) {
@@ -277,6 +304,85 @@ function renderCurrent(d) {
   $('use-plan').disabled = false;
   $('use-plan').onclick = () => loadGroups(d.plan);
 }
+
+// ── the pronunciation ──────────────────────────────────────────────────────
+// Which sounds the word has decides everything else on this page, and it used
+// to be fixed: an entry in a CSV you edited by hand. Typed here, it is read
+// exactly as the CSV is, shown as sounds as you type, and saved on "use this".
+let pronFor = null, pronTimer = null;
+
+function renderPron(d) {
+  pronFor = d;
+  $('pron').hidden = false;
+  const where = d.pron && (d.pron.scope === 'voice' ? 'this voice' : 'every voice');
+  $('pron-from').innerHTML = d.pron
+    ? `Said as <b>${esc(d.pron.value)}</b> — your pronunciation, for ${where}.`
+    : d.known ? 'Its sounds come from the dictionary. Type below to say it differently.'
+    : d.phones ? 'Nothing knows this word: those sounds are a guess. Type below to say how it goes.'
+    : 'No pronunciation at all yet. Type below to say how it goes.';
+  $('pron-input').value = d.pron ? d.pron.value : '';
+  $('pron-scope').value = d.pron ? d.pron.scope : 'all';
+  $('pron-clear').hidden = !d.pron;
+  showCurrent();
+}
+
+// The word's sounds as they are now: nothing to draw when it has none yet.
+function showCurrent() {
+  const now = pronFor && pronFor.phones;
+  if (now && now.length) drawSounds(now, false);
+  else if (pronFor && pronFor.pron) drawSounds([], false);          // =skip
+  else { $('pron-preview').className = 'meta'; $('pron-preview').textContent = ''; }
+}
+
+function drawSounds(list, err) {
+  const box = $('pron-preview');
+  box.className = 'meta' + (err ? ' err' : '');
+  if (err) { box.textContent = err; return; }
+  box.innerHTML = list.length
+    ? list.map(p => `<span class="ph${VOWELS.has(p) ? ' vowel' : ''}">${esc(p)}</span>`).join('')
+    : '<span>never built: this word is skipped</span>';
+}
+
+$('pron-input').oninput = () => {
+  clearTimeout(pronTimer);
+  const value = $('pron-input').value.trim();
+  if (!value) return showCurrent();
+  pronTimer = setTimeout(async () => {
+    try {
+      const out = await api(`/pronunciation/${encodeURIComponent(word)}/try`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      if ($('pron-input').value.trim() !== value) return;
+      drawSounds(out.phones || [], false);
+      if (out.guessed) $('pron-preview').insertAdjacentHTML('beforeend',
+        '<span>guessed from the spelling; saved as these sounds</span>');
+    } catch (e) { drawSounds([], String(e.message)); }
+  }, 250);
+};
+$('pron-input').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('pron-save').click(); });
+
+$('pron-save').onclick = async () => {
+  const value = $('pron-input').value.trim();
+  if (!word || !value) return;
+  try {
+    const out = await api(`/pronunciation/${encodeURIComponent(word)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value, scope: $('pron-scope').value }),
+    });
+    await look();
+    say(`“${word}” is said as ${out.stored} from now on`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+};
+
+$('pron-clear').onclick = async () => {
+  if (!word || !pronFor || !pronFor.pron) return;
+  try {
+    await api(`/pronunciation/${encodeURIComponent(word)}?scope=${pronFor.pron.scope}`, { method: 'DELETE' });
+    await look();
+    say(`“${word}” is back to the dictionary`, 'ok');
+  } catch (e) { say(String(e.message), 'err'); }
+};
 
 // ── grouping ───────────────────────────────────────────────────────────────
 // A grouping is the phoneme list plus a set of cut positions. Held that way

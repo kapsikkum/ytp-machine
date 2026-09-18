@@ -199,6 +199,42 @@ check("hand cut: what generation plays", [(s["start_time"], s["end_time"]) for s
 check("delete", ed.delete_recipe("bitch")["saved"], False)
 check("gone", ph.user_recipe("bitch"), None)
 
+# ── pronunciations, from the editor ────────────────────────────────────────
+Pron = ed.Pronunciation
+check("try: words that sound right", ed.try_pronunciation("bitch", Pron(value="big itch"))["phones"],
+      ["B", "IH", "G", "IH", "CH"])
+check("try: ARPAbet", ed.try_pronunciation("bitch", Pron(value="b iy ch"))["phones"], ["B", "IY", "CH"])
+got = ed.try_pronunciation("splorkle", Pron(value="splore kull"))
+check("try: made-up spellings are guessed", (got["guessed"], got["stored"] == " ".join(got["phones"]), len(got["phones"]) > 4),
+      (True, True, True))
+try:
+    ed.try_pronunciation("bitch", Pron(value="!!!"))
+    check("try: nonsense refused", "accepted", "refused")
+except Exception as exc:
+    check("try: nonsense refused", getattr(exc, "status_code", None), 400)
+
+shared = ph.global_dict_path()
+with open(shared, "w", encoding="utf-8") as f:
+    f.write("# kept as written\nshell,SH EH L\n")
+ed.save_pronunciation("bitch", Pron(value="B IY CH"))
+check("saved: the word now has those sounds", ph.canonical_phones("bitch"), ["B", "IY", "CH"])
+check("saved: the editor says where it came from", ed.splice_word("bitch")["pron"],
+      {"scope": "all", "value": "B IY CH"})
+ed.save_pronunciation("bitch", Pron(value="B IH CH"))
+text = open(shared, encoding="utf-8").read()
+check("saved again: replaced, not added", text.count("bitch,"), 1)
+check("the rest of the file untouched", text.startswith("# kept as written\nshell,SH EH L\n"), True)
+ed.save_pronunciation("bitch", Pron(value="B EY CH", scope="voice"))
+check("this voice's own wins", ph.canonical_phones("bitch"), ["B", "EY", "CH"])
+ed.delete_pronunciation("bitch", scope="voice")
+check("and removing it falls back to every voice's", ph.canonical_phones("bitch"), ["B", "IH", "CH"])
+ed.delete_pronunciation("bitch")
+check("then to the dictionary", ed.splice_word("bitch")["pron"], None)
+saved = ed.save_pronunciation("splorkle", Pron(value="splore kull"))
+check("a guess is written down as the sounds shown", ph.user_entry("splorkle"), ("all", saved["stored"]))
+check("and the word can now be built from them", ph.canonical_phones("splorkle") is not None, True)
+ed.delete_pronunciation("splorkle")
+
 # ── an unknown word ────────────────────────────────────────────────────────
 out = ed.splice_word("qqzzq")
 check("unknown has no phones", out["phones"], None)

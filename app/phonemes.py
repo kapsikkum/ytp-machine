@@ -596,6 +596,92 @@ def _load_user_dict() -> dict[str, list[str] | None]:
     return _user_dict
 
 
+def _dict_word(cell: str) -> str:
+    return re.sub(r"[^\w']", "", cell.strip().lower())
+
+
+def user_entry(word: str) -> tuple[str, str] | None:
+    """*word*'s own line in a pronunciations.csv, as (scope, value).
+
+    Scope "voice" for the active corpus's file, "all" for the shared one; the
+    voice's is looked at first because it wins.
+    """
+    import csv
+    for scope, path in (("voice", user_dict_path()), ("all", global_dict_path())):
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            for row in csv.reader(f):
+                if len(row) >= 2 and not row[0].lstrip().startswith("#") and _dict_word(row[0]) == word:
+                    return scope, row[1].strip()
+    return None
+
+
+def try_pronunciation(word: str, value: str) -> tuple[list[str] | None, str, bool]:
+    """What *value* would make *word* sound like, without writing anything.
+
+    Returns (sounds, what to store, whether any of it was guessed). The CSV
+    only understands words the dictionary already knows, and the words people
+    need to teach are exactly the made-up ones -- "splore kull". Typed here,
+    anything unknown is guessed from its spelling and stored as the ARPAbet it
+    came out as, so the file stays exact and the sounds are the ones that were
+    shown. None is =skip; ValueError when even a guess fails.
+    """
+    parsed = _parse_user_value(value)
+    if parsed == "=letters":
+        return _letters_to_phones(word), value.strip(), False
+    if parsed != "?":
+        return parsed, value.strip(), False
+    out: list[str] = []
+    for token in value.replace(",", " ").split():
+        clean = re.sub(r"[^a-z']", "", token.lower())
+        if not clean:
+            continue
+        if len(clean) == 1 and clean not in "aeiou":
+            out.append(clean.upper())             # a lone consonant is its sound
+            continue
+        got = word_to_phonemes(clean) or guess_phonemes(clean)
+        if not got:
+            raise ValueError(f"could not make any sense of {token!r}: try spelling it "
+                             "the way it sounds, or ARPAbet (M IH K N AH G)")
+        out.extend(got)
+    if not out:
+        raise ValueError("nothing to say: write how the word sounds")
+    return out, " ".join(out), True
+
+
+def set_pronunciation(word: str, value: str | None, scope: str = "all") -> None:
+    """Write *word*'s line into a pronunciations.csv, or take it out (None).
+
+    Only that word's line changes: the comments and every other entry stay as
+    they were written, since the file is meant to be edited by hand too.
+    """
+    import csv
+    path = user_dict_path() if scope == "voice" else global_dict_path()
+    lines = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            lines = f.read().splitlines()
+    line = f"{word},{' '.join(value.replace(',', ' ').split())}" if value is not None else None
+    out, placed = [], False
+    for raw in lines:
+        row = next(csv.reader([raw]), [])
+        if row and not row[0].lstrip().startswith("#") and _dict_word(row[0]) == word:
+            if line and not placed:
+                out.append(line)
+                placed = True
+            continue
+        out.append(raw)
+    if line and not placed:
+        out.append(line)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, path)
+    invalidate_user_dict()
+
+
 def invalidate_user_dict() -> None:
     """Forget the CSV so an edit takes effect on the next lookup."""
     global _user_dict
