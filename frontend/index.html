@@ -621,6 +621,11 @@
       const c = (vocab && vocab[w]) || 0;
       if (c > bestCount || (c === bestCount && w.length < best.length)) { best = w; bestCount = c; }
     }
+    // Only doubled letters: English is full of them ("fully", "ass"), and
+    // the page has only the corpus's words, not the dictionary the server
+    // also checks. So a double reads as held only when shrinking it gives a
+    // word the corpus has heard -- "soo" is "so" -- never a made-up one.
+    if (!use.some(([, n]) => n >= 3) && !(vocab && vocab[best] && best.length > 1)) return null;
     return best === raw ? null : best;
   }
 
