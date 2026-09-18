@@ -1631,7 +1631,7 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "concat", "-safe", "0", "-i", list_path,
                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-               "-fps_mode", "cfr", "-r", str(_FPS),
+               "-pix_fmt", "yuv420p", "-fps_mode", "cfr", "-r", str(_FPS),
                "-c:a", "copy", "-movflags", "+faststart", out_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -2038,6 +2038,10 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "23",
+        # Always 4:2:0. The colour effects (fringe, rainbow...) hand the
+        # encoder RGB, x264 then writes 4:4:4, and Firefox calls that file
+        # corrupt and will not play it.
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-ar", "44100",
         "-ac", "2",

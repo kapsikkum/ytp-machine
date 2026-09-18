@@ -1351,6 +1351,10 @@
       drawHistory();
       return;
     }
+    // Only a network error is worth another try; a file the browser cannot
+    // decode will not decode any better the second time.
+    const code = video.error && video.error.code;
+    if (code === 3 || code === 4) return setStatus('This video will not play in this browser. Try making it again.', true);
     if (retryFor !== entry.url) { retryFor = entry.url; retries = 0; }
     if (++retries > 3) return setStatus('The video keeps dropping out. Try again in a moment.', true);
     setTimeout(() => {

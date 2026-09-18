@@ -54,6 +54,20 @@ on = np.abs(fr - 110 * np.round(fr / 110)) < 6
 check("on the synth's notes, not the voice's", spec[on & (fr > 100)].sum() / spec[fr > 100].sum() > 0.6, True)
 check("silence stays silence", float(np.abs(sing.vocode(np.zeros(sr // 2, np.float32), 220.0)).max()), 0.0)
 
+# Where vocoded meets spoken there is no click: the jump from one sample to
+# the next at an edge is no bigger than anywhere else in the sound.
+jump = lambda y: np.abs(np.diff(y))
+other = np.sin(2 * np.pi * 600 * np.arange(len(x)) / sr).astype(np.float32) * 0.5
+mid = len(x) // 3
+mixed = sing._blend(x, other, [(mid, 2 * mid)], sr)
+edge = jump(mixed)[mid - 50:mid + 50].max()
+check("no click where vocoded meets spoken", edge <= 1.5 * max(jump(x).max(), jump(other).max()), True)
+# A note change does not restart the synth: no jump where the note changes.
+steps = np.where(np.arange(len(x)) < len(x) // 2, 220.0, 330.0)
+glide = sing.vocode(x, steps)
+at = len(x) // 2
+check("the synth changes note without a click", jump(glide)[at - 50:at + 50].max() <= 2.0 * np.median(jump(glide)[len(x) // 4:3 * len(x) // 4]) * 20, True)
+
 check("{vocode} marks one word", g.effective_fx(g.parse_fx("vocode,pitch=2")), {"vocode": True, "pitch": 2.0})
 check("and the tokeniser keeps it", [bool(t["fx"].get("vocode")) for t in g.tokenize_full("hello there{vocode} you")],
       [False, True, False])

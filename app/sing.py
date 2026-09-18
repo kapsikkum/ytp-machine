@@ -167,6 +167,12 @@ _V_HOP = 256
 _V_SMOOTH = 9            # bins either side (~390Hz): formants, not harmonics
 _V_CHORD = ((1.0, 1.0), (1.5, 0.5), (2.0, 0.35))
 _V_NOISE = 0.06
+# Where the synth has almost nothing (below its root, between far harmonics),
+# dividing by its envelope turned its noise up to the speech's level: a smear
+# of hiss and rumble under every note. Nothing is divided by less than this
+# share of the frame's average.
+_V_FLOOR = 0.1
+_V_FADE = 0.008          # seconds of crossfade where vocoded meets spoken
 
 
 def _stft(x: np.ndarray) -> np.ndarray:
@@ -195,18 +201,41 @@ def _envelope(mag: np.ndarray) -> np.ndarray:
     return (c[:, k:] - c[:, :-k]) / k
 
 
-def vocode(x: np.ndarray, hz: float, sr: int = pitch.SR) -> np.ndarray:
-    """*x* said by a synth chord on *hz*, at *x*'s own loudness."""
+def vocode(x: np.ndarray, hz, sr: int = pitch.SR) -> np.ndarray:
+    """*x* said by a synth chord, at *x*'s own loudness.
+
+    *hz* is one frequency, or one per sample: the synth glides from note to
+    note without restarting, because a synth started afresh on every word
+    clicked at every word.
+    """
     n = len(x)
     if n < _V_FFT // 4:
         return x
-    t = np.arange(n) / sr
-    carrier = sum(g * (2.0 * ((hz * r * t) % 1.0) - 1.0) for r, g in _V_CHORD)
+    hz = np.broadcast_to(np.asarray(hz, dtype=np.float64), (n,))
+    phase = np.cumsum(hz) / sr
+    carrier = sum(g * (2.0 * ((phase * r) % 1.0) - 1.0) for r, g in _V_CHORD)
     carrier = carrier + _V_NOISE * np.random.default_rng(n).standard_normal(n)
     speech, synth = _stft(x), _stft(carrier)
-    y = _istft(synth * _envelope(np.abs(speech)) / (_envelope(np.abs(synth)) + 1e-6), n)
+    shape = _envelope(np.abs(synth))
+    shape = np.maximum(shape, _V_FLOOR * shape.mean(axis=1, keepdims=True) + 1e-9)
+    y = _istft(synth * _envelope(np.abs(speech)) / shape, n)
     level = float(np.sqrt(np.mean(x ** 2)))
     return (y * level / max(float(np.sqrt(np.mean(y ** 2))), 1e-9)).astype(np.float32)
+
+
+def _blend(y: np.ndarray, other: np.ndarray, spans: list[tuple[int, int]], sr: int) -> np.ndarray:
+    """*other* where *spans* are, *y* elsewhere, crossfaded at every edge.
+
+    A hard cut between two different sounds is a click, however well each of
+    them was made.
+    """
+    mask = np.zeros(len(y), dtype=np.float32)
+    for a, b in spans:
+        mask[a:b] = 1.0
+    k = max(1, int(_V_FADE * sr))
+    ramp = np.hanning(2 * k + 1).astype(np.float32)
+    mask = np.clip(np.convolve(mask, ramp / ramp.sum(), mode="same"), 0.0, 1.0)
+    return y * (1.0 - mask) + other * mask
 
 
 def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
@@ -251,14 +280,17 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
                      int(options.get("sing_shape", 0)), centre, seed)
 
     y = x.copy()
+    hz = np.full(len(x), np.nan)             # the synth's note, sample by sample
+    on_synth: list[tuple[int, int]] = []
     for (i, a, b), v, m in zip(cuts, voices, tune):
         mark = marks[i] if marks and i < len(marks) else None
         if mark:
             m = mark[1] if mark[0] == "abs" else m + mark[1]
+        hz[a:b] = pitch.midi_to_hz(m)
         if vocoding or (vocoded and i < len(vocoded) and vocoded[i]):
             # Every word, voiced or not: a whispered "s" on a synth is still
             # the synth hissing an "s", which is the sound.
-            y[a:b] = vocode(x[a:b], pitch.midi_to_hz(m), sr)
+            on_synth.append((a, b))
             continue
         if not options.get("sing") or not v.info.f0:
             continue                          # not sung, or nothing voiced to put on a note
@@ -266,6 +298,16 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
                       amount=float(options.get("sing_amount", 1.0)),
                       vibrato=float(options.get("sing_vibrato", 0.0)),
                       formant=1.0 + 0.3 * cute)
+
+    if on_synth:
+        # One pass over the whole track rather than a word at a time: the
+        # synth holds its last note through the gaps, so it never restarts,
+        # and the words go in with crossfades rather than being pasted over.
+        known = ~np.isnan(hz)
+        last = np.maximum.accumulate(np.where(known, np.arange(len(hz)), 0))
+        held = hz[last]                                      # each note held to the next
+        held[:np.argmax(known)] = hz[np.argmax(known)]       # and the first from the start
+        y = _blend(y, vocode(x, held, sr), on_synth, sr)
 
     # Beside the video, so the finished file is renamed into place rather than
     # copied across filesystems (/tmp and output/ are different mounts in the container).

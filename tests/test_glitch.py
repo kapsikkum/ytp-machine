@@ -79,6 +79,11 @@ out = os.path.join(tmp, "out.mp4")
 for _ in range(3):
     g._encode_chunk(segs, out, final_tail=False, subtitles=False, options=opts)
 check("rendered", os.path.exists(out), True)
+# 4:2:0, whatever the effects did to the pixels: fringe and friends hand the
+# encoder RGB, and a 4:4:4 H.264 file is one Firefox calls corrupt.
+fmt = lambda f: subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=pix_fmt", "-of", "csv=p=0", f], capture_output=True, text=True).stdout.strip()
+check("a picture every browser plays", fmt(out), "yuv420p")
 got = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                             "-of", "csv=p=0", out], capture_output=True, text=True).stdout)
 check("effects did not change the length", got, want, tol=0.1)
@@ -93,6 +98,7 @@ g._build_video(many, joined, options=opts)
 rows = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                        "packet=pts_time", "-of", "csv=p=0", joined], capture_output=True, text=True).stdout.split()
 pts = sorted(float(r.strip(",")) for r in rows)
+check("joined, and still one every browser plays", fmt(joined), "yuv420p")
 check("every frame 40ms after the last, joins included",
       [round(b - a, 3) for a, b in zip(pts, pts[1:]) if not 0.035 < b - a < 0.045], [])
 
