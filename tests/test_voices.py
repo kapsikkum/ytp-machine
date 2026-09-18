@@ -62,6 +62,23 @@ check("without the voice, a cannot say beta",
 check("an unknown voice is the active one",
       [t["status"] for t in g.resolve_text("alpha{v=nobody}", options=opts)[1]["tokens"]], ["found"])
 
+# Anything that asks for the cache mid-sentence -- vote penalties, the
+# splicer's phrase lookup -- must get the voice being spoken, not the active
+# corpus: that swap made every word after a splice come from the wrong voice.
+g._use_voice("b")
+g._ensure_cache()
+check("asking for the cache keeps the voice in use", sorted(g._clips_by_word_cache), ["beta"])
+g._use_voice(None)
+g._ensure_cache()
+check("and the active one once it is put back", sorted(g._clips_by_word_cache), ["alpha"])
+real_penalty = g._penalty_for
+g._penalty_for = lambda w: (g._ensure_cache(), real_penalty(w))[1]
+segs, rep = g.resolve_text("beta{v=b} zeta{v=b} beta{v=b}", options=opts)   # zeta must be spliced
+g._penalty_for = real_penalty
+check("words after a splice stay in the voice",
+      os.path.join("corpora", "b") in segs[-1]["source_file"], True)
+check("active again after a sentence", sorted(g._clips_by_word_cache), ["alpha"])
+
 check("each voice's own settings", db.splice_mode(g._use_voice("b")["settings"]), "loose")
 g._use_voice(None)
 check("its recordings, with its titles", [c["source"] for c in g.clip_choices("beta", voice="b")], ["b video"])

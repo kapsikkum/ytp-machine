@@ -183,9 +183,20 @@ _POOL_KEYS = ("clips_by_word", "ordered_by_source", "word_positions", "source_qu
               "idle_clips", "noise_by_word", "all_noises", "splice_scores", "boundary_reports")
 
 
+# The voice whose clips are meant to be installed: None for the active corpus.
+_borrowing: str | None = None
+
+
 def _ensure_cache() -> None:
-    """The active corpus's clips, installed. See _pool for what is in them."""
-    _use_voice(None)
+    """The clips of the voice in use, installed. See _pool for what is in them.
+
+    The voice in use, not the active corpus: this is called from all over --
+    vote penalties, phrase lookups in the splicer -- and in the middle of a
+    sentence said in another voice, reinstalling the active corpus here swapped
+    the pool underneath it. Every word after the first splice then found its
+    phrases in the wrong corpus while believing it was in the right one.
+    """
+    _use_voice(_borrowing)
 
 
 def _use_voice(slug: str | None) -> dict[str, Any]:
@@ -202,7 +213,9 @@ def _use_voice(slug: str | None) -> dict[str, Any]:
     that voice's in-memory scores (the database write is still right). A lock
     or an explicit pool argument if two generations ever run at once.
     """
+    global _borrowing
     from app.database import active, list_corpora
+    _borrowing = slug
     corpus = active()
     if slug and slug != corpus["slug"]:
         corpus = next((c for c in list_corpora() if c["slug"] == slug), corpus)
@@ -2250,6 +2263,17 @@ def _sprinkle(segments: list[dict[str, Any]], chaos: float) -> None:
 
 def resolve_text(text: str, progress=None,
                  options: dict | None = None) -> tuple[list[dict], dict[str, Any]]:
+    """See _resolve_text. Whatever voices it borrowed, the active corpus is
+    back in place afterwards -- a failure halfway through a borrowed sentence
+    included."""
+    try:
+        return _resolve_text(text, progress, options)
+    finally:
+        _use_voice(None)
+
+
+def _resolve_text(text: str, progress=None,
+                  options: dict | None = None) -> tuple[list[dict], dict[str, Any]]:
     """Turn *text* into the segments that would say it, without encoding.
 
     Split out of generate_video so the YTPMV sampler can have a word said by
