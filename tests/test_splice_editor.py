@@ -122,7 +122,7 @@ Plan, Group = ed.SplicePlan, ed.SpliceGroup
 plan = Plan(groups=[Group(phones=["B", "IH"], source="bit"),
                     Group(phones=["CH"], source="itch")])
 check("save", ed.save_recipe("bitch", plan)["saved"], True)
-check("read back", ph.user_recipe("bitch"), [(["B", "IH"], ["bit"]), (["CH"], ["itch"])])
+check("read back", ph.user_recipe("bitch"), [(["B", "IH"], ["bit"], {}), (["CH"], ["itch"], {})])
 check("listed", [r["word"] for r in ed.recipes()["recipes"]], ["bitch"])
 check("endpoint shows it", ed.splice_word("bitch")["recipe"],
       [{"phones": ["B", "IH"], "from": ["bit"]}, {"phones": ["CH"], "from": ["itch"]}])
@@ -168,6 +168,33 @@ check("the end alone changes nothing", phones_of_77()[0], ["T", -0.05, 0.05])
 
 ed.edit_clip(77, ed.ClipEdit(word="thyme"))             # a different word entirely
 check("a new word drops them", phones_of_77(), None)
+
+# ── a cut set by hand, against the waveform ───────────────────────────────
+# That clip, those times, exactly: no forced alignment moving them, and the
+# encoder told (edited) not to pad them either. Needs no audio, since nothing
+# here has to find where a sound is -- it was told.
+bit = next(c for c in CBW["bit"])
+itch = next(c for c in CBW["itch"])
+by_hand = [{"phones": ["B", "IH"], "from": "bit", "clip_id": bit["id"],
+            "start": bit["start_time"] + 0.01, "end": bit["start_time"] + 0.2},
+           {"phones": ["CH"], "from": "itch", "clip_id": itch["id"],
+            "start": itch["start_time"] + 0.12, "end": itch["end_time"]}]
+segs = ph.realise_groups("bitch", by_hand, CBW)
+check("hand cut: the times given", [(s["start_time"], s["end_time"]) for s in segs],
+      [(g_["start"], g_["end"]) for g_ in by_hand])
+check("hand cut: taken exactly by the encoder", g.extract_window(segs[0]),
+      (by_hand[0]["start"], by_hand[0]["end"]))
+check("hand cut: the drag limits", (segs[0]["_src_start"], segs[0]["_src_end"]),
+      (bit["start_time"], bit["end_time"]))
+
+plan = Plan(groups=[Group(phones=gr["phones"], source=gr["from"], clip_id=gr["clip_id"],
+                          start=gr["start"], end=gr["end"]) for gr in by_hand])
+ed.save_recipe("bitch", plan)
+check("hand cut: saved with its clip and times", ph.user_recipe("bitch")[1][2],
+      {"clip_id": itch["id"], "start": by_hand[1]["start"], "end": by_hand[1]["end"]})
+segs = ph.find_phoneme_splice("bitch", CBW)
+check("hand cut: what generation plays", [(s["start_time"], s["end_time"]) for s in segs],
+      [(g_["start"], g_["end"]) for g_ in by_hand])
 
 check("delete", ed.delete_recipe("bitch")["saved"], False)
 check("gone", ph.user_recipe("bitch"), None)

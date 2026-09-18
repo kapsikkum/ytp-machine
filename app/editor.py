@@ -626,6 +626,18 @@ class SpliceGroup(BaseModel):
     phones: list[str]
     source: str | None = None          # which word supplies them
     clip_id: int | None = None         # ... and optionally which clip of it
+    start: float | None = None         # ... and where in that clip, set by hand
+    end: float | None = None
+
+
+def _where(s: dict) -> dict:
+    """Where a piece was cut, and the clip it was cut from: what the waveform
+    in the splice editor draws, the clip's own bounds being as far as a grip
+    may be dragged."""
+    return {"source_id": s.get("source_id"), "clip_id": s.get("id"),
+            "start": round(s["start_time"], 4), "end": round(s["end_time"], 4),
+            "src_start": round(s.get("_src_start", s["start_time"]), 4),
+            "src_end": round(s.get("_src_end", s["end_time"]), 4)}
 
 
 class SplicePlan(BaseModel):
@@ -716,8 +728,8 @@ def splice_word(word: str, mode: str = "strict"):
         "exact": exact,
         "exact_total": len(cbw.get(word, [])),
         "plan": plan,
-        "recipe": ([{"phones": list(grp), "from": list(pref)}
-                    for grp, pref in saved] if saved else None),
+        "recipe": ([{"phones": list(grp), "from": list(pref), **cut}
+                    for grp, pref, cut in saved] if saved else None),
         "mode": mode,
     }
 
@@ -757,8 +769,8 @@ def splice_preview(word: str, plan: SplicePlan):
     from app import phonemes as ph
 
     word = re.sub(r"[^\w]", "", word).lower()
-    groups = [{"phones": [p.upper() for p in gr.phones],
-               "from": gr.source, "clip_id": gr.clip_id} for gr in plan.groups]
+    groups = [{"phones": [p.upper() for p in gr.phones], "from": gr.source,
+               "clip_id": gr.clip_id, "start": gr.start, "end": gr.end} for gr in plan.groups]
     segs = ph.realise_groups(word, groups, _cbw(), g._penalty_for(word), plan.mode)
     if not segs:
         raise HTTPException(
@@ -780,7 +792,8 @@ def splice_preview(word: str, plan: SplicePlan):
                        "phones": (s.get("unit") or {}).get("phones", []),
                        "fell_back": _fell_back(s, (s.get("unit") or {}).get("phones", []),
                                                s.get("spliced_from")),
-                       "duration": round(s["end_time"] - s["start_time"], 3)}
+                       "duration": round(s["end_time"] - s["start_time"], 3),
+                       **_where(s)}
                       for s in segs]}
 
 
@@ -809,8 +822,13 @@ def save_recipe(word: str, plan: SplicePlan):
         raise HTTPException(status_code=400,
                             detail="every group needs a source word")
 
-    body = json.dumps([{"phones": [p.upper() for p in gr.phones],
-                        "from": [gr.source]} for gr in plan.groups])
+    # The clip and its times go in only as a pair, and only both ends: a
+    # recipe cut by hand is played exactly as it was heard in the editor.
+    body = json.dumps([{"phones": [p.upper() for p in gr.phones], "from": [gr.source],
+                        **({"clip_id": gr.clip_id, "start": gr.start, "end": gr.end}
+                           if gr.clip_id and gr.start is not None and gr.end is not None
+                           else {})}
+                       for gr in plan.groups])
     with get_db() as conn:
         conn.execute("INSERT INTO splice_recipes (word, recipe) VALUES (?,?) "
                      "ON CONFLICT(word) DO UPDATE SET recipe=?",
@@ -859,24 +877,34 @@ class Piece(BaseModel):
     phones: list[str]
     source: str
     clip_id: int | None = None
+    start: float | None = None
+    end: float | None = None
 
 
 @router.post("/splice-piece")
-def splice_piece(piece: Piece):
+def splice_piece(piece: Piece, render: bool = True):
     """Render one piece alone, for auditioning a clip.
 
     Choosing between twelve clips of "catch" by rendering the whole word each
     time is not choosing, it is guessing with an extra step.
+
+    render=0 skips the video and only says where the cut falls: the editor
+    draws that on the clip's waveform and plays it from the source itself.
     """
     init_db()
     import app.generate as g
     from app import phonemes as ph
 
     segs = ph.realise_piece([p.upper() for p in piece.phones], piece.source,
-                            _cbw(), piece.clip_id)
+                            _cbw(), piece.clip_id, start=piece.start, end=piece.end)
     if not segs:
         raise HTTPException(status_code=400,
                             detail=f"{piece.source!r} cannot supply those sounds")
+    if not render:
+        s = segs[0]
+        return {"from": s.get("spliced_from"),
+                "fell_back": _fell_back(s, [p.upper() for p in piece.phones], piece.source),
+                **_where(s)}
 
     import uuid
     os.makedirs("output", exist_ok=True)
@@ -890,7 +918,7 @@ def splice_piece(piece: Piece):
             "clip_id": s.get("id"),
             "fell_back": _fell_back(s, [p.upper() for p in piece.phones],
                                     piece.source),
-            "duration": round(s["end_time"] - s["start_time"], 3)}
+            "duration": round(s["end_time"] - s["start_time"], 3), **_where(s)}
 
 @router.get("/clip/{clip_id}/locate")
 def locate_clip(clip_id: int):

@@ -970,7 +970,7 @@ def find_phoneme_splice(
     # editing has just listened to the alternatives in the corpus that is
     # actually loaded.
     recipe = user_recipe(target_word.lower()) or _RECIPES.get(target_word.lower())
-    if recipe and [p for grp, _pref in recipe for p in grp] == target_phones:
+    if recipe and [p for grp, _pref, *_ in recipe for p in grp] == target_phones:
         chosen = _chosen_from_recipe(recipe, index, penalty)
         if chosen is not None:
             return _realise(chosen, target_phones, index, clips_by_word, penalty,
@@ -1137,9 +1137,24 @@ def _chosen_from_recipe(
     Returns None if some group has no source at all."""
     chosen: list[tuple] = []
     t = 0
-    for group, preferred in recipe:
+    for group, preferred, *rest in recipe:
         unit = None
-        for pref in preferred:
+        cut = rest[0] if rest else {}
+        if cut.get("clip_id") and cut.get("start") is not None and preferred:
+            # Cut by hand in the splice editor: that clip, those times. Only
+            # when the clip is still what it was -- the right word, and the
+            # times still inside it -- since a clip id means another clip in
+            # another voice, and an edited clip can have moved.
+            for w2, cph, cl, ps in index.get(group[0], []):
+                if w2 != preferred[0] or cph[ps:ps + len(group)] != group:
+                    continue
+                clip = next((c for c in cl if c.get("id") == cut["clip_id"]), None)
+                if (clip and clip["start_time"] - 0.001 <= cut["start"] < cut["end"]
+                        <= clip["end_time"] + 0.001):
+                    unit = (t, len(group), w2, clip, ps, len(cph),
+                            ("span", cut["start"], cut["end"]))
+                break
+        for pref in ([] if unit else preferred):
             if " " in pref:                       # phrase-context pick
                 words = pref.split()
                 w = words[-1]
@@ -1409,6 +1424,19 @@ def _realise(
             segments.append(seg)
             continue
 
+        if isinstance(flag, tuple) and flag[0] == "span":
+            # Times set by hand against the waveform. Taken exactly: `edited`
+            # tells the encoder not to pad or extend them either.
+            seg = dict(cclip)
+            seg["start_time"], seg["end_time"] = flag[1], flag[2]
+            seg["_src_start"], seg["_src_end"] = cclip["start_time"], cclip["end_time"]
+            seg["subword"] = seg["_cut"] = True
+            seg["edited"] = True
+            seg["spliced_from"] = cword
+            seg["matched"] = matched
+            segments.append(seg)
+            continue
+
         if flag:                                  # no FA trim: verbatim / slice
             seg = dict(cclip)
             sliced = isinstance(flag, tuple)
@@ -1622,7 +1650,10 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
         if g.get("clip_id") and clip.get("id") == g["clip_id"]:
             name = _pin_name(word, clip["id"])
             pools[name] = [clip]
-        chosen.append((at, len(grp), name, clip, pos, len(cph)))
+        span = (("span", float(g["start"]), float(g["end"]))
+                if g.get("start") is not None and g.get("end") is not None
+                and clip.get("id") == g.get("clip_id") else None)
+        chosen.append((at, len(grp), name, clip, pos, len(cph), span))
         at += len(grp)
 
     # An empty index, deliberately -- the same reason realise_piece uses one.
@@ -1656,7 +1687,8 @@ def _load_user_recipes() -> dict[str, list]:
         return out                     # a corpus packed before the table existed
     for r in rows:
         try:
-            out[r["word"]] = [(list(g["phones"]), list(g.get("from") or []))
+            out[r["word"]] = [(list(g["phones"]), list(g.get("from") or []),
+                               {k: g[k] for k in ("clip_id", "start", "end") if k in g})
                               for g in json.loads(r["recipe"])]
         except Exception:
             log.warning("unreadable splice recipe for %r", r["word"])
@@ -1708,7 +1740,9 @@ def _unpin(segments: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None
 def realise_piece(phones: list[str], source: str,
                   clips_by_word: dict[str, list[dict]],
                   clip_id: int | None = None,
-                  penalty: dict[int, int] | None = None) -> list[dict[str, Any]] | None:
+                  penalty: dict[int, int] | None = None,
+                  start: float | None = None,
+                  end: float | None = None) -> list[dict[str, Any]] | None:
     """One piece on its own, so a candidate clip can be heard before it is used.
 
     Deliberately given an empty index: _realise's fallback searches *other*
@@ -1730,7 +1764,8 @@ def realise_piece(phones: list[str], source: str,
     if not pool:
         return None
     clip = pool[0] if clip_id else (_best_clip(pool, src, penalty) or pool[0])
-    return _realise([(0, len(grp), src, clip, pos, len(cph))],
+    span = ("span", start, end) if start is not None and end is not None and clip_id else None
+    return _realise([(0, len(grp), src, clip, pos, len(cph), span)],
                     grp, defaultdict(list), {src: pool}, penalty, 1)
 
 

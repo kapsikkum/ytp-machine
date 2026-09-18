@@ -73,6 +73,11 @@
   .clip.down .id { color: #ff9a9a; }
   .clip button { padding: .05rem .4rem; font-size: .7rem; border-radius: 6px; }
   .clip.playing button { border-color: var(--green); color: var(--green); }
+  .trim { margin-top: .55rem; }
+  .trim canvas { width: 100%; height: 88px; display: block; background: #0b0b0c; border: 1px solid var(--line); border-radius: 8px; }
+  .trim .bar { display: flex; gap: .45rem; align-items: center; margin-top: .35rem; font-size: .72rem; color: var(--dim); flex-wrap: wrap; }
+  .trim .bar .t { flex: 1; }
+  .trim .bar button { padding: .1rem .45rem; font-size: .72rem; }
 </style>
 </head>
 <body>
@@ -111,12 +116,16 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
         that could supply each piece.</div>
       <div id="phones"></div>
       <div class="hint">Click the gaps between sounds to move the cuts. Each
-        piece is then taken from one word, whole or trimmed — and every
-        candidate clip can be heard before you choose it.</div>
+        piece is then taken from one word, whole or trimmed. Every candidate
+        clip can be heard before you choose it, and each piece shows its clip's
+        waveform: drag the yellow edges to move exactly where it is cut, click
+        anywhere on it to hear from there, space to hear the cut again.</div>
     </div>
 
     <div class="panel" id="groups-panel" style="display:none">
       <h2>Pieces</h2>
+      <div class="row meta">waveform loudness <input type="range" id="gain" min="1" max="40" step="0.5" value="2" style="flex:1;max-width:14rem"></div>
+      <audio id="src" preload="metadata" hidden></audio>
       <div id="groups"></div>
       <div class="row">
         <button id="preview" class="primary">▶ hear it</button>
@@ -183,7 +192,7 @@ async function loadCorpora() {
     o.value = c.slug;
     o.textContent = c.error ? `${c.name} (unreadable)` : `${c.name} — ${(c.clips || 0).toLocaleString()} clips`;
     o.disabled = !!c.error;
-    if (c.slug === d.active) o.selected = true;
+    if (c.slug === d.active) { o.selected = true; corpusSlug = c.slug; }
     sel.appendChild(o);
   }
 }
@@ -197,6 +206,7 @@ $('corpus').onchange = async () => {
       body: JSON.stringify({ slug }),
     });
     if (!r.ok) throw new Error('could not switch corpus');
+    corpusSlug = slug;
     // Recipes and clips both belong to the corpus, so everything on the page
     // is now about the wrong one.
     picks = {}; sources = {};
@@ -223,7 +233,8 @@ async function look() {
     // it, not to retype it. Otherwise start from the splicer's own plan, and
     // only then from one piece per sound.
     if (d.recipe) {
-      loadGroups(d.recipe.map(g => ({ phones: g.phones, from: (g.from || [])[0] })));
+      loadGroups(d.recipe.map(g => ({ phones: g.phones, from: (g.from || [])[0],
+                                      clip_id: g.clip_id, start: g.start, end: g.end })));
     } else if (d.plan) {
       loadGroups(d.plan);
     } else {
@@ -279,7 +290,7 @@ function loadGroups(units) {
     const n = (u.phones || []).length;
     if (at > 0) cuts.add(at);
     const key = `${at}:${at + n}`;
-    if (u.from) picks[key] = { source: u.from, clip_id: u.clip_id || null };
+    if (u.from) picks[key] = { source: u.from, clip_id: u.clip_id || null, start: u.start, end: u.end };
     at += n;
   }
   renderAll();
@@ -325,6 +336,7 @@ async function renderAll() {
   const gs = groups();
   const box = $('groups');
   box.innerHTML = '';
+  trims = [];
   for (const g of gs) {
     const key = `${g.a}:${g.b}`;
     const card = document.createElement('div');
@@ -379,15 +391,15 @@ function renderGroup(key, g, card) {
     sel.appendChild(o);
   }
   sel.onchange = () => {
-    pick.source = sel.value; pick.clip_id = null;
+    pick.source = sel.value; pick.clip_id = null; pick.start = pick.end = undefined;
     renderGroup(key, g, card);
   };
   row.appendChild(sel);
 
   const hear = document.createElement('button');
   hear.textContent = '▶';
-  hear.title = 'hear this piece, from whichever clip is chosen';
-  hear.onclick = () => playPiece(g.phones, pick.source, pick.clip_id, hear);
+  hear.title = 'hear this piece as it is cut now';
+  hear.onclick = () => card._trim && card._trim.env && playSpan(card._trim, ...cutOf(card._trim));
   row.appendChild(hear);
   card.appendChild(row);
 
@@ -399,6 +411,7 @@ function renderGroup(key, g, card) {
   const rows = [{ id: null, duration: null }, ...(chosen ? chosen.clip_list : [])];
   for (const c of rows) {
     const el = document.createElement('div');
+    el.dataset.id = c.id ?? '';
     el.className = 'clip' + (pick.clip_id === c.id ? ' on' : '')
                  + (Object.values(c.ratings || {}).some(v => v < 0) ? ' down' : '');
     const id = document.createElement('span');
@@ -410,12 +423,15 @@ function renderGroup(key, g, card) {
     const play = document.createElement('button');
     play.textContent = '▶';
     play.title = 'hear this clip cut to these sounds';
-    play.onclick = ev => {
+    play.onclick = async ev => {
       ev.stopPropagation();          // auditioning is not choosing
-      playPiece(g.phones, pick.source, c.id, play);
+      try {
+        const where = await whereIs(g.phones, pick, c.id);
+        playSpan({ where, env: null }, where.start, where.end);
+      } catch (e) { say(String(e.message), 'err'); }
     };
     el.append(id, dur, play);
-    el.onclick = () => { pick.clip_id = c.id; renderGroup(key, g, card); };
+    el.onclick = () => { pick.clip_id = c.id; pick.start = pick.end = undefined; renderGroup(key, g, card); };
     clips.appendChild(el);
   }
   card.appendChild(clips);
@@ -426,39 +442,232 @@ function renderGroup(key, g, card) {
     + `${s.cuts === 0 ? 'all of it' : 'the ' + g.phones.join('-') + ' out of it'}. `
     + `${s.clips} clip${s.clips === 1 ? '' : 's'} to choose from, longest `
     + `${Math.round(s.longest * 1000)}ms.</div>`);
+  drawTrim(key, g, card);
 }
 
-// One piece on its own. Rendered server-side like everything else, because
-// a piece is a cut out of the middle of a word and the browser has no idea
-// where the sounds are.
-let auditioning = null;
 
-async function playPiece(phones, source, clipId, btn) {
-  if (!source) return;
-  if (auditioning) auditioning.parentElement.classList.remove('playing');
-  auditioning = btn;
-  btn.parentElement.classList.add('playing');
-  say('cutting…');
+// ── the cut, on the waveform ────────────────────────────────────────────────
+// Each piece shows the clip it comes from, with the cut drawn on it as two
+// grips. Dragging them sets exactly what is played -- no alignment moves them
+// afterwards -- and it is heard straight from the source video, from the
+// cut's start to its end, rather than rendered on the server first. Most of
+// what follows is the corpus editor's, copied rather than shared: the grab
+// test in pixels, and the stop on the wall clock, are there because both
+// went wrong once.
+const PAD = 0.15;           // how much either side of the clip is shown
+const _LEAD = 30;           // ms shaved off the stop, to land before the next sound
+const src = $('src');
+let corpusSlug = '';
+let trims = [];             // every piece's waveform, for the gain slider
+let playing = null, lastTrim = null, dragging = null;
+let stopTimer = null, pendingSeek = null, pendingArm = null, playUntil = null;
+
+const fmt = t => t.toFixed(3);
+const cutOf = tr => [tr.pick.start ?? tr.where.start, tr.pick.end ?? tr.where.end];
+
+// Where the splicer would cut this piece now, without rendering anything.
+function whereIs(phones, pick, clipId) {
+  return api('/splice-piece?render=false', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phones, source: pick.source, clip_id: clipId || null,
+                           start: clipId === pick.clip_id ? pick.start ?? null : null,
+                           end: clipId === pick.clip_id ? pick.end ?? null : null }),
+  });
+}
+
+async function drawTrim(key, g, card) {
+  const pick = picks[key];
+  const box = document.createElement('div');
+  box.className = 'trim';
+  box.innerHTML = `<canvas></canvas><div class="bar">
+      <button type="button" data-play title="hear the cut, straight from the video (space)">▶ the raw cut</button>
+      <span class="t">finding the cut…</span>
+      <button type="button" data-auto hidden>back to the automatic cut</button></div>`;
+  card.appendChild(box);
+  const tr = { key, g, box, pick, canvas: box.querySelector('canvas'), where: null, env: null, hover: null };
+  card._trim = tr;
   try {
-    const out = await api('/splice-piece', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phones, source, clip_id: clipId || null }),
-    });
-    const v = $('vid');
-    v.style.display = '';
-    v.src = out.url;
-    v.play();
-    say(`${phones.join('-')} from ${out.from} #${out.clip_id} — `
-      + `${Math.round(out.duration * 1000)}ms`
-      + (out.fell_back ? ' — could not cut it, so this is the whole word' : ''),
-      out.fell_back ? 'err' : 'ok');
+    tr.where = await whereIs(g.phones, pick, pick.clip_id);
+    tr.env = await api(`/source/${tr.where.source_id}/envelope?start=${Math.max(0, tr.where.src_start - PAD)}`
+                       + `&end=${tr.where.src_end + PAD}&buckets=600`);
   } catch (e) {
-    say(String(e.message), 'err');
-  } finally {
-    btn.parentElement.classList.remove('playing');
-    if (auditioning === btn) auditioning = null;
+    box.querySelector('.t').textContent = String(e.message);
+    return;
   }
+  if (!box.isConnected || picks[key] !== pick) return;   // redrawn meanwhile
+  trims.push(tr);
+  wireTrim(tr);
+  drawCut(tr);
 }
+
+function drawCut(tr) {
+  if (!tr.env || !tr.canvas.isConnected) return;
+  const c = tr.canvas, w = c.clientWidth, h = c.clientHeight;
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const env = tr.env, W = tr.where, span = env.end - env.start, peak = env.peak || 1;
+  const x = t => ((t - env.start) / span) * w;
+  const [s, e] = cutOf(tr);
+  // Gain on the drawing, not the data: the quiet edges of a sound are where
+  // the cut goes, and at 1x they are a flat line you cannot aim at.
+  const gain = parseFloat($('gain').value);
+  ctx.fillStyle = 'rgba(255,255,255,0.035)';            // outside the clip: out of reach
+  ctx.fillRect(0, 0, x(W.src_start), h);
+  ctx.fillRect(x(W.src_end), 0, w - x(W.src_end), h);
+  env.values.forEach((v, i) => {
+    const t = env.start + (i / env.values.length) * span;
+    const bh = Math.min(h, (v / peak) * h * gain);
+    ctx.fillStyle = t >= s && t <= e ? '#3b8a5e' : '#1d3b2a';
+    ctx.fillRect((i / env.values.length) * w, (h - bh) / 2, Math.max(1, w / env.values.length), bh);
+  });
+  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1;
+  for (const t of [W.src_start, W.src_end]) {
+    ctx.beginPath(); ctx.moveTo(x(t), 0); ctx.lineTo(x(t), h); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255,229,0,0.10)';
+  ctx.fillRect(x(s), 0, Math.max(1, x(e) - x(s)), h);
+  // Grips, not hairlines: they are meant to be grabbed.
+  ctx.strokeStyle = '#ffe500'; ctx.fillStyle = '#ffe500'; ctx.lineWidth = 2;
+  for (const t of [s, e]) {
+    const px = x(t);
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+    ctx.fillRect(px - 3, 0, 6, 7); ctx.fillRect(px - 3, h - 7, 6, 7);
+  }
+  if (playing === tr && !src.paused && src.currentTime >= env.start && src.currentTime <= env.end) {
+    ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x(src.currentTime), 0); ctx.lineTo(x(src.currentTime), h); ctx.stroke();
+  }
+  if (tr.hover !== null) {
+    const px = x(tr.hover), label = fmt(tr.hover) + 's';
+    ctx.strokeStyle = 'rgba(232,232,232,0.55)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+    ctx.font = '11px Roboto Mono, monospace';
+    const tw = ctx.measureText(label).width + 8, lx = Math.min(w - tw, Math.max(0, px + 4));
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(lx, 2, tw, 15);
+    ctx.fillStyle = '#e8e8e8'; ctx.fillText(label, lx + 4, 13);
+  }
+  const byHand = tr.pick.start != null;
+  tr.box.querySelector('.t').textContent = `${Math.round((e - s) * 1000)} ms, ${fmt(s)} → ${fmt(e)}`
+    + ` from #${W.clip_id}` + (byHand ? ' · cut by hand' : ' · the automatic cut')
+    + (W.fell_back && !byHand ? ' · could not cut it, so this is the whole word' : '');
+  tr.box.querySelector('[data-auto]').hidden = !byHand;
+}
+
+function wireTrim(tr) {
+  const c = tr.canvas;
+  const timeAt = ev => {
+    const r = c.getBoundingClientRect();
+    return tr.env.start + Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * (tr.env.end - tr.env.start);
+  };
+  // Which grip is under the pointer. In pixels, so it stays grabbable however
+  // short the piece.
+  const grabbable = ev => {
+    const r = c.getBoundingClientRect(), x = ev.clientX - r.left;
+    const px = t => ((t - tr.env.start) / (tr.env.end - tr.env.start)) * r.width;
+    const [s, e] = cutOf(tr), ds = Math.abs(px(s) - x), de = Math.abs(px(e) - x);
+    if (Math.min(ds, de) > 7) return null;
+    return ds <= de ? 'start' : 'end';
+  };
+  c.onmousemove = ev => {
+    tr.hover = timeAt(ev);
+    if (dragging && dragging.tr === tr) move(tr, dragging.edge, tr.hover);
+    else c.style.cursor = grabbable(ev) ? 'ew-resize' : 'pointer';
+    drawCut(tr);
+  };
+  c.onmouseleave = () => { tr.hover = null; drawCut(tr); };
+  c.onmousedown = ev => {
+    lastTrim = tr;
+    const edge = grabbable(ev);
+    if (edge) dragging = { tr, edge };
+    else {                                       // a click plays from there to the cut's end
+      const t = timeAt(ev), [, e] = cutOf(tr);
+      playSpan(tr, t, t < e ? e : t + 0.4);
+    }
+    ev.preventDefault();
+  };
+  tr.box.querySelector('[data-play]').onclick = () => playSpan(tr, ...cutOf(tr));
+  tr.box.querySelector('[data-auto]').onclick = () => {
+    tr.pick.start = tr.pick.end = undefined;
+    drawCut(tr);
+  };
+}
+
+function move(tr, edge, t) {
+  const W = tr.where;
+  let [s, e] = cutOf(tr);
+  if (edge === 'start') s = Math.max(W.src_start, Math.min(t, e - 0.02));
+  else e = Math.min(W.src_end, Math.max(t, s + 0.02));
+  tr.pick.start = +s.toFixed(4); tr.pick.end = +e.toFixed(4);
+  // A cut by hand is a cut of one clip, so that clip is now the chosen one.
+  tr.pick.clip_id = W.clip_id;
+  tr.box.parentElement.querySelectorAll('.clip').forEach(el =>
+    el.classList.toggle('on', Number(el.dataset.id) === W.clip_id));
+}
+window.addEventListener('mouseup', () => { if (dragging) { drawCut(dragging.tr); dragging = null; } });
+$('gain').oninput = () => trims.forEach(drawCut);
+
+function cancelPlayback() {
+  clearTimeout(stopTimer); stopTimer = null; playUntil = null;
+  if (pendingSeek) { src.removeEventListener('seeked', pendingSeek); pendingSeek = null; }
+  if (pendingArm) { src.removeEventListener('playing', pendingArm); pendingArm = null; }
+  if (!src.paused) src.pause();
+}
+
+// Stopped on the wall clock rather than on currentTime, which moves a frame
+// at a time and overshoots by enough to hear on a 100ms piece -- and re-armed
+// on what is really left if the video stalled, which over a network it does.
+function playSpan(tr, s, e) {
+  if (!(e > s)) return;
+  cancelPlayback();
+  playing = tr;
+  playUntil = e;
+  const stop = () => {
+    const left = (e - src.currentTime) * 1000;
+    if (!src.paused && left > _LEAD + 10) {
+      stopTimer = setTimeout(stop, Math.max(20, left - _LEAD));
+      return;
+    }
+    src.pause(); playUntil = null; drawCut(tr);
+  };
+  const arm = () => {
+    pendingArm = null;
+    clearTimeout(stopTimer);
+    stopTimer = setTimeout(stop, Math.max(20, (e - src.currentTime) * 1000 - _LEAD));
+  };
+  const begin = () => {
+    pendingSeek = null;
+    src.play().catch(() => {});
+    pendingArm = arm;
+    src.addEventListener('playing', arm, { once: true });
+    requestAnimationFrame(tick);
+  };
+  const seek = () => {
+    if (Math.abs(src.currentTime - s) > 0.004) {
+      pendingSeek = begin;
+      src.addEventListener('seeked', begin, { once: true });
+      src.currentTime = s;
+    } else begin();
+  };
+  const url = `/api/edit/source/${tr.where.source_id}/video?c=${encodeURIComponent(corpusSlug)}`;
+  if (src.dataset.url !== url) {
+    // Waits for the metadata before seeking; load() asks for it outright
+    // rather than trusting the browser to fetch it for a hidden element.
+    src.dataset.url = url; src.src = url;
+    src.addEventListener('loadedmetadata', seek, { once: true });
+    src.load();
+  } else seek();
+}
+
+function tick() {
+  if (playUntil !== null && src.currentTime >= playUntil) { src.pause(); playUntil = null; }
+  if (playing) drawCut(playing);
+  if (!src.paused) requestAnimationFrame(tick);
+}
+
+document.addEventListener('keydown', ev => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(ev.target.tagName)) return;
+  if (ev.code === 'Space' && lastTrim && lastTrim.env) { ev.preventDefault(); playSpan(lastTrim, ...cutOf(lastTrim)); }
+});
 
 // ── hearing it, and writing it down ────────────────────────────────────────
 function plan() {
@@ -466,7 +675,8 @@ function plan() {
     mode: $('mode').value,
     groups: groups().map(g => {
       const p = picks[`${g.a}:${g.b}`] || {};
-      return { phones: g.phones, source: p.source || null, clip_id: p.clip_id || null };
+      return { phones: g.phones, source: p.source || null, clip_id: p.clip_id || null,
+               start: p.start ?? null, end: p.end ?? null };
     }),
   };
 }
