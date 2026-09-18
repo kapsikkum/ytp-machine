@@ -1333,12 +1333,33 @@
     lastText = h.text;
     show(h, true);
   });
-  video.addEventListener('error', () => {
+  // An error is not the same as the video being gone. A connection dropped
+  // mid-play -- the server restarting, a network blip -- raised it too, and
+  // used to hide the video and strike it from the history while the file sat
+  // there fine. Ask the server first: only a 404 means it was cleared away.
+  let retries = 0, retryFor = null;
+  video.addEventListener('error', async () => {
     if (!current) return;
-    store.set('ytp-history', store.get('ytp-history', []).filter(h => h.url !== current.url));
-    setStatus('That video is no longer on the server.', true);
-    $('result').hidden = true; current = null;
-    drawHistory();
+    const entry = current, at = video.currentTime, wasPlaying = !video.paused || at > 0;
+    const head = await fetch(entry.url, { method: 'HEAD', cache: 'no-store' }).catch(() => null);
+    if (current !== entry) return;                       // moved on meanwhile
+    if (head && head.status === 404) {
+      store.set('ytp-history', store.get('ytp-history', []).filter(h => h.url !== entry.url));
+      setStatus('That video is no longer on the server.', true);
+      $('result').hidden = true; current = null;
+      drawHistory();
+      return;
+    }
+    if (retryFor !== entry.url) { retryFor = entry.url; retries = 0; }
+    if (++retries > 3) return setStatus('The video keeps dropping out. Try again in a moment.', true);
+    setTimeout(() => {
+      if (current !== entry) return;
+      video.src = `${entry.url}?r=${Date.now()}`;       // a fresh request, not the dead one
+      video.addEventListener('loadedmetadata', () => {
+        video.currentTime = at;
+        if (wasPlaying) video.play().catch(() => {});
+      }, { once: true });
+    }, 1000 * retries);
   });
 
   // ── Start ─────────────────────────────────────────────────────────────────
