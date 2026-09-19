@@ -116,10 +116,10 @@ def _align(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     _PAD = 0.20
     pad = min(_PAD, clip["start_time"])
     from app.database import resolve_path
-    from app.ytpmv.pitch import decode_audio
     start = clip["start_time"] - pad
     dur   = (clip["end_time"] - clip["start_time"]) + pad + _PAD
     try:
+        from app.ytpmv.pitch import decode_audio
         # A clip from the generator's pool is already absolute, checked against
         # its own corpus -- which for a borrowed voice is not the active one.
         src = clip["source_file"]

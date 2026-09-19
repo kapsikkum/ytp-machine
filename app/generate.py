@@ -548,8 +548,8 @@ def _region_rms(source_file: str, start: float, duration: float) -> float:
     key = (source_file, round(start, 2), round(duration, 2))
     if key in _idle_rms_cache:
         return _idle_rms_cache[key]
-    from app.ytpmv.pitch import decode_audio
     try:
+        from app.ytpmv.pitch import decode_audio
         x = decode_audio(source_file, start, duration, 16000, "s16le").astype("float64") * 32768.0
         rms = float((x ** 2).mean() ** 0.5) if len(x) else 0.0
     except Exception:
@@ -1463,10 +1463,10 @@ def _trim(stderr: str, limit: int = 2000) -> str:
 @lru_cache(maxsize=20_000)
 def _sound_ends(source_file: str, start: float, stored_end: float) -> float:
     """Where a word's audio actually stops, at most _SONORANT_MAX past the end."""
-    from app.ytpmv.pitch import loudness
     limit = stored_end + _SONORANT_MAX
     win = 160
     try:
+        from app.ytpmv.pitch import loudness    # in here: numpy missing is audio unread
         env = loudness(source_file, start, limit - start, win).tolist()
     except Exception:
         return stored_end + _SONORANT_TAIL

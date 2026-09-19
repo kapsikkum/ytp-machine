@@ -1357,13 +1357,12 @@ def _audible_end(source_file: str, start: float, end: float) -> float:
     Memoised: the same handful of clips supply most splices, and the answer
     depends only on the audio, which does not change under us.
     """
-    from app.ytpmv.pitch import loudness
-
     dur = end - start
     if dur <= _TRIM_MIN:
         return end
     win = 160                                   # 10ms
     try:
+        from app.ytpmv.pitch import loudness    # in here: numpy missing is audio unread
         env = loudness(source_file, start, dur, win).tolist()
     except Exception:
         return end
