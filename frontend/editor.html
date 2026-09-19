@@ -6,6 +6,7 @@
 <title>corpus editor · ytp machine</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/theme.js"></script>
+<script src="/common.js"></script>
 <style>
   body { font-size: 13px; }
   .page { width: min(1400px, 100% - 2rem); margin: 1rem auto 3rem; }
@@ -246,7 +247,6 @@ non-verbal sound. Whisper cannot hear these at all.">add noise</button>
 </div>
 
 <script>
-const $ = id => document.getElementById(id);
 const vid = $('vid'), wave = $('wave'), ctx = wave.getContext('2d');
 let sourceId = null, clips = [], sel = null, env = null, playUntil = null;
 let hoverT = null, dragging = null, newSpan = null, stopTimer = null;
@@ -582,9 +582,9 @@ function select(c) {
   const prev = i > 0 ? clips[i - 1] : null, next = clips[i + 1] || null;
   $('meta').innerHTML =
     `length <b>${Math.round((c.end_time - c.start_time) * 1000)}ms</b><br>` +
-    (prev ? `after <b>${prev.word}</b>, gap <b>${Math.round((c.start_time - prev.end_time) * 1000)}ms</b><br>` : '') +
-    (next ? `before <b>${next.word}</b>, gap <b>${Math.round((next.start_time - c.end_time) * 1000)}ms</b><br>` : '') +
-    (c.flags.length ? `<span style="color:#ffbe4d">${c.flags.join(', ')}</span>` : '');
+    (prev ? `after <b>${esc(prev.word)}</b>, gap <b>${Math.round((c.start_time - prev.end_time) * 1000)}ms</b><br>` : '') +
+    (next ? `before <b>${esc(next.word)}</b>, gap <b>${Math.round((next.start_time - c.end_time) * 1000)}ms</b><br>` : '') +
+    (c.flags.length ? `<span style="color:#ffbe4d">${esc(c.flags.join(', '))}</span>` : '');
   markDirty();
   $('r-word').value = '';
   renderRatings();

@@ -6,6 +6,7 @@
   <title>YTP Machine</title>
   <link rel="stylesheet" href="/theme.css">
 <script src="/theme.js"></script>
+<script src="/common.js"></script>
   <style>
     main {
       width: min(760px, 100% - 2rem);
@@ -384,13 +385,7 @@
 
 <script>
 (() => {
-  const $ = (id) => document.getElementById(id);
   const textInput = $('text-input'), submitBtn = $('submit-btn'), statusEl = $('status');
-  const store = {
-    get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-  };
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   // Every response through here, so a proxy's HTML error page is reported as
   // what it is rather than as a JSON parse error.

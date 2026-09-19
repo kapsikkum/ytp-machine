@@ -6,6 +6,7 @@
 <title>splice editor · ytp machine</title>
 <link rel="stylesheet" href="/theme.css">
 <script src="/theme.js"></script>
+<script src="/common.js"></script>
 <style>
   body { font-size: 13px; }
   .page { width: min(1240px, 100% - 2rem); margin: 1.25rem auto 3rem; }
@@ -185,8 +186,6 @@ allows near-enough phonemes; desperate will skip a sound it cannot find">
 </div>
 
 <script>
-const $ = id => document.getElementById(id);
-const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let phones = [];            // the sounds the target word needs
 let cuts = new Set();       // indices where one piece ends and the next starts
 let picks = {};             // group key -> {source, clip_id}

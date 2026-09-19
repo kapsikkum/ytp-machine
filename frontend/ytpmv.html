@@ -6,6 +6,7 @@
   <title>YTPMV — YTP Machine</title>
   <link rel="stylesheet" href="/theme.css">
 <script src="/theme.js"></script>
+<script src="/common.js"></script>
   <style>
     .card { width: calc(100% - 2rem); max-width: 1000px; margin: 0 auto 1rem; padding: 1.25rem; }
     body > .card:first-of-type { margin-top: 1.25rem; }
@@ -291,7 +292,6 @@
 
 <script>
 (() => {
-  const $ = (id) => document.getElementById(id);
   const ROLE_ICON = { lead: '🎤', rhythm: '🎸', chords: '🎹', bass: '🔊',
     'drums:kick': '🥁', 'drums:snare': '🥁', 'drums:hats': '🥁', 'drums:toms': '🥁',
     'drums:cymbals': '🥁', 'drums:perc': '🥁' };
@@ -308,10 +308,6 @@
   let song = null;          // the analysis
   let parts = {};           // id -> settings being edited
   let info = {};            // id -> {sample describe}
-  const store = {
-    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-  };
 
   async function api(url, opts = {}) {
     const r = await fetch(url, opts);
@@ -326,7 +322,6 @@
   const post = (url, data) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                          body: JSON.stringify(data) });
 
-  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   // ── voice + vocabulary ───────────────────────────────────────────────────
   const voiceSel = $('voice-select');
