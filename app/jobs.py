@@ -39,6 +39,14 @@ _KEEP = 50
 # so a quiet day does not leave stale results lying around indefinitely.
 _TTL_SECONDS = 30 * 60
 
+# How many may wait at once. One worker at minutes a job: past this the last
+# in line would wait an hour, and a script posting in a loop fills memory.
+MAX_QUEUED = 20
+
+
+class QueueFull(Exception):
+    """Too many jobs waiting already."""
+
 
 @dataclass
 class Job:
@@ -57,6 +65,7 @@ class Job:
     created: float = field(default_factory=time.time)
     started: float | None = None
     finished: float | None = None
+    ended: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         out = {
@@ -164,6 +173,7 @@ def _run(job: Job) -> None:
         log.exception("JOB %s crashed", job.id)
     finally:
         job.finished = time.time()
+        job.ended.set()
 
 
 def _loop() -> None:
@@ -193,25 +203,24 @@ def _ensure_worker() -> None:
         _worker.start()
 
 
-def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None) -> Job:
+def _enqueue(job: Job) -> Job:
     _ensure_worker()
-    job = Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
-              params=dict(options or {}))
     with _lock:
+        if sum(j.status == "queued" for j in _jobs.values()) >= MAX_QUEUED:
+            raise QueueFull
         _jobs[job.id] = job
         _order.append(job.id)
     _queue.put(job.id)
     return job
+
+
+def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None) -> Job:
+    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
+                        params=dict(options or {})))
 
 
 def submit_ytpmv(params: dict[str, Any], label: str = "ytpmv") -> Job:
-    _ensure_worker()
-    job = Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv", params=params)
-    with _lock:
-        _jobs[job.id] = job
-        _order.append(job.id)
-    _queue.put(job.id)
-    return job
+    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv", params=params))
 
 
 def get(job_id: str) -> Job | None:

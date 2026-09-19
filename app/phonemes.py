@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import random
+import threading
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any
@@ -650,12 +651,22 @@ def try_pronunciation(word: str, value: str) -> tuple[list[str] | None, str, boo
     return out, " ".join(out), True
 
 
+# One writer at a time: each save reads the file, changes a line and writes
+# it back through one shared .tmp, so two at once lost one of them.
+_pron_lock = threading.Lock()
+
+
 def set_pronunciation(word: str, value: str | None, scope: str = "all") -> None:
     """Write *word*'s line into a pronunciations.csv, or take it out (None).
 
     Only that word's line changes: the comments and every other entry stay as
     they were written, since the file is meant to be edited by hand too.
     """
+    with _pron_lock:
+        _write_pronunciation(word, value, scope)
+
+
+def _write_pronunciation(word: str, value: str | None, scope: str) -> None:
     import csv
     path = user_dict_path() if scope == "voice" else global_dict_path()
     lines = []
@@ -1346,40 +1357,16 @@ def _audible_end(source_file: str, start: float, end: float) -> float:
     Memoised: the same handful of clips supply most splices, and the answer
     depends only on the audio, which does not change under us.
     """
-    import array
-    import math
-    import os
-    import subprocess
-    import tempfile
-    import wave
+    from app.ytpmv.pitch import loudness
 
     dur = end - start
     if dur <= _TRIM_MIN:
         return end
-    tmp = os.path.join(tempfile.gettempdir(), f"_tr_{os.getpid()}.wav")
+    win = 160                                   # 10ms
     try:
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
-                        "-t", f"{dur:.4f}", "-i", source_file,
-                        "-ac", "1", "-ar", "16000", tmp], capture_output=True)
-        with wave.open(tmp, "rb") as w:
-            raw = w.readframes(w.getnframes())
+        env = loudness(source_file, start, dur, win).tolist()
     except Exception:
         return end
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    if not raw:
-        return end
-    samples = array.array("h")
-    samples.frombytes(raw[: len(raw) // 2 * 2])
-    if not samples:
-        return end
-
-    win = 160                                   # 10ms
-    env = [math.sqrt(sum(v * v for v in samples[k:k + win]) / win)
-           for k in range(0, len(samples) - win, win)]
     if not env:
         return end
     peak = max(env)

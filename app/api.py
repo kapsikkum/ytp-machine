@@ -5,17 +5,33 @@ import time
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from app import jobs
 from app.database import (max_units as _max_units_setting,
-                          PROJECT_ROOT, SPLICE_MODES, active, get_db, init_db,
+                          SPLICE_MODES, active, get_db, init_db,
                           list_corpora, set_active, set_setting, splice_mode)
-from app.generate import generate_video
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+# Longest sentence accepted. Far past anything anyone types -- a whole page of
+# text is a quarter of this -- and short of a paste that ties the one worker
+# up for hours.
+MAX_TEXT = 4000
+
+# Largest corpus bundle accepted. The shipped corpus packs to ~110 MB.
+MAX_BUNDLE_BYTES = 4 << 30
+
+
+def _queued(submit):
+    """Put a job in the queue, or say plainly that the queue is full."""
+    try:
+        return submit()
+    except jobs.QueueFull:
+        raise HTTPException(status_code=503, detail={
+            "message": f"{jobs.MAX_QUEUED} videos are already waiting. Try again in a few minutes."})
 
 
 class GenerateRequest(BaseModel):
@@ -48,12 +64,12 @@ class CorpusRequest(BaseModel):
 
 class RateRequest(BaseModel):
     word: str
-    clips: list[int]
+    clips: list[int] = Field(max_length=256)
     rating: int = -1   # < 0 down-vote, > 0 up-vote, 0 clears the vote
 
 
 class BoundaryReport(BaseModel):
-    clips: list[int]
+    clips: list[int] = Field(max_length=256)
     kind: str
 
 
@@ -94,31 +110,22 @@ def generate(req: GenerateRequest, wait: bool = False):
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text must not be empty")
+    if len(text) > MAX_TEXT:
+        raise HTTPException(status_code=400, detail={
+            "message": f"That is {len(text):,} characters; {MAX_TEXT:,} is the most one video takes."})
+
+    job = _queued(lambda: jobs.submit(text, subtitles=req.subtitles, options=req.options))
+    log.info("QUEUE  %s  %r%s", job.id, text[:80], "  (waiting)" if wait else "")
 
     if wait:
-        log.info("GENERATE (sync)  %r", text)
-        t0 = time.perf_counter()
-        try:
-            result = generate_video(text, subtitles=req.subtitles, options=req.options)
-        except RuntimeError as exc:
-            detail = str(exc)
-            crowded = "temporarily unavailable" in detail or "Too many open files" in detail
-            log.error("GENERATE failed  %r  %s", text, detail[-500:])
-            raise HTTPException(
-                status_code=503 if crowded else 500,
-                detail={
-                    "message": (
-                        "Too much at once — that resolved to more clips than the "
-                        "video encoder can open in one go. Try a shorter sentence."
-                        if crowded else
-                        "The video encoder failed on this input."
-                    ),
-                },
-            ) from exc
-        elapsed = time.perf_counter() - t0
-        log.info("DONE  %.2fs  found=%d  spliced=%d  missing=%d  url=%s",
-                 elapsed, len(result["found"]), len(result["spliced"]),
-                 len(result["missing"]), result.get("video_url"))
+        # Through the queue like everything else. Generating right here ran a
+        # second video beside the worker's -- the one-at-a-time rule the queue
+        # exists for, and the seed and voice both being process-wide.
+        job.ended.wait()
+        if job.status == "error":
+            raise HTTPException(status_code=503 if job.error_kind == "crowded" else 500,
+                                detail={"message": job.error})
+        result = job.result
         if not result["found"] and not result["spliced"]:
             raise HTTPException(status_code=404, detail={
                 "message": "No clips found or spliced for any word in the input.",
@@ -126,8 +133,6 @@ def generate(req: GenerateRequest, wait: bool = False):
             })
         return result
 
-    job = jobs.submit(text, subtitles=req.subtitles, options=req.options)
-    log.info("QUEUE  %s  %r", job.id, text[:80])
     body = job.as_dict()
     body["position"] = jobs.position(job.id)
     return JSONResponse(status_code=202, content=body)
@@ -231,14 +236,8 @@ def suggest(context: str = "", prefix: str = "", limit: int = 10):
 
 
 def _corpus_totals() -> dict:
-    with get_db() as conn:
-        return {
-            "clips": conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0],
-            "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
-            "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
-            "splice_mode": splice_mode(),
-            "max_units": _max_units_setting(),
-        }
+    return {**_totals_of(active()), "splice_mode": splice_mode(),
+            "max_units": _max_units_setting()}
 
 
 def _totals_of(corpus: dict) -> dict:
@@ -294,13 +293,8 @@ def corpora():
 
 
 def _corpus_pack():
-    """scripts/corpus.py, reached the way editor.py reaches align_phones --
-    it lives outside app/ because it is a standalone CLI too."""
-    import sys
-    scripts_dir = os.path.join(PROJECT_ROOT, "scripts")
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
-    import corpus as corpus_pack
+    """scripts/corpus.py -- it lives outside app/ because it is a standalone CLI too."""
+    from scripts import corpus as corpus_pack
     return corpus_pack
 
 
@@ -325,7 +319,8 @@ def export_corpus(slug: str | None = None):
     except (Exception, SystemExit) as exc:                      # noqa: BLE001
         # SystemExit too: _corpus_root() raises it for a corpus that vanished
         # between the check above and here, and that must not kill the worker.
-        raise HTTPException(status_code=500, detail=f"pack failed: {exc}") from exc
+        log.exception("EXPORT  %s failed", target)
+        raise HTTPException(status_code=500, detail="could not pack that corpus") from exc
 
     log.info("EXPORT  %s -> %s (%s)", target, out,
              f"{os.path.getsize(out) / 1e6:.1f} MB")
@@ -357,6 +352,9 @@ async def import_corpus(name: str = Form(...), bundle: UploadFile = File(...),
             while chunk := await bundle.read(1 << 20):
                 fh.write(chunk)
                 size += len(chunk)
+                if size > MAX_BUNDLE_BYTES:
+                    raise HTTPException(status_code=413, detail=(
+                        f"that bundle is over {MAX_BUNDLE_BYTES >> 30} GB"))
 
         try:
             manifest = _corpus_pack().install_bundle(tmp, slug_name, force)
@@ -374,6 +372,12 @@ async def import_corpus(name: str = Form(...), bundle: UploadFile = File(...),
         if os.path.exists(tmp):
             os.remove(tmp)
 
+    # Imported over a corpus already in use, or already lent as a voice: what
+    # was cached from the old files is wrong now.
+    from app.database import forget_ready
+    from app.generate import invalidate_cache
+    forget_ready()
+    invalidate_cache()
     log.info("IMPORT  %s -> %s (%s uploaded)", fname, manifest["slug"],
              f"{size / 1e6:.1f} MB")
     return {"status": "ok", **manifest}
@@ -452,20 +456,16 @@ def switch_corpus(req: CorpusRequest):
 
 @router.get("/stats")
 def stats():
+    current = active()
+    totals = _totals_of(current)
     with get_db() as conn:
-        total_clips = conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0]
-        unique_words = conn.execute(
-            "SELECT COUNT(DISTINCT word) FROM word_clips"
-        ).fetchone()[0]
-        sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
         sample = conn.execute(
             "SELECT DISTINCT word FROM word_clips ORDER BY RANDOM() LIMIT 30"
         ).fetchall()
-    current = active()
     return {
-        "total_clips": total_clips,
-        "unique_words": unique_words,
-        "sources": sources,
+        "total_clips": totals["clips"],
+        "unique_words": totals["words"],
+        "sources": totals["sources"],
         "sample_words": [r[0] for r in sample],
         "corpus": current["slug"],
         "corpus_name": current["name"],
@@ -555,9 +555,9 @@ def ytpmv_render(req: YtpmvRenderRequest):
     """Queue a render; poll /api/jobs/{id} as for a sentence."""
     from app.ytpmv import render
     song = _ytpmv_call(render.load_song, req.midi_id)
-    job = jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": req.parts,
+    job = _queued(lambda: jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": req.parts,
                              "options": req.options},
-                            label=song.title or f"midi {req.midi_id}")
+                            label=song.title or f"midi {req.midi_id}"))
     log.info("QUEUE  %s  ytpmv %s", job.id, req.midi_id)
     body = job.as_dict()
     body["position"] = jobs.position(job.id)

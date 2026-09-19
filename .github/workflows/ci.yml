@@ -165,6 +165,14 @@ jobs:
         # and files, while the active corpus never moves.
         run: python tests/test_voices.py
 
+      - name: Hardening
+        # A corpus pointing outside itself, the cache dropped mid-sentence,
+        # a full queue, and writes from another site. The HTTP half runs the
+        # real app, so it needs what serving it needs.
+        run: |
+          pip install --quiet httpx python-multipart
+          python tests/test_hardening.py
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

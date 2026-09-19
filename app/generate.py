@@ -4,10 +4,11 @@ import re
 import uuid
 import random
 import subprocess
+import threading
 from functools import lru_cache
 from typing import Any
 
-from app.database import get_db, resolve_path
+from app.database import clean_word, get_db
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +189,12 @@ _POOL_KEYS = ("clips_by_word", "ordered_by_source", "word_positions", "source_qu
 # The voice whose clips are meant to be installed: None for the active corpus.
 _borrowing: str | None = None
 
+# Bumped by invalidate_cache, so a pool built from data that changed while it
+# was being read is used once and not kept.
+_epoch = 0
+_pools_lock = threading.Lock()               # the epoch check and the store, as one
+_installed: dict[str, Any] = {}              # the pool the globals above belong to
+
 
 def _ensure_cache() -> None:
     """The clips of the voice in use, installed. See _pool for what is in them.
@@ -216,19 +223,26 @@ def _use_voice(slug: str | None) -> dict[str, Any]:
     or an explicit pool argument if two generations ever run at once.
     """
     global _borrowing
-    from app.database import active, list_corpora
     _borrowing = slug
+    corpus = _corpus_for(slug)
+    if _clips_by_word_cache is None or corpus["slug"] != _cache_corpus:
+        _install(_pool(corpus))
+    return _installed
+
+
+def _corpus_for(slug: str | None) -> dict:
+    """The corpus called *slug*; the active one for None or a name not installed."""
+    from app.database import active, list_corpora
     corpus = active()
     if slug and slug != corpus["slug"]:
         corpus = next((c for c in list_corpora() if c["slug"] == slug), corpus)
-    if _clips_by_word_cache is None or corpus["slug"] != _cache_corpus:
-        _install(_pool(corpus))
-    return _POOLS[corpus["slug"]]
+    return corpus
 
 
 def _install(pool: dict[str, Any]) -> None:
     global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
-    global _noise_by_word, _all_noises, _splice_scores, _boundary_reports, _cache_corpus
+    global _noise_by_word, _all_noises, _splice_scores, _boundary_reports, _cache_corpus, _installed
+    _installed = pool
     (_clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips,
      _noise_by_word, _all_noises, _splice_scores, _boundary_reports) = (pool[k] for k in _POOL_KEYS)
     _cache_corpus = pool["slug"]
@@ -263,14 +277,18 @@ def _pool(corpus: dict) -> dict[str, Any]:
     """
     import sqlite3
     from contextlib import closing
-    from app.database import active, normalise_sep
+    from app.database import active, inside
     slug = corpus["slug"]
     if slug in _POOLS:
         return _POOLS[slug]
+    epoch = _epoch
 
-    def here(p: str) -> str:
-        p = normalise_sep(p)
-        return p if os.path.isabs(p) else os.path.join(corpus["dir"], p)
+    def here(p: str) -> str | None:
+        try:
+            return inside(corpus["dir"], p)
+        except ValueError:
+            log.warning("%s: ignoring a clip whose video is outside the corpus: %r", slug, p)
+            return None
 
     if slug == active()["slug"]:
         opened = get_db()                    # creates the database if it is new
@@ -318,6 +336,8 @@ def _pool(corpus: dict) -> dict[str, Any]:
     for r in rows:
         clip = dict(r)
         clip["source_file"] = here(clip["source_file"])   # → absolute
+        if clip["source_file"] is None:
+            continue
         sid  = clip["source_id"]
         dur  = clip["end_time"] - clip["start_time"]
         src_total[sid] = src_total.get(sid, 0) + 1
@@ -362,6 +382,8 @@ def _pool(corpus: dict) -> dict[str, Any]:
     for r in noise_rows:
         c = dict(r)
         c["source_file"] = here(c["source_file"])
+        if c["source_file"] is None:
+            continue
         c["prev_end"]   = c["start_time"]
         c["next_start"] = c["end_time"]
         nbw.setdefault(c["word"], []).append(c)
@@ -376,7 +398,9 @@ def _pool(corpus: dict) -> dict[str, Any]:
         "boundary_reports": {int(r["clip_id"]): int(r["n"]) for r in report_rows},
         "source_quality": {s: src_good.get(s, 0) / src_total[s] for s in src_total},
     }
-    _POOLS[slug] = pool
+    with _pools_lock:
+        if epoch == _epoch:                  # not invalidated while it was being built
+            _POOLS[slug] = pool
     return pool
 
 
@@ -386,18 +410,19 @@ def _get_clips_by_word() -> dict[str, list[dict[str, Any]]]:
 
 
 def invalidate_cache(alignments: bool = True) -> None:
-    global _clips_by_word_cache, _ordered_by_source, _word_positions, _source_quality, _idle_clips
-    global _noise_by_word, _all_noises, _splice_scores, _cache_corpus
-    _cache_corpus        = None
-    _clips_by_word_cache = None
-    _ordered_by_source   = None
-    _word_positions      = None
-    _source_quality      = {}
-    _idle_clips          = []
-    _noise_by_word       = {}
-    _all_noises          = []
-    _splice_scores       = None
-    _POOLS.clear()
+    """Rebuild every pool on its next use.
+
+    The installed one is left where it is, only marked stale. This runs from
+    request threads -- a clip edited, a recipe saved -- while a generation is
+    part-way through a sentence on the worker, and setting the globals to None
+    under it crashed that generation with a TypeError. It picks up the new
+    pool the next time it asks for one.
+    """
+    global _cache_corpus, _epoch
+    with _pools_lock:
+        _epoch += 1
+        _cache_corpus = None
+        _POOLS.clear()
     # The CSV is per-corpus, so switching corpus or reloading must drop it too.
     try:
         from app.phonemes import invalidate_user_dict
@@ -523,28 +548,12 @@ def _region_rms(source_file: str, start: float, duration: float) -> float:
     key = (source_file, round(start, 2), round(duration, 2))
     if key in _idle_rms_cache:
         return _idle_rms_cache[key]
-    import subprocess as _sp, tempfile as _tf, wave as _wave, os as _os
-    tmp = _os.path.join(_tf.gettempdir(), f"_idle_{_os.getpid()}.wav")
-    rms = 0.0
+    from app.ytpmv.pitch import decode_audio
     try:
-        _sp.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.3f}",
-                 "-t", f"{duration:.3f}", "-i", source_file,
-                 "-ac", "1", "-ar", "16000", tmp], capture_output=True)
-        with _wave.open(tmp, "rb") as w:
-            raw = w.readframes(w.getnframes())
-        if raw:
-            import array, math
-            samples = array.array("h")
-            samples.frombytes(raw[: len(raw) // 2 * 2])
-            if samples:
-                rms = math.sqrt(sum(v * v for v in samples) / len(samples))
+        x = decode_audio(source_file, start, duration, 16000, "s16le").astype("float64") * 32768.0
+        rms = float((x ** 2).mean() ** 0.5) if len(x) else 0.0
     except Exception:
         rms = 0.0                      # unreadable: treat as quiet, not as loud
-    finally:
-        try:
-            _os.remove(tmp)
-        except OSError:
-            pass
     _idle_rms_cache[key] = rms
     return rms
 
@@ -816,7 +825,7 @@ def _expand_token(token: str) -> list[str]:
     # "80s", and expanding those to "v eight" and "eighty ..." walked away from
     # real recordings of the exact thing being asked for. Expansion is the
     # fallback for tokens nobody has said, not the first move.
-    raw = re.sub(r"[^\w]", "", token).lower()
+    raw = clean_word(token)
     if _known_word(raw):
         return [raw]
     # A rate: km/h, l/100km. Both halves are units and the slash is the word
@@ -1017,7 +1026,10 @@ def parse_fx(body: str) -> dict[str, Any]:
         if key == "spell":
             fx["spell"] = True
         elif key in GLITCH and not val:
-            fx.setdefault("glitch", []).append(key)
+            # Each once: {shake,shake,...} a few hundred times was one filter
+            # graph with a few hundred rotates in it.
+            if key not in fx.setdefault("glitch", []):
+                fx["glitch"].append(key)
         elif key == "boom" and not val:
             fx["boom"] = True
         elif key == "vocode" and not val:
@@ -1061,31 +1073,28 @@ def effective_fx(fx: dict[str, Any]) -> dict[str, Any]:
 
 
 def clip_choices(word: str, limit: int = 60, voice: str | None = None) -> list[dict[str, Any]]:
-    """Every recording of *word* in *voice*, most likely to be picked first, described."""
-    try:
-        return _clip_choices(word, limit, _use_voice(voice)["titles"])
-    finally:
-        _use_voice(None)
+    """Every recording of *word* in *voice*, most likely to be picked first, described.
 
-
-def _clip_choices(word: str, limit: int, titles: dict[int, str]) -> list[dict[str, Any]]:
-    word = re.sub(r"[^\w']", "", word).lower()
-    rows = (_clips_by_word_cache or {}).get(word) or []
-    if not rows:
-        return []
-    scores = _splice_scores or {}
+    Read from the voice's pool without installing it: this answers a request
+    thread, and installing swapped the voice under a sentence being generated.
+    """
+    pool = _pool(_corpus_for(voice))
+    word = clean_word(word, apostrophe=True)
+    rows = pool["clips_by_word"].get(word) or []
+    titles, scores = pool["titles"], pool["splice_scores"]
+    quality, reports = pool["source_quality"], pool["boundary_reports"]
     out = []
     for r in rows:
         cid = int(r["id"])
         score = scores.get((word, cid), 0)
-        weight = (_source_quality.get(r["source_id"], 1.0) ** 3 * _edge_weight(r)
-                  * _vote_weight(score) * 0.2 ** _boundary_reports.get(cid, 0))
+        weight = (quality.get(r["source_id"], 1.0) ** 3 * _edge_weight(r)
+                  * _vote_weight(score) * 0.2 ** reports.get(cid, 0))
         out.append({"id": cid, "source_id": r["source_id"],
                     "source": titles.get(r["source_id"]) or f"source {r['source_id']}",
                     "start": round(r["start_time"], 3), "end": round(r["end_time"], 3),
                     "clean": _edge_weight(r) > 1.0, "score": score,
-                    "reports": _boundary_reports.get(cid, 0),
-                    "vetoed": _vetoed(word, r), "_w": weight})
+                    "reports": reports.get(cid, 0),
+                    "vetoed": score <= _VETO_SCORE, "_w": weight})
     out.sort(key=lambda c: -c["_w"])
     for c in out:
         del c["_w"]
@@ -1136,12 +1145,12 @@ def tokenize_full(text: str) -> list[dict[str, Any]]:
                         "reverse": rev, "stretch": [], "shown": m.group(1).lower(), "note": note,
                         "fx": fx})
             continue
-        stretched = None if _known_word(re.sub(r"[^\w]", "", token).lower()) else unstretch(token)
+        stretched = None if _known_word(clean_word(token)) else unstretch(token)
         if stretched:
             word, marks = stretched
             out.append({"word": word, "ends": ends, "noise": False, "reverse": rev,
                         "stretch": marks, "note": note, "fx": fx,
-                        "shown": re.sub(r"[^\w']", "", token).lower()})
+                        "shown": clean_word(token, apostrophe=True)})
             continue
         words = _expand_token(token)
         for k, w in enumerate(words):
@@ -1366,7 +1375,7 @@ def suggest_next(context: str, prefix: str, limit: int = 10) -> dict[str, Any]:
     assert _word_positions is not None and _ordered_by_source is not None
 
     ctx = tokenize(context)[-4:]                       # longest suffix we try
-    prefix = re.sub(r"[^\w]", "", prefix).lower()
+    prefix = clean_word(prefix)
 
     continuations: dict[str, int] = {}
     matched_len = 0
@@ -1454,29 +1463,13 @@ def _trim(stderr: str, limit: int = 2000) -> str:
 @lru_cache(maxsize=20_000)
 def _sound_ends(source_file: str, start: float, stored_end: float) -> float:
     """Where a word's audio actually stops, at most _SONORANT_MAX past the end."""
-    import array, math, os, subprocess, tempfile, wave
+    from app.ytpmv.pitch import loudness
     limit = stored_end + _SONORANT_MAX
-    tmp = os.path.join(tempfile.gettempdir(), f"_st_{os.getpid()}.wav")
+    win = 160
     try:
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
-                        "-t", f"{limit - start:.4f}", "-i", source_file,
-                        "-ac", "1", "-ar", "16000", tmp], capture_output=True)
-        with wave.open(tmp, "rb") as w:
-            raw = w.readframes(w.getnframes())
+        env = loudness(source_file, start, limit - start, win).tolist()
     except Exception:
         return stored_end + _SONORANT_TAIL
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    samples = array.array("h")
-    samples.frombytes(raw[: len(raw) // 2 * 2]) if raw else None
-    if not raw or not samples:
-        return stored_end + _SONORANT_TAIL
-    win = 160
-    env = [math.sqrt(sum(v * v for v in samples[k:k + win]) / win)
-           for k in range(0, len(samples) - win, win)]
     if not env:
         return stored_end + _SONORANT_TAIL
     peak = max(env)
@@ -1571,6 +1564,13 @@ def _drawtext(text: str, font: str, window: tuple[float, float] | None = None) -
     return f
 
 
+# One encode at a time, whoever asks. The job queue serialises generations,
+# but the splice editor's auditions and the YTPMV's samples encode straight
+# from request threads -- several of those beside a generation is the
+# contention the queue was built to stop.
+_ENCODING = threading.Lock()
+
+
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
                  subtitles: bool = False, options: dict | None = None) -> None:
     """Encode *segments* to *out_path* in batches, then join them.
@@ -1579,6 +1579,12 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
     call may open. The second is the one that bounds memory -- see
     _MAX_INPUTS_PER_CALL.
     """
+    with _ENCODING:
+        _build_video_now(segments, out_path, progress, subtitles, options)
+
+
+def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
+                     subtitles: bool, options: dict | None) -> None:
     def _say(stage: str, done: int, total: int) -> None:
         if progress:
             progress(stage, done, total)

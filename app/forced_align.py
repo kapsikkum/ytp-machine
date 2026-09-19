@@ -12,8 +12,6 @@ by clip id so a word is never aligned twice in a session.
 from __future__ import annotations
 
 import os
-import subprocess
-import wave
 from typing import Any
 
 import logging
@@ -54,15 +52,6 @@ def _ensure_model() -> bool:
         log.warning("  forced-aligner unavailable: %s", exc)
         _model = None
         return False
-
-
-def _load_wav_mono16k(path: str):
-    import numpy as np
-    import torch
-    w = wave.open(path, "rb")
-    data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype("float32") / 32768.0
-    w.close()
-    return torch.from_numpy(data).unsqueeze(0)
 
 
 # ── Per-clip character timings ───────────────────────────────────────────────
@@ -127,16 +116,16 @@ def _align(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     _PAD = 0.20
     pad = min(_PAD, clip["start_time"])
     from app.database import resolve_path
-    tmp = f"_fa_{os.getpid()}.wav"
+    from app.ytpmv.pitch import decode_audio
     start = clip["start_time"] - pad
     dur   = (clip["end_time"] - clip["start_time"]) + pad + _PAD
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{start:.4f}", "-t", f"{dur:.4f}",
-             "-i", resolve_path(clip["source_file"]), "-ac", "1", "-ar", str(_SR), tmp],
-            capture_output=True,
-        )
-        wav = _load_wav_mono16k(tmp).to(_device)
+        # A clip from the generator's pool is already absolute, checked against
+        # its own corpus -- which for a borrowed voice is not the active one.
+        src = clip["source_file"]
+        audio = decode_audio(src if os.path.isabs(src) else resolve_path(src), start, dur,
+                             _SR, "s16le")
+        wav = torch.from_numpy(audio).unsqueeze(0).to(_device)
         with torch.inference_mode():
             emission, _ = _model(wav)  # type: ignore[misc]
         targets = torch.tensor([[_dict[c] for c in word]], dtype=torch.int32,  # type: ignore[index]
@@ -159,11 +148,6 @@ def _align(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     except Exception as exc:
         log.warning("  alignment failed for %r: %s", clip.get("word"), exc)
         return None
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
 
 
 def phone_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:

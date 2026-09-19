@@ -38,6 +38,8 @@ import urllib.request
 from datetime import date
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:      # for app.database, when run as a script
+    sys.path.insert(0, PROJECT_ROOT)
 
 # What goes in a bundle. `transcripts` is small and in git already, but it is
 # included so an unpacked bundle is enough to re-run the ingest scripts without
@@ -82,8 +84,6 @@ def _corpus_root(slug: str | None = None) -> str:
     directory with downloads/ beside it -- still packs without being migrated
     first.
     """
-    import sys as _sys
-    _sys.path.insert(0, PROJECT_ROOT)
     from app.database import list_corpora, active  # noqa: E402
 
     if slug:
@@ -370,8 +370,6 @@ def install_bundle(bundle: str, name: str, force: bool = False) -> dict:
     is not set, so a caller (CLI or API) can turn that into its own kind of
     "already there" answer instead of this deciding what that looks like.
     """
-    import sys as _sys
-    _sys.path.insert(0, PROJECT_ROOT)
     from app.database import install_dir  # noqa: E402
 
     target = install_dir(name)
@@ -542,15 +540,11 @@ def _move_dir(src: str, dst: str) -> None:
 
 
 def _slug(name: str) -> str:
-    import sys as _sys
-    _sys.path.insert(0, PROJECT_ROOT)
     from app.database import _slugify  # noqa: E402
     return _slugify(name)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    import sys as _sys
-    _sys.path.insert(0, PROJECT_ROOT)
     from app.database import list_corpora, active  # noqa: E402
 
     corpora = list_corpora()

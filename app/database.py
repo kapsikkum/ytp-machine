@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 
@@ -144,17 +145,36 @@ def normalise_sep(p: str) -> str:
     return p.replace("\\", "/")
 
 
+def inside(base: str, p: str) -> str:
+    """*p*, a stored path, made absolute against the corpus directory *base*.
+
+    ValueError when it points anywhere outside that directory. A corpus is a
+    bundle anyone can upload, and it is the database in it that says where its
+    videos are: "/app/data/matrix/session.json" as a source served the bot's
+    login to whoever asked for that source's video.
+    """
+    root = os.path.realpath(base)
+    full = os.path.realpath(os.path.join(root, normalise_sep(p)))
+    if os.path.commonpath([full, root]) != root:
+        raise ValueError(f"{p!r} is outside the corpus")
+    return full
+
+
 def resolve_path(p: str) -> str:
     """Turn a stored (relative) source path into an absolute one.
 
     Relative to the *active corpus*, not the project: that is what keeps two
     corpora from tripping over each other when both contain downloads/ files
-    of the same name.
+    of the same name. ValueError for one that leads out of it.
     """
     if not p:
         return p
-    p = normalise_sep(p)
-    return p if os.path.isabs(p) else os.path.join(active()["dir"], p)
+    return inside(active()["dir"], p)
+
+
+def clean_word(w: str, apostrophe: bool = False) -> str:
+    """A word as the corpus stores it: lower case, letters and digits only."""
+    return re.sub(r"[^\w']" if apostrophe else r"[^\w]", "", w).lower()
 
 
 def relativize_path(p: str) -> str:
@@ -171,7 +191,6 @@ def _connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
     conn = sqlite3.connect(target)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -189,8 +208,23 @@ def get_db():
         conn.close()
 
 
+# Databases init_db has already brought up to date this run. It was called at
+# the top of every editor request, and each call scanned three whole tables for
+# backslashes under a write lock -- to answer a GET.
+_ready: set[str] = set()
+
+
+def forget_ready() -> None:
+    """A database was replaced under its path: bring it up to date again."""
+    _ready.clear()
+
+
 def init_db() -> None:
+    db = active()["db"]
+    if db in _ready and os.path.exists(db):
+        return
     with get_db() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")      # stored in the file: once is enough
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS sources (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,6 +245,7 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_wc_word ON word_clips(word);
+            CREATE INDEX IF NOT EXISTS idx_wc_src ON word_clips(source_id, start_time);
 
             -- Non-verbal vocalisations (clicks, spews, pops, blows) that occur
             -- in the gaps Whisper skipped.  Kept separate so they don't break
@@ -246,6 +281,7 @@ def init_db() -> None:
                 score    INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (word, clip_id)
             );
+            CREATE INDEX IF NOT EXISTS idx_sr_clip ON splice_ratings(clip_id);
 
             -- How to build one word out of others, saved from the splice
             -- editor. The same shape as the hand-tuned recipes in phonemes.py
@@ -298,6 +334,7 @@ def init_db() -> None:
                 f"UPDATE {table} SET source_file = replace(source_file, char(92), '/') "
                 f"WHERE source_file LIKE '%' || char(92) || '%'"
             )
+    _ready.add(db)
 
 
 # ── Per-corpus settings ───────────────────────────────────────────────────────

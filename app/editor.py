@@ -20,17 +20,19 @@ to see all of it in one file.
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
+import math
 import os
 import re
 import threading
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.database import active, get_db, init_db
+from app.database import active, clean_word, get_db, init_db
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -101,9 +103,13 @@ def _source_path(source_id: int) -> str:
                            (source_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail=f"no source {source_id}")
-    path = resolve_path(row["source_file"])
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"file missing: {path}")
+    try:
+        path = resolve_path(row["source_file"])
+    except ValueError:
+        path = ""
+    if not path or not os.path.exists(path):
+        log.warning("source %s: no video at %r", source_id, row["source_file"])
+        raise HTTPException(status_code=404, detail=f"source {source_id} has no video file")
     return path
 
 
@@ -152,18 +158,6 @@ def source_clips(source_id: int):
         except Exception:
             pass                      # a corpus packed before noise_clips existed
 
-        # A rating is keyed on (target word, clip). The target is the word
-        # being *built*, which is often not this clip's own word: a downvote
-        # says "this clip sounded wrong used for that", which is why one clip
-        # can carry several. Fetched in one query rather than per clip -- a
-        # source has thousands.
-        ratings: dict[int, dict[str, int]] = {}
-        try:
-            for r in conn.execute(
-                    "SELECT word, clip_id, score FROM splice_ratings"):
-                ratings.setdefault(r["clip_id"], {})[r["word"]] = r["score"]
-        except Exception:
-            pass                      # a corpus packed before splice_ratings
         reports: dict[int, list[str]] = {}
         try:
             for r in conn.execute("SELECT clip_id, kind, count FROM boundary_reports"):
@@ -172,17 +166,23 @@ def source_clips(source_id: int):
         except Exception:
             pass                      # a corpus from before boundary reports
 
+    # A rating is keyed on (target word, clip). The target is the word being
+    # *built*, which is often not this clip's own word: a downvote says "this
+    # clip sounded wrong used for that", which is why one clip can carry several.
+    ratings = _all_ratings()
     for c in rows:
         c["ratings"] = ratings.get(c["id"], {}) if c["kind"] == "word" else {}
 
     corpus_aligned = any(c.get("aligned") for c in rows if c["kind"] == "word")
-    words = [c for c in rows if c["kind"] == "word"]
-    for i, c in enumerate(rows):
+    # Word start times, in order, so the next word after any moment is one
+    # bisect -- a scan of every word per clip took seconds on a long source.
+    starts = sorted(c["start_time"] for c in rows if c["kind"] == "word")
+    for c in rows:
         dur = c["end_time"] - c["start_time"]
         # Measured against the next *word*: a noise sitting inside a gap is
         # not an overlap, it is the point of it.
-        later = [w for w in words if w["start_time"] > c["start_time"]]
-        nxt = later[0]["start_time"] if later else None
+        j = bisect.bisect_right(starts, c["start_time"])
+        nxt = starts[j] if j < len(starts) else None
         c["gap_after"] = None if nxt is None else round(nxt - c["end_time"], 4)
         flags = []
         if dur < 0.06:
@@ -332,10 +332,7 @@ def align_source(source_id: int, redo: bool = False):
 
     def work() -> None:
         try:
-            import sys
-            sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__))), "scripts"))
-            from align_phones import align_corpus
+            from scripts.align_phones import align_corpus
             done, skipped, failed = align_corpus(source_id=source_id, redo=redo)
             _align_state["result"] = {"aligned": done, "no_pronunciation": skipped,
                                       "failed": failed}
@@ -383,39 +380,20 @@ def envelope(source_id: int, start: float = 0.0, end: float = 0.0,
     a picture -- every boundary fault found by hand this week was visible the
     moment the audio was plotted.
     """
-    import array
-    import math
-    import subprocess
-    import tempfile
-    import wave
+    from app.ytpmv.pitch import decode_audio, rms_windows
 
-    if end <= start:
+    if not (math.isfinite(start) and math.isfinite(end)) or end <= start:
         raise HTTPException(status_code=400, detail="end must be after start")
     span = min(end - start, 60.0)          # a minute is plenty to look at
     path = _source_path(source_id)
-    tmp = os.path.join(tempfile.gettempdir(), f"_env_{os.getpid()}.wav")
     try:
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.4f}",
-                        "-t", f"{span:.4f}", "-i", path,
-                        "-ac", "1", "-ar", "16000", tmp], capture_output=True)
-        with wave.open(tmp, "rb") as w:
-            raw = w.readframes(w.getnframes())
+        x = decode_audio(path, start, span, 16000, "s16le")
+        # A screen's width at most: a million buckets was a 10 MB answer.
+        buckets = max(1, min(buckets, 4000))
+        values = rms_windows(x, max(1, len(x) // buckets)).astype(int).tolist()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"could not read audio: {exc}")
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-
-    samples = array.array("h")
-    samples.frombytes(raw[: len(raw) // 2 * 2])
-    if not samples:
-        return {"start": start, "end": start + span, "peak": 0, "values": []}
-
-    per = max(1, len(samples) // max(1, buckets))
-    values = [int(math.sqrt(sum(v * v for v in samples[k:k + per]) / per))
-              for k in range(0, len(samples) - per, per)]
+        log.warning("envelope of source %s failed: %s", source_id, exc)
+        raise HTTPException(status_code=500, detail="could not read the audio")
     return {"start": start, "end": start + span,
             "peak": max(values) if values else 0, "values": values}
 
@@ -428,7 +406,7 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
     if edit.word is not None:
         # Stored exactly as the ingest stores them, or the corpus ends up with
         # two spellings of the same word and lookups find only one.
-        word = re.sub(r"[^\w]", "", edit.word).lower()
+        word = clean_word(edit.word)
         if not word:
             raise HTTPException(status_code=400, detail="word cannot be empty")
         sets.append("word=?"); params.append(word)
@@ -524,7 +502,7 @@ def set_rating(clip_id: int, rating: Rating):
     Only word clips have them. Noises are never spliced into a word.
     """
     init_db()
-    word = re.sub(r"[^\w]", "", rating.word).lower()
+    word = clean_word(rating.word)
     if not word:
         raise HTTPException(status_code=400, detail="a rating needs a word")
     with get_db() as conn:
@@ -584,7 +562,7 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
     """
     init_db()
     table = _table(kind)
-    word = re.sub(r"[^\w]", "", clip.word).lower()
+    word = clean_word(clip.word)
     if not word:
         raise HTTPException(status_code=400, detail="word cannot be empty")
     if clip.end_time - clip.start_time < 0.02:
@@ -623,7 +601,7 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
 
 
 class SpliceGroup(BaseModel):
-    phones: list[str]
+    phones: list[str] = Field(max_length=32)
     source: str | None = None          # which word supplies them
     clip_id: int | None = None         # ... and optionally which clip of it
     start: float | None = None         # ... and where in that clip, set by hand
@@ -641,7 +619,7 @@ def _where(s: dict) -> dict:
 
 
 class SplicePlan(BaseModel):
-    groups: list[SpliceGroup]
+    groups: list[SpliceGroup] = Field(max_length=32)
     mode: str = "strict"
 
 
@@ -699,7 +677,7 @@ def splice_word(word: str, mode: str = "strict"):
     import app.generate as g
     from app import phonemes as ph
 
-    word = re.sub(r"[^\w]", "", word).lower()
+    word = clean_word(word)
     if not word:
         raise HTTPException(status_code=400, detail="need a word")
 
@@ -745,7 +723,7 @@ class Pronunciation(BaseModel):
 
 
 def _pron_word(word: str) -> str:
-    word = re.sub(r"[^\w']", "", word).lower()
+    word = clean_word(word, apostrophe=True)
     if not word:
         raise HTTPException(status_code=400, detail="need a word")
     return word
@@ -832,7 +810,7 @@ def splice_preview(word: str, plan: SplicePlan):
     import app.generate as g
     from app import phonemes as ph
 
-    word = re.sub(r"[^\w]", "", word).lower()
+    word = clean_word(word)
     groups = [{"phones": [p.upper() for p in gr.phones], "from": gr.source,
                "clip_id": gr.clip_id, "start": gr.start, "end": gr.end} for gr in plan.groups]
     segs = ph.realise_groups(word, groups, _cbw(), g._penalty_for(word), plan.mode)
@@ -868,7 +846,7 @@ def save_recipe(word: str, plan: SplicePlan):
     import json
 
     from app import phonemes as ph
-    word = re.sub(r"[^\w]", "", word).lower()
+    word = clean_word(word)
     phones = ph.canonical_phones(word, plan.mode)
     flat = [p.upper() for gr in plan.groups for p in gr.phones]
     if not phones:
@@ -909,7 +887,7 @@ def delete_recipe(word: str):
     """Back to whatever the search decides."""
     init_db()
     from app import phonemes as ph
-    word = re.sub(r"[^\w]", "", word).lower()
+    word = clean_word(word)
     with get_db() as conn:
         conn.execute("DELETE FROM splice_recipes WHERE word=?", (word,))
     ph.invalidate_recipes()
@@ -938,7 +916,7 @@ def recipes():
     return {"recipes": out}
 
 class Piece(BaseModel):
-    phones: list[str]
+    phones: list[str] = Field(max_length=32)
     source: str
     clip_id: int | None = None
     start: float | None = None

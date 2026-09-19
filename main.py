@@ -5,11 +5,12 @@ import threading
 import time
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
-from app.api import router
+from app.api import MAX_BUNDLE_BYTES, router
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Use a file handler on the "app" logger with propagate=False so our messages
@@ -37,14 +38,53 @@ os.makedirs("downloads", exist_ok=True)
 
 init_db()
 
+_MAX_BODY = MAX_BUNDLE_BYTES + (1 << 20)     # a bundle, and the form around it
+
 app = FastAPI(title="YTP Machine", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS. The pages are served from here, so nothing needed it, and
+# allow_origins=["*"] let any site you happened to visit delete clips or
+# replace a corpus on this one.
+#
+# That still leaves the requests a browser sends cross-site without asking
+# first -- a form post, a no-cors fetch of an upload -- so a change made from
+# another site is refused outright. Sec-Fetch-Site is set by the browser and
+# cannot be forged by a page; the bot and curl send none and are unaffected.
+#
+# And the size of a request body is held here, before anything reads it:
+# Starlette writes a whole multipart upload to a temporary file before the
+# endpoint runs, so a limit inside /corpus/import came after the disk had
+# already filled.
+class _Guard:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        headers = dict(scope["headers"])
+        if (scope["method"] not in ("GET", "HEAD", "OPTIONS")
+                and headers.get(b"sec-fetch-site") == b"cross-site"):
+            return await JSONResponse({"detail": "not from another site"}, 403)(scope, receive, send)
+        length = headers.get(b"content-length", b"")
+        if length.isdigit() and int(length) > _MAX_BODY:
+            return await JSONResponse({"detail": "that is too big to send"}, 413)(scope, receive, send)
+
+        seen = 0
+
+        async def counted():
+            # No length given (chunked): count it as it arrives instead.
+            nonlocal seen
+            message = await receive()
+            seen += len(message.get("body", b""))
+            if seen > _MAX_BODY:
+                raise ValueError("request body over the limit")
+            return message
+
+        await self.app(scope, counted, send)
+
+
+app.add_middleware(_Guard)
 
 app.include_router(router, prefix="/api")
 
@@ -112,4 +152,8 @@ threading.Thread(target=_sweep_loop, daemon=True, name="output-sweep").start()
 app.mount("/output", StaticFiles(directory="output"), name="output")
 
 # Serve frontend last so it catches "/"
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+# Compressed, but only the pages: index.html alone is 80 KB of inline script.
+# Not app-wide -- that would gzip the videos too, and a compressed body has no
+# byte ranges, so the player could no longer seek.
+app.mount("/", GZipMiddleware(StaticFiles(directory="frontend", html=True), minimum_size=1024),
+          name="frontend")

@@ -57,18 +57,45 @@ def note_name(m: float) -> str:
 
 
 def decode_audio(path: str, start: float | None = None,
-                 duration: float | None = None, sr: int = SR) -> np.ndarray:
-    """Mono float32 audio from anything ffmpeg can read."""
+                 duration: float | None = None, sr: int = SR,
+                 pcm: str = "f32le") -> np.ndarray:
+    """Mono float32 audio from anything ffmpeg can read.
+
+    pcm="s16le" decodes through 16-bit, as a wav would: ffmpeg downmixes
+    stereo 3 dB quieter that way than to float, and levels measured against
+    a fixed threshold were tuned on it.
+    """
     cmd = ["ffmpeg", "-v", "error", "-nostdin"]
     if start is not None:
-        cmd += ["-ss", f"{max(start, 0.0):.3f}"]
+        cmd += ["-ss", f"{max(start, 0.0):.4f}"]
     if duration is not None:
-        cmd += ["-t", f"{duration:.3f}"]
-    cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"]
+        cmd += ["-t", f"{duration:.4f}"]
+    cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-f", pcm, "-"]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError("FFmpeg failed: " + proc.stderr.decode(errors="replace")[-400:])
+    if pcm == "s16le":
+        raw = proc.stdout[: len(proc.stdout) // 2 * 2]
+        return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
     return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+
+
+def loudness(path: str, start: float, duration: float, win: int,
+             sr: int = 16000) -> np.ndarray:
+    """RMS of each whole *win*-sample window of a slice, on the int16 scale.
+
+    Piped rather than written to a temp file: the readers this replaced named
+    theirs by process id, and the generation worker and the editor's request
+    threads share one process, so they read each other's audio.
+    """
+    return rms_windows(decode_audio(path, start, duration, sr, "s16le"), win)
+
+
+def rms_windows(x: np.ndarray, win: int) -> np.ndarray:
+    """RMS of each whole *win*-sample window of *x*, on the int16 scale."""
+    x = x.astype(np.float64) * 32768.0
+    n = max(0, (len(x) - 1) // win)          # the windows range(0, len-win, win) gave
+    return np.sqrt((x[:n * win].reshape(n, win) ** 2).mean(axis=1))
 
 
 # ── Tracking ──────────────────────────────────────────────────────────────────
