@@ -262,7 +262,10 @@ class Bot:
     def _save_session(self) -> None:
         os.makedirs(os.path.dirname(self.cfg.session_path), exist_ok=True)
         tmp = self.cfg.session_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        # Private from the first byte: chmod after the write left the token
+        # readable by anyone on the host for as long as the write took.
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                       "w", encoding="utf-8") as fh:
             json.dump({"homeserver": self.cfg.homeserver, "user_id": self.client.user_id,
                        "device_id": self.client.device_id,
                        "access_token": self.client.access_token}, fh)
