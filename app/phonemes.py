@@ -24,7 +24,6 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import Any
 
-import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -1352,11 +1351,11 @@ _TRIM_KEEP = 0.03        # always keep this much after the last audible moment
 _TRIM_MIN = 0.045        # never shorten a unit below this
 
 
-_AUDIO_WAVEFORM_CACHE: dict[tuple[str, int], np.ndarray] = {}
+_AUDIO_WAVEFORM_CACHE: dict[tuple[str, int], Any] = {}
 _MAX_WAVEFORM_CACHE_ENTRIES = 64
 
 
-def _get_waveform(source_file: str, sr: int = 16000) -> np.ndarray | None:
+def _get_waveform(source_file: str, sr: int = 16000) -> Any:
     key = (source_file, sr)
     if key in _AUDIO_WAVEFORM_CACHE:
         return _AUDIO_WAVEFORM_CACHE[key]
