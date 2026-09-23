@@ -94,7 +94,7 @@ CORPUS_WIDTH, CORPUS_HEIGHT, CORPUS_FPS = 480, 270, 25
 # upload ships with, that forward decode is most of the cost of extracting a
 # half-second clip. Denser keyframes cost a little size and make every
 # subsequent cut cheap.
-CORPUS_GOP = 25
+CORPUS_GOP = int(os.environ.get("MRS_CORPUS_GOP", "25"))
 
 # Quality point for the stored video. The picture is a thumbnail and the audio
 # is the entire point of the project, so the video is compressed hard and the

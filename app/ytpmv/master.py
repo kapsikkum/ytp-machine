@@ -56,6 +56,7 @@ import math
 
 import numpy as np
 
+from app.ytpmv import dsp
 from app.ytpmv.pitch import SR
 
 # Where each kind of part sits, in loudness units relative to the lead.
@@ -167,13 +168,7 @@ def k_weight(x: np.ndarray, sr: int = SR) -> np.ndarray:
     """*x* filtered the way a loudness meter filters it."""
     if len(x) < 64:
         return x
-    # Long enough that the filters' own ringing cannot wrap round onto the
-    # start, and no longer: doubling the length instead costs a transform
-    # twice the size for nothing.
-    n = 1 << int(np.ceil(np.log2(len(x) + 8192)))
-    freqs = np.fft.rfftfreq(n, 1.0 / sr)
-    h = _k_response(freqs, sr)
-    return np.fft.irfft(np.fft.rfft(x, n) * h, n)[: len(x)].real
+    return dsp.biquad_k_weight(x, sr)
 
 
 def block_power(x: np.ndarray, sr: int = SR) -> np.ndarray:

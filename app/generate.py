@@ -4,11 +4,12 @@ import re
 import uuid
 import random
 import subprocess
+import concurrent.futures
 import threading
 from functools import lru_cache
 from typing import Any
 
-from app.database import clean_word, get_db
+from app.database import active, clean_word, get_db
 
 log = logging.getLogger(__name__)
 
@@ -1568,7 +1569,15 @@ def _drawtext(text: str, font: str, window: tuple[float, float] | None = None) -
 # but the splice editor's auditions and the YTPMV's samples encode straight
 # from request threads -- several of those beside a generation is the
 # contention the queue was built to stop.
-_ENCODING = threading.Lock()
+
+def _encode_workers() -> int:
+    """Number of concurrent encode jobs allowed, from MRS_ENCODE_WORKERS."""
+    try:
+        return max(1, int(os.environ.get("MRS_ENCODE_WORKERS", "1")))
+    except (TypeError, ValueError):
+        return 1
+
+_ENCODING = threading.BoundedSemaphore(value=1)
 
 
 def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
@@ -1613,14 +1622,20 @@ def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
         return
 
     # Encode each chunk (identical codec settings), then stream-copy concat.
-    part_paths: list[str] = []
+    part_paths: list[str] = [f"{out_path}.part{ci}.mp4" for ci in range(len(chunks))]
     try:
-        for ci, chunk in enumerate(chunks):
-            _say("encoding", ci, len(chunks))
-            part = f"{out_path}.part{ci}.mp4"
-            _encode_chunk(chunk, part, final_tail=(ci == len(chunks) - 1),
-                          subtitles=subtitles, options=options)
-            part_paths.append(part)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_encode_workers()) as pool:
+            futures = {
+                pool.submit(_encode_chunk, chunk, part_paths[ci],
+                            final_tail=(ci == len(chunks) - 1),
+                            subtitles=subtitles, options=options): ci
+                for ci, chunk in enumerate(chunks)
+            }
+            done_count = 0
+            for fut in concurrent.futures.as_completed(futures):
+                fut.result()  # propagate exceptions
+                done_count += 1
+                _say("encoding", done_count, len(chunks))
         _say("joining", len(chunks), len(chunks))
 
         list_path = out_path + ".concat.txt"
@@ -1636,16 +1651,28 @@ def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
         # the timing; at 480x270 on ultrafast it costs about a second.
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                "-f", "concat", "-safe", "0", "-i", list_path,
-               "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+               *_encoder_settings(),
                "-pix_fmt", "yuv420p", "-fps_mode", "cfr", "-r", str(_FPS),
                "-c:a", "copy", "-movflags", "+faststart", out_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
             log.error("FFmpeg concat failed:\n%s", result.stderr[-2000:])
             raise RuntimeError(f"FFmpeg concat failed:\n{result.stderr[-3000:]}")
         log.info("  CONCAT   %d parts -> %s", len(part_paths), out_path)
+    except Exception:
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+        raise
     finally:
-        for p in part_paths + [out_path + ".concat.txt"]:
+        for p in part_paths + [list_path]:
             try:
                 os.remove(p)
             except OSError:
@@ -1746,6 +1773,68 @@ def _has_filter(name: str) -> bool:
     return name in _filters()
 
 
+def _is_corpus_native(seg: dict) -> bool:
+    """True if the segment's source file is a corpus-normalised video.
+    
+    Files inside the corpus downloads/ directory were normalised at ingest
+    to exactly 480x270 25fps, so scale and fps filters are redundant.
+    """
+    src = seg.get("source_file", "")
+    if not src:
+        return False
+    if not os.path.isabs(src):
+        return True  # relative paths are always corpus-local
+    corpus_dir = os.path.abspath(active().get("dir", ""))
+    try:
+        return os.path.commonpath([os.path.abspath(src), corpus_dir]) == corpus_dir
+    except (ValueError, OSError):
+        return False
+
+
+def _has_dynamic_modifiers(seg: dict[str, Any]) -> bool:
+    """True if segment has pitch, stretch, reverse, glitch, custom volume, etc."""
+    if seg.get("reverse") or seg.get("stretch") not in (None, 1.0):
+        return True
+    if seg.get("glitch") or seg.get("gain_db") or seg.get("pitch"):
+        return True
+    if float(seg.get("pause_after", 0.0) or 0.0) > 0:
+        return True
+    if seg.get("subtitle") or seg.get("subtitle_words"):
+        return True
+    return False
+
+
+@lru_cache(maxsize=1)
+def _available_encoders() -> dict[str, bool]:
+    """Probe which H.264 encoders this FFmpeg build supports."""
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {"libx264": True, "h264_nvenc": False, "h264_qsv": False}
+    return {
+        "libx264": True,  # always assumed available
+        "h264_nvenc": "h264_nvenc" in out,
+        "h264_qsv": "h264_qsv" in out,
+    }
+
+
+def _encoder_settings() -> list[str]:
+    """Return the FFmpeg codec flags for the configured encoder.
+    
+    Reads MRS_ENCODER env var: 'libx264' (default), 'nvenc', 'qsv'.
+    Falls back to libx264 ultrafast if hardware unavailable.
+    """
+    choice = os.environ.get("MRS_ENCODER", "libx264").lower().strip()
+    avail = _available_encoders()
+    if choice == "nvenc" and avail.get("h264_nvenc"):
+        return ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ull",
+                "-rc", "vbr", "-cq", "23"]
+    if choice == "qsv" and avail.get("h264_qsv"):
+        return ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
+
+
 def _atempo_chain(factor: float) -> list[str]:
     """atempo only goes from 0.5 to 2 in one step; chain it past that."""
     steps = []
@@ -1793,6 +1882,8 @@ def segment_durations(seg: dict[str, Any], window: tuple[float, float],
     span = max(0.0, window[1] - window[0])
     sounding = span * float(seg.get("stretch") or 1.0)
     total = (sounding + float(seg.get("pause_after", 0.0))) / options["speed"]
+    if seg.get("subword"):
+        return span, sounding, total
     return span, sounding, round(total * _FPS) / _FPS
 
 
@@ -1873,13 +1964,26 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # little too, for the same reason at a smaller scale: its length is
         # rounded up to a whole frame, and the rounding must be sound rather
         # than zeros in the middle of a word.
+        # Check pre-rendered clip cache for unmodified segments
+        cached = None
+        cid = seg.get("id")
+        if cid is not None and not _has_dynamic_modifiers(seg):
+            try:
+                from app import clip_cache
+                cached = clip_cache.get_cached(cid, pad_end)
+            except Exception:
+                cached = None
+
         read = duration + (_HOLD_LOOKAHEAD if seg.get("stretch")
                            else _BUTT_LOOKAHEAD if seg.get("fade_out") == 0.0 else 0.0)
-        cmd += [
-            "-ss", f"{start:.4f}",
-            "-t",  f"{read:.4f}",
-            "-i",  seg["source_file"],
-        ]
+        if cached:
+            cmd += ["-i", cached]
+        else:
+            cmd += [
+                "-ss", f"{start:.4f}",
+                "-t",  f"{read:.4f}",
+                "-i",  seg["source_file"],
+            ]
 
     # ── filter_complex ────────────────────────────────────────────────────────
     # Per-clip: normalise, add short audio fade-in/out to remove clicks at
@@ -1913,10 +2017,15 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         _span, _sounding, quantised = segment_durations(
             seg, (clip_starts[i], clip_starts[i] + span), options)
 
-        vfilters = [f"scale=480:270:force_original_aspect_ratio=disable"]
+        native = _is_corpus_native(seg)
+        vfilters = []
+        if not native:
+            vfilters.append("scale=480:270:force_original_aspect_ratio=disable")
         if stretch != 1.0:
             vfilters.append(f"setpts=PTS*{stretch:.5f}")
-        vfilters += [f"fps={_FPS}", "setsar=1"]
+        if not native or stretch != 1.0:
+            vfilters.append(f"fps={_FPS}")
+        vfilters.append("setsar=1")
         if rev:
             vfilters.append("reverse")
         if pause > 0:
@@ -2022,7 +2131,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         #
         # apad then atrim pins the sound to the picture's own length, so the
         # walk cannot start.
-        afilters.append("apad")
+        if not seg.get("subword"):
+            afilters.append("apad")
         afilters.append(f"atrim=end={quantised:.4f}")
         afilters.append("asetpts=PTS-STARTPTS")
         parts.append(f"[{i}:a]" + ",".join(afilters) + f"[a{i}]")
@@ -2041,9 +2151,7 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         "-filter_complex_script", filter_path,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "23",
+        *_encoder_settings(),
         # Always 4:2:0. The colour effects (fringe, rainbow...) hand the
         # encoder RGB, x264 then writes 4:4:4, and Firefox calls that file
         # corrupt and will not play it.
@@ -2069,7 +2177,14 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     import time as _time
     t0 = _time.perf_counter()
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except Exception:
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+        raise
     finally:
         try:
             os.remove(filter_path)
@@ -2077,6 +2192,11 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
             pass
     elapsed = _time.perf_counter() - t0
     if result.returncode != 0:
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
         log.error("FFmpeg failed:\n%s", result.stderr[-2000:])
         raise RuntimeError(f"FFmpeg failed:\n{result.stderr[-3000:]}")
     log.info("  FFMPEG   %d clips  %.2fs  -> %s", n, elapsed, out_path)

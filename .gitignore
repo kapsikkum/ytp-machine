@@ -24,6 +24,10 @@ output/
 # Runtime log
 app.log
 
+# Word clip cache
+corpora/*/cache/
+cache/
+
 # Packed bundles are artefacts -- useful for moving a corpus to a server or
 # keeping a backup, but the repo carries the loose corpus instead.
 corpus/

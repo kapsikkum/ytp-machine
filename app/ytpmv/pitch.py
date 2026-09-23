@@ -71,13 +71,14 @@ def decode_audio(path: str, start: float | None = None,
     if duration is not None:
         cmd += ["-t", f"{duration:.4f}"]
     cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-f", pcm, "-"]
-    proc = subprocess.run(cmd, capture_output=True)
+    proc = subprocess.run(cmd, capture_output=True, timeout=30)
     if proc.returncode != 0:
         raise RuntimeError("FFmpeg failed: " + proc.stderr.decode(errors="replace")[-400:])
     if pcm == "s16le":
         raw = proc.stdout[: len(proc.stdout) // 2 * 2]
         return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+    raw = proc.stdout[: len(proc.stdout) // 4 * 4]
+    return np.frombuffer(raw, dtype=np.float32).copy()
 
 
 def loudness(path: str, start: float, duration: float, win: int,
@@ -437,13 +438,18 @@ class Voice:
                 off, the note simply ends when the sample does
         """
         dur = max(float(dur), _MIN_NOTE)
-        key = (None if target_hz is None else round(target_hz, 3),
-               round(dur, 2), mode, round(semitones, 3), stretch)
-        hit = self._cache.get(key)
-        if hit is not None:
-            return hit
         sr = self.sr
         n_out = int(round(dur * sr))
+        key = (None if target_hz is None else round(target_hz, 3),
+               n_out, mode, round(semitones, 3), stretch)
+        hit = self._cache.get(key)
+        if hit is not None:
+            buf, warp = hit
+            if len(buf) == n_out:
+                return hit
+            if len(buf) < n_out:
+                return np.pad(buf, (0, n_out - len(buf))), warp
+            return buf[:n_out], warp
 
         if mode == "perfect" and target_hz and self.info.f0 and len(self.marks):
             warp = self.plan(dur, stretch)
@@ -464,7 +470,8 @@ class Voice:
         self._cache[key] = (y, warp)
         return y, warp
 
-    def _psola(self, target_hz: float, n_out: int, warp: Warp) -> np.ndarray:
+    def _psola(self, target_hz: float, n_out: int, warp: Warp,
+               formant: float = 1.0, preserve_formants: bool = True) -> np.ndarray:
         sr = self.sr
         x = self.x
         marks, periods, mv = self.marks, self.periods, self.mvoiced
@@ -483,8 +490,27 @@ class Voice:
             c = int(round(t)) + pad
             if mv[k]:
                 half = max(2, int(round(periods[k])))
-                g = _grain(x, int(marks[k]), half) * min(1.0, Pt / periods[k])
-                out[c - half:c + half] += g
+                g_orig = _grain(x, int(marks[k]), half)
+                h2 = max(2, int(round(half / formant)))
+                if h2 != half:
+                    g = np.interp(np.linspace(0.0, 2 * half - 1, 2 * h2), np.arange(2 * half), g_orig)
+                else:
+                    g = g_orig.copy()
+                if preserve_formants and len(g) >= 16:
+                    from app.ytpmv import dsp
+                    n_fft = max(128, 1 << int(math.ceil(math.log2(max(len(g), len(g_orig))))))
+                    env_orig = dsp.spectral_envelope_lifter(g_orig, n_fft=n_fft, cutoff=16)
+                    if formant != 1.0:
+                        freqs = np.linspace(0.0, 1.0, len(env_orig))
+                        warped = np.clip(freqs / formant, 0.0, 1.0)
+                        target_env = np.interp(warped, freqs, env_orig)
+                    else:
+                        target_env = env_orig
+                    curr_env = dsp.spectral_envelope_lifter(g, n_fft=n_fft, cutoff=16)
+                    spec = np.fft.rfft(g, n=n_fft)
+                    g = (np.fft.irfft(spec * (target_env / np.maximum(curr_env, 1e-6)), n=n_fft)[:len(g)].real
+                         * _hann(len(g)))
+                out[c - h2:c + h2] += g * min(1.0, Pt / h2)
                 t += Pt
             else:
                 g = _grain(x, int(round(src)), unv_half)

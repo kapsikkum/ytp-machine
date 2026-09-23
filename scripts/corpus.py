@@ -264,6 +264,11 @@ def pack_bundle(slug: str | None = None, out: str | None = None) -> str:
     if db:
         _checkpoint(db)
         _check_paths(db)
+        try:
+            from app.database import get_schema_version
+            print(f"  schema version: {get_schema_version()}")
+        except Exception:
+            pass
 
     def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         base = os.path.basename(info.name)
@@ -317,6 +322,37 @@ def _fetch(url: str) -> str:
     return tmp
 
 
+MAX_UNPACKED_BYTES = 8 << 30
+MAX_MEMBER_FILES = 100_000
+
+
+def _safe_extract(tar: tarfile.TarFile, root: str) -> None:
+    """Extract tar archive members safely with Zip Slip and Tar Bomb protection."""
+    real_root = os.path.realpath(root)
+    total_bytes = 0
+    total_files = 0
+    for member in tar:
+        total_files += 1
+        if total_files > MAX_MEMBER_FILES:
+            raise ValueError(f"Tar bomb protection: exceeded maximum member files limit ({MAX_MEMBER_FILES:,})")
+
+        target_path = os.path.realpath(os.path.join(real_root, member.name))
+        if os.path.commonpath([target_path, real_root]) != real_root:
+            raise ValueError(f"Zip slip protection: member {member.name!r} resolves outside target directory")
+
+        if member.isfile():
+            total_bytes += member.size
+            if total_bytes > MAX_UNPACKED_BYTES:
+                raise ValueError(
+                    f"Tar bomb protection: exceeded maximum uncompressed size ({MAX_UNPACKED_BYTES:,} bytes)"
+                )
+
+        if hasattr(tarfile, "data_filter"):
+            tar.extract(member, path=real_root, filter="data")
+        else:
+            tar.extract(member, path=real_root)
+
+
 def cmd_unpack(args: argparse.Namespace) -> int:
     root = args.into or _data_root()
     src = args.bundle
@@ -337,10 +373,7 @@ def cmd_unpack(args: argparse.Namespace) -> int:
         tar = _open_read(src)
         try:
             # Streaming tars cannot be rewound, so extract in one pass.
-            if hasattr(tarfile, "data_filter"):
-                tar.extractall(root, filter="data")
-            else:  # Python < 3.12
-                tar.extractall(root)  # noqa: S202
+            _safe_extract(tar, root)
         finally:
             tar.close()
     finally:
@@ -383,10 +416,7 @@ def install_bundle(bundle: str, name: str, force: bool = False) -> dict:
     try:
         tar = _open_read(bundle)
         try:
-            if hasattr(tarfile, "data_filter"):
-                tar.extractall(target, filter="data")
-            else:  # Python < 3.12
-                tar.extractall(target)  # noqa: S202
+            _safe_extract(tar, target)
         finally:
             tar.close()
     except BaseException:
@@ -398,6 +428,13 @@ def install_bundle(bundle: str, name: str, force: bool = False) -> dict:
         if created:
             shutil.rmtree(target, ignore_errors=True)
         raise
+
+    try:
+        from app.database import forget_ready, init_db
+        forget_ready()
+        init_db()
+    except Exception:
+        pass
 
     manifest: dict = {"target": target, "slug": os.path.basename(target), "members": {}}
     for m in MEMBERS:

@@ -54,9 +54,10 @@ class Job:
     text: str                       # the sentence, or a label for other kinds
     subtitles: bool = False         # burn the words onto the picture
     kind: str = "say"               # say | ytpmv
+    corpus: str = ""
     params: dict[str, Any] = field(default_factory=dict)
-    status: str = "queued"          # queued | running | done | error
-    stage: str = "waiting"          # loading | resolving | encoding | joining
+    status: str = "queued"          # queued | running | done | error | cancelled
+    stage: str = "waiting"          # loading | resolving | encoding | joining | cancelled
     done: int = 0
     total: int = 0
     result: dict[str, Any] | None = None
@@ -66,11 +67,13 @@ class Job:
     started: float | None = None
     finished: float | None = None
     ended: threading.Event = field(default_factory=threading.Event, repr=False)
+    abort_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         out = {
             "id": self.id,
             "kind": self.kind,
+            "corpus": self.corpus,
             "status": self.status,
             "stage": self.stage,
             "done": self.done,
@@ -103,7 +106,7 @@ def _prune() -> None:
         stale = [
             jid for jid in _order
             if (j := _jobs.get(jid))
-            and j.status in ("done", "error")
+            and j.status in ("done", "error", "cancelled")
             and j.finished
             and now - j.finished > _TTL_SECONDS
         ]
@@ -112,7 +115,7 @@ def _prune() -> None:
             _order.remove(jid)
 
         finished = [jid for jid in _order
-                    if _jobs.get(jid) and _jobs[jid].status in ("done", "error")]
+                    if _jobs.get(jid) and _jobs[jid].status in ("done", "error", "cancelled")]
         while len(finished) > _KEEP:
             jid = finished.pop(0)
             _jobs.pop(jid, None)
@@ -120,11 +123,31 @@ def _prune() -> None:
 
 
 def _run(job: Job) -> None:
+    if job.abort_event.is_set():
+        job.status = "cancelled"
+        job.stage = "cancelled"
+        job.error = "Job cancelled"
+        job.error_kind = "cancelled"
+        job.finished = time.time()
+        job.ended.set()
+        return
+
     def progress(stage: str, done: int, total: int) -> None:
+        if job.abort_event.is_set():
+            raise RuntimeError("Job cancelled")
         job.stage, job.done, job.total = stage, done, total
 
     job.status = "running"
     job.started = time.time()
+
+    if job.corpus:
+        try:
+            from app.database import set_active, active
+            if active()["slug"] != job.corpus:
+                set_active(job.corpus)
+        except Exception as exc:
+            log.warning("Failed to activate corpus %s for job %s: %s", job.corpus, job.id, exc)
+
     try:
         if job.kind == "ytpmv":
             # Through the same single worker as sentences, on purpose: a song
@@ -142,9 +165,22 @@ def _run(job: Job) -> None:
             from app.generate import generate_video
             job.result = generate_video(job.text, progress=progress,
                                         subtitles=job.subtitles, options=job.params)
-        job.status = "done"
-        job.stage = "finished"
+        if job.abort_event.is_set():
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.error = "Job cancelled"
+            job.error_kind = "cancelled"
+        else:
+            job.status = "done"
+            job.stage = "finished"
     except RuntimeError as exc:
+        if job.abort_event.is_set():
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.error = "Job cancelled"
+            job.error_kind = "cancelled"
+            log.info("JOB %s cancelled", job.id)
+            return
         detail = str(exc)
         crowded = "temporarily unavailable" in detail or "Too many open files" in detail
         # An OOM kill leaves nothing behind: ffmpeg dies on a signal without
@@ -167,6 +203,13 @@ def _run(job: Job) -> None:
         job.status = "error"
         log.error("JOB %s failed: %s", job.id, detail[-500:])
     except Exception as exc:  # noqa: BLE001 -- a worker thread must not die
+        if job.abort_event.is_set():
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.error = "Job cancelled"
+            job.error_kind = "cancelled"
+            log.info("JOB %s cancelled", job.id)
+            return
         job.error = f"{type(exc).__name__}: {exc}"
         job.error_kind = "internal"
         job.status = "error"
@@ -182,6 +225,14 @@ def _loop() -> None:
         job = _jobs.get(jid)
         if job is None:          # pruned before it ran; nothing to do
             _queue.task_done()
+            continue
+        if job.abort_event.is_set() or job.status == "cancelled":
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.finished = time.time()
+            job.ended.set()
+            _queue.task_done()
+            _prune()
             continue
         log.info("JOB %s start  %r", job.id, job.text[:80])
         _run(job)
@@ -214,13 +265,47 @@ def _enqueue(job: Job) -> Job:
     return job
 
 
-def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None) -> Job:
+def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None,
+           corpus: str | None = None) -> Job:
+    if corpus is None:
+        try:
+            from app.database import active
+            corpus = active()["slug"]
+        except Exception:
+            corpus = ""
     return _enqueue(Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
-                        params=dict(options or {})))
+                        corpus=corpus, params=dict(options or {})))
 
 
-def submit_ytpmv(params: dict[str, Any], label: str = "ytpmv") -> Job:
-    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv", params=params))
+def submit_ytpmv(params: dict[str, Any], label: str = "ytpmv",
+                 corpus: str | None = None) -> Job:
+    if corpus is None:
+        try:
+            from app.database import active
+            corpus = active()["slug"]
+        except Exception:
+            corpus = ""
+    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv",
+                        corpus=corpus, params=params))
+
+
+def cancel(job_id: str) -> bool:
+    """Abort a queued or running job."""
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            return False
+        if job.status in ("done", "error", "cancelled"):
+            return False
+        job.abort_event.set()
+        if job.status == "queued":
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.error = "Job cancelled"
+            job.error_kind = "cancelled"
+            job.finished = time.time()
+            job.ended.set()
+        return True
 
 
 def get(job_id: str) -> Job | None:
@@ -241,5 +326,6 @@ def stats() -> dict[str, int]:
     return {
         "queued": statuses.count("queued"),
         "running": statuses.count("running"),
+        "cancelled": statuses.count("cancelled"),
         "remembered": len(statuses),
     }

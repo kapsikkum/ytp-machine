@@ -1,7 +1,10 @@
+import json
 import logging
 import os
 import tempfile
+import threading
 import time
+import urllib.request
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -48,6 +51,14 @@ class GenerateRequest(BaseModel):
     # and whether to prefer clean takes and real phrases. See
     # app.generate.OPTIONS; anything left out takes its default.
     options: dict = {}
+
+
+class BatchGenerateRequest(BaseModel):
+    sentences: list[str] = Field(default_factory=list)
+    texts: list[str] = Field(default_factory=list)
+    subtitles: bool = False
+    options: dict = {}
+    webhook_url: str | None = None
 
 
 class SpliceModeRequest(BaseModel):
@@ -138,6 +149,69 @@ def generate(req: GenerateRequest, wait: bool = False):
     return JSONResponse(status_code=202, content=body)
 
 
+@router.post("/generate/batch")
+def generate_batch(req: BatchGenerateRequest):
+    """Queue multiple sentences as batch generation jobs with optional webhook notification."""
+    sentences = req.sentences or req.texts
+    if not sentences:
+        raise HTTPException(status_code=400, detail="sentences must not be empty")
+
+    cleaned = []
+    for s in sentences:
+        if not isinstance(s, str) or not s.strip():
+            raise HTTPException(status_code=400, detail="Each sentence must be a non-empty string")
+        t = s.strip()
+        if len(t) > MAX_TEXT:
+            raise HTTPException(status_code=400, detail=f"Sentence exceeds maximum length of {MAX_TEXT:,} characters")
+        cleaned.append(t)
+
+    if req.webhook_url and not (req.webhook_url.startswith("http://") or req.webhook_url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="webhook_url must be an http or https URL")
+
+    queued_jobs = []
+    try:
+        for text in cleaned:
+            job = jobs.submit(text, subtitles=req.subtitles, options=req.options)
+            queued_jobs.append(job)
+    except jobs.QueueFull:
+        for j in queued_jobs:
+            jobs.cancel(j.id)
+        raise HTTPException(status_code=503, detail={"message": f"{jobs.MAX_QUEUED} videos are already waiting. Try again in a few minutes."})
+
+    if req.webhook_url:
+        def _notify_webhook(url: str, batch: list[jobs.Job]):
+            for j in batch:
+                j.ended.wait()
+            payload = {
+                "event": "batch_completed",
+                "count": len(batch),
+                "jobs": [j.as_dict() for j in batch],
+            }
+            try:
+                data = json.dumps(payload).encode("utf-8")
+                req_obj = urllib.request.Request(
+                    url,
+                    data=data,
+                    headers={"Content-Type": "application/json", "User-Agent": "YTP-Machine-Webhook/1.0"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req_obj, timeout=15):
+                    pass
+                log.info("WEBHOOK delivered to %s for %d jobs", url, len(batch))
+            except Exception as exc:
+                log.error("WEBHOOK delivery failed to %s: %s", url, exc)
+
+        t = threading.Thread(target=_notify_webhook, args=(req.webhook_url, list(queued_jobs)), daemon=True)
+        t.start()
+
+    return JSONResponse(status_code=202, content={
+        "status": "queued",
+        "count": len(queued_jobs),
+        "job_ids": [j.id for j in queued_jobs],
+        "jobs": [j.as_dict() for j in queued_jobs],
+    })
+
+
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str):
     """How a queued generation is going, and its result once it is done."""
@@ -160,6 +234,18 @@ def job_status(job_id: str):
         body["error_kind"] = "nothing_found"
         body["missing"] = r["missing"]
     return body
+
+
+@router.delete("/jobs/{job_id}")
+def cancel_job(job_id: str):
+    """Cancel a queued or running job."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail={
+            "message": "No such job. It may have finished long enough ago to be forgotten.",
+        })
+    success = jobs.cancel(job_id)
+    return {"id": job_id, "status": job.status, "cancelled": success}
 
 
 @router.get("/queue")
@@ -200,6 +286,7 @@ def reload():
     invalidate_cache()
     from app.ytpmv import samples
     samples.clear_cache()       # built from the old timings
+    _sample_words_cache.clear()
     log.info("cache invalidated via /api/reload")
     return {"status": "reloaded"}
 
@@ -260,13 +347,15 @@ def _totals_of(corpus: dict) -> dict:
             "words": conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0],
             "sources": conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0],
         }
-        for key, name in (("splice_mode", "splice_mode"), ("max_units", "max_units")):
+        for key, name in (("splice_mode", "splice_mode"), ("max_units", "max_units"), ("schema_version", "schema_version")):
             try:
                 row = conn.execute("SELECT value FROM settings WHERE key=?", (name,)).fetchone()
             except sqlite3.Error:
                 row = None
             if row:
-                out[key] = row[0]
+                out[key] = int(row[0]) if key in ("max_units", "schema_version") else row[0]
+            elif key == "schema_version":
+                out[key] = 0
         return out
     finally:
         conn.close()
@@ -448,28 +537,74 @@ def switch_corpus(req: CorpusRequest):
     # corpus's words out of the old corpus's video files.
     from app.generate import invalidate_cache
     invalidate_cache()
+    _sample_words_cache.clear()
     init_db()
 
     log.info("CORPUS  switched to %s", chosen["slug"])
     return {"status": "ok", "active": chosen["slug"], "name": chosen["name"], **_corpus_totals()}
 
 
+_sample_words_cache: dict[str, list[str]] = {}
+
+
 @router.get("/stats")
 def stats():
     current = active()
     totals = _totals_of(current)
-    with get_db() as conn:
-        sample = conn.execute(
-            "SELECT DISTINCT word FROM word_clips ORDER BY RANDOM() LIMIT 30"
-        ).fetchall()
+    slug = current["slug"]
+    if slug not in _sample_words_cache:
+        with get_db() as conn:
+            sample = conn.execute(
+                "SELECT DISTINCT word FROM word_clips ORDER BY RANDOM() LIMIT 30"
+            ).fetchall()
+            _sample_words_cache[slug] = [r[0] for r in sample]
     return {
         "total_clips": totals["clips"],
         "unique_words": totals["words"],
         "sources": totals["sources"],
-        "sample_words": [r[0] for r in sample],
+        "sample_words": _sample_words_cache[slug],
         "corpus": current["slug"],
         "corpus_name": current["name"],
+        "schema_version": totals.get("schema_version", 0),
+        "needs_upgrade": totals.get("schema_version", 0) < 1,
     }
+
+
+@router.post("/corpus/upgrade")
+def upgrade_corpus():
+    """Bring the active corpus database to the current schema version."""
+    from app.database import forget_ready, init_db, corpus_meta
+    forget_ready()
+    init_db()
+    return corpus_meta()
+
+
+@router.get("/settings/server")
+def get_server_settings():
+    from app import clip_cache
+    import app.generate as gen
+    return {
+        "encode_workers": gen._encode_workers(),
+        "encoder": os.environ.get("MRS_ENCODER", "libx264"),
+        "available_encoders": gen._available_encoders(),
+        "clip_cache_mb": round(clip_cache.cache_size_mb(), 1),
+        "clip_cache_max_mb": clip_cache.MAX_CACHE_MB,
+    }
+
+
+@router.post("/settings/server")
+def set_server_settings(req: dict):
+    if "encode_workers" in req:
+        os.environ["MRS_ENCODE_WORKERS"] = str(max(1, min(8, int(req["encode_workers"]))))
+    if "encoder" in req:
+        os.environ["MRS_ENCODER"] = str(req["encoder"]).lower().strip()
+    return get_server_settings()
+
+
+@router.get("/corpus/diagnostics")
+def api_corpus_diagnostics():
+    from app.editor import corpus_diagnostics
+    return corpus_diagnostics()
 
 
 # ── YTPMV ─────────────────────────────────────────────────────────────────────

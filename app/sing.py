@@ -24,13 +24,14 @@ import logging
 import math
 import os
 import random
+import shutil
 import subprocess
 import tempfile
 import wave
 
 import numpy as np
 
-from app.ytpmv import pitch
+from app.ytpmv import dsp, pitch
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +106,8 @@ def fit(melody: list[int], n: int, centre: float) -> list[float]:
 
 
 def sung(v: pitch.Voice, hz: float, n_out: int, amount: float = 1.0,
-         vibrato: float = 0.0, formant: float = 1.0) -> np.ndarray:
+         vibrato: float = 0.0, formant: float = 1.0,
+         preserve_formants: bool = True) -> np.ndarray:
     """*v* sung on *hz* for *n_out* samples.
 
     amount   1 puts every pulse on the note; less leaves that much of the
@@ -139,10 +141,25 @@ def sung(v: pitch.Voice, hz: float, n_out: int, amount: float = 1.0,
                              * math.sin(2 * math.pi * _VIBRATO_HZ * ts) / 12.0)
             Pt = sr / h
             half = max(2, int(round(P)))
-            g = pitch._grain(x, int(marks[k]), half)
+            g_orig = pitch._grain(x, int(marks[k]), half)
             h2 = max(2, int(round(half / formant)))
             if h2 != half:
-                g = np.interp(np.linspace(0.0, 2 * half - 1, 2 * h2), np.arange(2 * half), g)
+                g = np.interp(np.linspace(0.0, 2 * half - 1, 2 * h2), np.arange(2 * half), g_orig)
+            else:
+                g = g_orig.copy()
+            if preserve_formants and len(g) >= 16:
+                n_fft = max(128, 1 << int(math.ceil(math.log2(max(len(g), len(g_orig))))))
+                env_orig = dsp.spectral_envelope_lifter(g_orig, n_fft=n_fft, cutoff=16)
+                if formant != 1.0:
+                    freqs = np.linspace(0.0, 1.0, len(env_orig))
+                    warped = np.clip(freqs / formant, 0.0, 1.0)
+                    target_env = np.interp(warped, freqs, env_orig)
+                else:
+                    target_env = env_orig
+                curr_env = dsp.spectral_envelope_lifter(g, n_fft=n_fft, cutoff=16)
+                spec = np.fft.rfft(g, n=n_fft)
+                g = (np.fft.irfft(spec * (target_env / np.maximum(curr_env, 1e-6)), n=n_fft)[:len(g)].real
+                     * pitch._hann(len(g)))
             # Hann grains of half-length h2 laid every Pt add up to h2/Pt.
             out[c - h2:c + h2] += g * min(1.0, Pt / h2)
             t += Pt
@@ -312,18 +329,19 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
     # Beside the video, so the finished file is renamed into place rather than
     # copied across filesystems (/tmp and output/ are different mounts in the container).
     tmp = tempfile.mkdtemp(prefix="sing_", dir=os.path.dirname(os.path.abspath(path)))
-    wav, mp4 = os.path.join(tmp, "sung.wav"), os.path.join(tmp, "sung.mp4")
-    with wave.open(wav, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sr)
-        w.writeframes((np.clip(y, -1, 1) * 32767).astype("<i2").tobytes())
-    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-i", wav,
-                        "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
-                        "-b:a", "192k", "-ac", "2", "-movflags", "+faststart", mp4],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"FFmpeg failed putting the singing back:\n{r.stderr[-1000:]}")
-    os.replace(mp4, path)
-    os.remove(wav)
-    os.rmdir(tmp)
+    try:
+        wav, mp4 = os.path.join(tmp, "sung.wav"), os.path.join(tmp, "sung.mp4")
+        with wave.open(wav, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((np.clip(y, -1, 1) * 32767).astype("<i2").tobytes())
+        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-i", wav,
+                            "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+                            "-b:a", "192k", "-ac", "2", "-movflags", "+faststart", mp4],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"FFmpeg failed putting the singing back:\n{r.stderr[-1000:]}")
+        os.replace(mp4, path)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

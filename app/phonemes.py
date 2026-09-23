@@ -24,6 +24,8 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import Any
 
+import numpy as np
+
 log = logging.getLogger(__name__)
 
 _VOWELS = {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY",
@@ -1350,6 +1352,25 @@ _TRIM_KEEP = 0.03        # always keep this much after the last audible moment
 _TRIM_MIN = 0.045        # never shorten a unit below this
 
 
+_AUDIO_WAVEFORM_CACHE: dict[tuple[str, int], np.ndarray] = {}
+_MAX_WAVEFORM_CACHE_ENTRIES = 64
+
+
+def _get_waveform(source_file: str, sr: int = 16000) -> np.ndarray | None:
+    key = (source_file, sr)
+    if key in _AUDIO_WAVEFORM_CACHE:
+        return _AUDIO_WAVEFORM_CACHE[key]
+    try:
+        from app.ytpmv.pitch import decode_audio
+        data = decode_audio(source_file, sr=sr, pcm="s16le")
+        if len(_AUDIO_WAVEFORM_CACHE) >= _MAX_WAVEFORM_CACHE_ENTRIES:
+            _AUDIO_WAVEFORM_CACHE.pop(next(iter(_AUDIO_WAVEFORM_CACHE)))
+        _AUDIO_WAVEFORM_CACHE[key] = data
+        return data
+    except Exception:
+        return None
+
+
 @lru_cache(maxsize=20_000)
 def _audible_end(source_file: str, start: float, end: float) -> float:
     """Where the sound in this span actually stops.
@@ -1362,8 +1383,17 @@ def _audible_end(source_file: str, start: float, end: float) -> float:
         return end
     win = 160                                   # 10ms
     try:
-        from app.ytpmv.pitch import loudness    # in here: numpy missing is audio unread
-        env = loudness(source_file, start, dur, win).tolist()
+        from app.ytpmv.pitch import rms_windows
+        wave = _get_waveform(source_file, 16000)
+        if wave is not None:
+            a = max(0, int(round(start * 16000)))
+            b = min(len(wave), int(round(end * 16000)))
+            if b - a < win:
+                return end
+            env = rms_windows(wave[a:b], win).tolist()
+        else:
+            from app.ytpmv.pitch import loudness
+            env = loudness(source_file, start, dur, win).tolist()
     except Exception:
         return end
     if not env:
@@ -1440,6 +1470,22 @@ def _realise(
             # inside another word, where a silence reads as a word boundary.
             s["end_time"] = _audible_end(cand["source_file"],
                                          s["start_time"], s["end_time"])
+            if cut:
+                try:
+                    from app.ytpmv import dsp
+                    wave = _get_waveform(cand["source_file"], 16000)
+                    if wave is not None and len(wave) > 1:
+                        sr = 16000
+                        if front_cut:
+                            idx = int(round(s["start_time"] * sr))
+                            s["start_time"] = dsp.snap_to_zero_crossing(wave, idx, window=64, direction="nearest") / sr
+                        if end_cut:
+                            idx = int(round(s["end_time"] * sr))
+                            snapped_end = dsp.snap_to_zero_crossing(wave, idx, window=64, direction="nearest") / sr
+                            if snapped_end > s["start_time"] + 0.02:
+                                s["end_time"] = snapped_end
+                except Exception:
+                    pass
             s["next_start"] = s["end_time"]      # nothing follows it in the join
             s["subword"]    = cut
             s["_cut"]       = cut
@@ -1487,6 +1533,15 @@ def _realise(
                 seg = dict(cand)
                 seg["start_time"] = cand["start_time"] + st
                 seg["end_time"]   = cand["start_time"] + b
+                try:
+                    from app.ytpmv import dsp
+                    wave = _get_waveform(cand["source_file"], 16000)
+                    if wave is not None and len(wave) > 1:
+                        sr = 16000
+                        idx = int(round(seg["start_time"] * sr))
+                        seg["start_time"] = dsp.snap_to_zero_crossing(wave, idx, window=64, direction="nearest") / sr
+                except Exception:
+                    pass
                 seg["subword"] = seg["_cut"] = True
                 seg["spliced_from"] = cword
                 seg["matched"] = 1
@@ -1520,6 +1575,19 @@ def _realise(
                 st = cclip["start_time"] + (random.uniform(0, span) if span > 0 else 0)
                 seg["start_time"] = st
                 seg["end_time"]   = st + dur
+                try:
+                    from app.ytpmv import dsp
+                    wave = _get_waveform(cclip["source_file"], 16000)
+                    if wave is not None and len(wave) > 1:
+                        sr = 16000
+                        idx0 = int(round(seg["start_time"] * sr))
+                        seg["start_time"] = dsp.snap_to_zero_crossing(wave, idx0, window=64, direction="nearest") / sr
+                        idx1 = int(round(seg["end_time"] * sr))
+                        snap1 = dsp.snap_to_zero_crossing(wave, idx1, window=64, direction="nearest") / sr
+                        if snap1 > seg["start_time"] + 0.02:
+                            seg["end_time"] = snap1
+                except Exception:
+                    pass
             seg["subword"] = sliced
             seg["_cut"] = sliced
             seg["spliced_from"] = cword

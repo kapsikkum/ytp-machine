@@ -59,6 +59,38 @@ def _ensure_model() -> bool:
 # a sentence can now hold words from two of them.
 _char_cache: dict[tuple, list[tuple[str, float, float]] | None] = {}
 
+import json as _json
+
+
+def _load_alignment(clip_id: int) -> list[tuple[str, float, float]] | None:
+    """Load persisted alignment from SQLite, or None."""
+    try:
+        from app.database import get_db
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT alignment FROM clip_alignments WHERE clip_id=?",
+                (clip_id,)
+            ).fetchone()
+            if row:
+                data = _json.loads(row["alignment"] if isinstance(row, dict) else row[0])
+                return [(ch, float(s), float(e)) for ch, s, e in data]
+    except Exception:
+        pass
+    return None
+
+
+def _save_alignment(clip_id: int, alignment: list[tuple[str, float, float]]) -> None:
+    """Persist alignment to SQLite. Best-effort, never raises."""
+    try:
+        from app.database import get_db
+        data = _json.dumps([(ch, round(s, 6), round(e, 6)) for ch, s, e in alignment])
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO clip_alignments (clip_id, alignment) VALUES (?, ?)",
+                (clip_id, data)
+            )
+    except Exception:
+        pass
 
 def invalidate(clip_id: int | None = None) -> None:
     """Forget an alignment, or all of them.
@@ -79,9 +111,21 @@ def invalidate(clip_id: int | None = None) -> None:
     """
     if clip_id is None:
         _char_cache.clear()
+        try:
+            from app.database import get_db
+            with get_db() as conn:
+                conn.execute("DELETE FROM clip_alignments")
+        except Exception:
+            pass
     else:
         for key in [k for k in _char_cache if k[1] == clip_id]:
             del _char_cache[key]
+        try:
+            from app.database import get_db
+            with get_db() as conn:
+                conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (clip_id,))
+        except Exception:
+            pass
 
 
 def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
@@ -92,9 +136,18 @@ def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     if cid is not None and key in _char_cache:
         return _char_cache[key]
 
+    # Check persistent storage before running the model
+    if cid is not None:
+        result = _load_alignment(cid)
+        if result is not None:
+            _char_cache[key] = result
+            return result
+
     result = _align(clip)
     if cid is not None:
         _char_cache[key] = result
+        if result is not None:
+            _save_alignment(cid, result)
     return result
 
 
@@ -256,7 +309,7 @@ def cut_end_after_phonemes(clip: dict[str, Any], k: int,
         if not last_is_vowel and k > 0:
             # A stop still wants its burst: alignment marks the closure, and
             # the release is the part you can hear.
-            start = pt[k - 1][1]
+            start = pt[min(k, len(pt)) - 1][1]
             end = max(end, start + 0.055)
             if k < len(pt):
                 end = min(end, pt[k][2])      # never past the next phoneme

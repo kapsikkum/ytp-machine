@@ -3,6 +3,8 @@ import re
 import sqlite3
 from contextlib import contextmanager
 
+SCHEMA_VERSION = 1
+
 # Project root (parent of app/).
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -189,9 +191,11 @@ def _connect() -> sqlite3.Connection:
     # sqlite will not create a missing parent, and reports it as the same
     # "unable to open database file" it gives for a permissions problem.
     os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
-    conn = sqlite3.connect(target)
+    conn = sqlite3.connect(target, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -235,6 +239,8 @@ def init_db() -> None:
                 ingested_at TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE INDEX IF NOT EXISTS idx_sources_video_id ON sources(video_id);
+
             CREATE TABLE IF NOT EXISTS word_clips (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_id   INTEGER NOT NULL REFERENCES sources(id),
@@ -260,6 +266,7 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_nc_word ON noise_clips(word);
+            CREATE INDEX IF NOT EXISTS idx_nc_src ON noise_clips(source_id, start_time);
 
             -- User feedback on phoneme splices.  A negative score means "this
             -- clip sounded bad when used to splice this target word", so the
@@ -334,6 +341,46 @@ def init_db() -> None:
                 f"UPDATE {table} SET source_file = replace(source_file, char(92), '/') "
                 f"WHERE source_file LIKE '%' || char(92) || '%'"
             )
+
+        # ── Schema versioning ─────────────────────────────────────────────
+        # The version lives in the settings table so it travels inside
+        # corpus bundles automatically.
+        current = 0
+        try:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key='schema_version'"
+            ).fetchone()
+            if row:
+                current = int(row["value"])
+        except (sqlite3.Error, TypeError, ValueError):
+            pass
+
+        if current < 1:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS clip_alignments (
+                    clip_id    INTEGER PRIMARY KEY,
+                    alignment  TEXT NOT NULL,
+                    aligned_at TEXT DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS clip_cache (
+                    clip_id     INTEGER NOT NULL,
+                    pad_end     REAL NOT NULL,
+                    cache_file  TEXT NOT NULL,
+                    created_at  TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (clip_id, pad_end)
+                );
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '1')"
+            )
+            current = 1
+
+        # Future migrations would go here:
+        # if current < 2:
+        #     ... migrate v1 -> v2 ...
+        #     conn.execute("UPDATE settings SET value='2' WHERE key='schema_version'")
+
     _ready.add(db)
 
 
@@ -405,3 +452,40 @@ def max_units(settings: dict | None = None) -> int:
     except (TypeError, ValueError):
         return DEFAULT_MAX_UNITS
     return max(MIN_MAX_UNITS, min(MAX_MAX_UNITS, n))
+
+
+def get_schema_version() -> int:
+    """The active corpus's schema version, 0 if unversioned."""
+    raw = get_setting("schema_version", "0")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def corpus_meta() -> dict:
+    """Summary metadata for the active corpus, including schema version."""
+    v = get_schema_version()
+    try:
+        with get_db() as conn:
+            clips = conn.execute("SELECT COUNT(*) FROM word_clips").fetchone()[0]
+            words = conn.execute("SELECT COUNT(DISTINCT word) FROM word_clips").fetchone()[0]
+            sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+            # Alignment coverage
+            aligned = 0
+            try:
+                aligned = conn.execute("SELECT COUNT(*) FROM clip_alignments").fetchone()[0]
+            except sqlite3.Error:
+                pass
+    except sqlite3.Error:
+        clips = words = sources = aligned = 0
+    return {
+        "schema_version": v,
+        "current_version": SCHEMA_VERSION,
+        "needs_upgrade": v < SCHEMA_VERSION,
+        "total_clips": clips,
+        "unique_words": words,
+        "sources": sources,
+        "aligned_clips": aligned,
+        "corpus_gop": int(get_setting("corpus_gop", "25") or 25),
+    }

@@ -94,6 +94,17 @@ def _invalidate(clip_id: int | None = None) -> None:
             invalidate_alignment(clip_id)
         except Exception:
             pass
+        try:
+            from app import clip_cache
+            clip_cache.invalidate(clip_id)
+        except Exception:
+            pass
+    else:
+        try:
+            from app import clip_cache
+            clip_cache.invalidate()
+        except Exception:
+            pass
 
 
 def _source_path(source_id: int) -> str:
@@ -411,6 +422,10 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
             raise HTTPException(status_code=400, detail="word cannot be empty")
         sets.append("word=?"); params.append(word)
     moved = edit.start_time is not None or edit.end_time is not None
+    for name, val in (("start_time", edit.start_time), ("end_time", edit.end_time)):
+        if val is not None:
+            if not math.isfinite(val) or val < 0:
+                raise HTTPException(status_code=400, detail=f"Invalid {name}: must be a non-negative finite number")
     if edit.start_time is not None:
         sets.append("start_time=?"); params.append(round(edit.start_time, 4))
     if edit.end_time is not None:
@@ -565,6 +580,9 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
     word = clean_word(clip.word)
     if not word:
         raise HTTPException(status_code=400, detail="word cannot be empty")
+    for name, val in (("start_time", clip.start_time), ("end_time", clip.end_time)):
+        if not math.isfinite(val) or val < 0:
+            raise HTTPException(status_code=400, detail=f"Invalid {name}: must be a non-negative finite number")
     if clip.end_time - clip.start_time < 0.02:
         raise HTTPException(status_code=400, detail="a clip must be at least 20ms long")
     with get_db() as conn:
@@ -979,3 +997,151 @@ def locate_clip(clip_id: int):
             if row:
                 return dict(row, kind=kind)
     raise HTTPException(status_code=404, detail=f"no clip {clip_id}")
+
+
+@router.get("/corpus/diagnostics")
+def corpus_diagnostics():
+    """Corpus health metrics:
+    - unindexed downloads: media files in downloads/ not referenced in sources table
+    - clips with negative margins: clips where end_time <= start_time or overlapping next clip in source
+    - low-confidence clips: clips with boundary reports or very short duration (< 0.06s)
+    - words missing pronunciations: words in word_clips without pronunciation entries
+    - downvoted clips: clips with negative ratings in splice_ratings
+    """
+    init_db()
+    current = active()
+    corpus_dir = current["dir"]
+    downloads_dir = os.path.join(corpus_dir, "downloads")
+
+    # 1. Unindexed downloads
+    unindexed = []
+    indexed_files = set()
+    with get_db() as conn:
+        for r in conn.execute("SELECT source_file FROM sources").fetchall():
+            sf = r[0]
+            indexed_files.add(os.path.basename(sf))
+            indexed_files.add(sf.replace("\\", "/"))
+    if os.path.isdir(downloads_dir):
+        for f in sorted(os.listdir(downloads_dir)):
+            full_p = os.path.join(downloads_dir, f)
+            if os.path.isfile(full_p):
+                if f not in indexed_files and f"downloads/{f}" not in indexed_files:
+                    unindexed.append(f)
+
+    # 2. Clips with negative margins
+    negative_margins = []
+    with get_db() as conn:
+        invalid_times = conn.execute(
+            "SELECT id, source_id, word, start_time, end_time FROM word_clips WHERE end_time <= start_time"
+        ).fetchall()
+        for r in invalid_times:
+            negative_margins.append({
+                "id": r["id"], "source_id": r["source_id"], "word": r["word"],
+                "start_time": r["start_time"], "end_time": r["end_time"],
+                "margin": round(r["end_time"] - r["start_time"], 4),
+                "reason": "non-positive duration"
+            })
+
+        overlap_rows = conn.execute("""
+            SELECT id, source_id, word, start_time, end_time, next_start,
+                   round(next_start - end_time, 4) AS margin
+            FROM (
+                SELECT id, source_id, word, start_time, end_time,
+                       LEAD(start_time) OVER (PARTITION BY source_id ORDER BY start_time, id) AS next_start
+                FROM word_clips
+            )
+            WHERE next_start IS NOT NULL AND next_start < end_time
+        """).fetchall()
+        for r in overlap_rows:
+            negative_margins.append({
+                "id": r["id"], "source_id": r["source_id"], "word": r["word"],
+                "start_time": r["start_time"], "end_time": r["end_time"],
+                "next_start": r["next_start"], "margin": r["margin"],
+                "reason": "overlaps next clip"
+            })
+
+    # 3. Low-confidence clips
+    low_confidence = []
+    with get_db() as conn:
+        rep_rows = conn.execute("""
+            SELECT c.id, c.source_id, c.word, c.start_time, c.end_time,
+                   GROUP_CONCAT(b.kind || ':' || b.count, ', ') AS reports
+            FROM boundary_reports b
+            JOIN word_clips c ON b.clip_id = c.id
+            GROUP BY c.id
+        """).fetchall()
+        for r in rep_rows:
+            low_confidence.append({
+                "id": r["id"], "source_id": r["source_id"], "word": r["word"],
+                "start_time": r["start_time"], "end_time": r["end_time"],
+                "reason": f"boundary reports: {r['reports']}"
+            })
+
+        seen_ids = {item["id"] for item in low_confidence}
+        short_rows = conn.execute(
+            "SELECT id, source_id, word, start_time, end_time FROM word_clips WHERE (end_time - start_time) < 0.06 AND (end_time - start_time) > 0"
+        ).fetchall()
+        for r in short_rows:
+            if r["id"] not in seen_ids:
+                dur = round(r["end_time"] - r["start_time"], 4)
+                low_confidence.append({
+                    "id": r["id"], "source_id": r["source_id"], "word": r["word"],
+                    "start_time": r["start_time"], "end_time": r["end_time"],
+                    "reason": f"very short duration ({dur}s)"
+                })
+
+    # 4. Words missing pronunciations
+    from app.phonemes import word_to_phonemes
+    missing_prons = []
+    with get_db() as conn:
+        distinct_words = [r[0] for r in conn.execute("SELECT DISTINCT word FROM word_clips ORDER BY word").fetchall()]
+    for w in distinct_words:
+        if not word_to_phonemes(w):
+            missing_prons.append(w)
+
+    # 5. Downvoted clips
+    downvoted = []
+    with get_db() as conn:
+        dv_rows = conn.execute("""
+            SELECT s.clip_id, c.source_id, c.word, s.word AS target_word, s.score
+            FROM splice_ratings s
+            LEFT JOIN word_clips c ON s.clip_id = c.id
+            WHERE s.score < 0
+            ORDER BY s.score ASC
+        """).fetchall()
+        for r in dv_rows:
+            downvoted.append({
+                "clip_id": r["clip_id"],
+                "source_id": r["source_id"],
+                "clip_word": r["word"],
+                "target_word": r["target_word"],
+                "score": r["score"]
+            })
+
+    from app.database import corpus_meta
+    meta = corpus_meta()
+
+    return {
+        "corpus": current["slug"],
+        "summary": {
+            "unindexed_downloads": len(unindexed),
+            "negative_margins": len(negative_margins),
+            "low_confidence_clips": len(low_confidence),
+            "words_missing_pronunciations": len(missing_prons),
+            "downvoted_clips": len(downvoted),
+            "aligned_clips": meta["aligned_clips"],
+            "alignment_coverage": round(meta["aligned_clips"] / max(1, meta["total_clips"]) * 100, 1),
+            "corpus_gop": meta.get("corpus_gop", 25),
+            "schema_version": meta["schema_version"],
+        },
+        "aligned_clips": meta["aligned_clips"],
+        "total_clips": meta["total_clips"],
+        "alignment_coverage": round(meta["aligned_clips"] / max(1, meta["total_clips"]) * 100, 1),
+        "corpus_gop": meta.get("corpus_gop", 25),
+        "schema_version": meta["schema_version"],
+        "unindexed_downloads": unindexed,
+        "negative_margins": negative_margins,
+        "low_confidence_clips": low_confidence,
+        "words_missing_pronunciations": missing_prons,
+        "downvoted_clips": downvoted,
+    }

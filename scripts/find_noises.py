@@ -38,20 +38,32 @@ def _load(path):
     return d
 
 
-def _bursts_in_gap(source_file, g_start, g_end):
-    """Return list of (abs_start, abs_end, peak) energetic bursts in a gap."""
+def _decode_source(source_file):
+    """Decode the full source video audio once into float32 mono samples at _SR."""
     import numpy as np
-    tmp = os.path.join(tempfile.gettempdir(), f"_nz_{os.getpid()}.wav")
+    cmd = [
+        "ffmpeg", "-y", "-i", resolve_path(source_file),
+        "-f", "s16le", "-ac", "1", "-ar", str(_SR), "-"
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if proc.returncode == 0 and proc.stdout:
+        return np.frombuffer(proc.stdout, dtype=np.int16).astype("float32")
+    # Fallback to single scratch WAV file
+    tmp = os.path.join(tempfile.gettempdir(), f"_nz_src_{os.getpid()}.wav")
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{g_start:.4f}", "-t", f"{g_end - g_start:.4f}",
-             "-i", resolve_path(source_file), "-ac", "1", "-ar", str(_SR), tmp],
+            ["ffmpeg", "-y", "-i", resolve_path(source_file), "-ac", "1", "-ar", str(_SR), tmp],
             capture_output=True,
         )
-        d = _load(tmp)
+        return _load(tmp)
     finally:
         try: os.remove(tmp)
         except OSError: pass
+
+
+def _bursts_in_slice(d, g_start):
+    """Return list of (abs_start, abs_end, peak) energetic bursts in an in-memory audio slice."""
+    import numpy as np
     if len(d) < int(_WIN * _SR):
         return []
 
@@ -80,6 +92,16 @@ def _bursts_in_gap(source_file, g_start, g_end):
     return bursts
 
 
+def _bursts_in_gap(source_file, g_start, g_end):
+    """Return list of (abs_start, abs_end, peak) energetic bursts in a gap."""
+    audio = _decode_source(source_file)
+    if audio is None:
+        return []
+    s_idx = max(0, int(g_start * _SR))
+    e_idx = min(len(audio), int(g_end * _SR))
+    return _bursts_in_slice(audio[s_idx:e_idx], g_start)
+
+
 def _duration(source_file) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -101,6 +123,11 @@ def find_in_source(sid, apply, label=None, min_dur=0.0):
         return 0
     sf = src["source_file"]
 
+    full_audio = _decode_source(sf)
+    if full_audio is None or len(full_audio) == 0:
+        return 0
+    end = len(full_audio) / _SR
+
     # Every stretch of audio no word claims. The pairwise gaps are the obvious
     # ones, but a video that opens or closes on a noise has it outside every
     # pair -- and opening on one is common, because a speaker clears their
@@ -108,7 +135,6 @@ def find_in_source(sid, apply, label=None, min_dur=0.0):
     gaps = [(a["end_time"] + 0.02, b["start_time"] - 0.02)
             for a, b in zip(words, words[1:])]
     gaps.insert(0, (0.0, words[0]["start_time"] - 0.02))
-    end = _duration(sf)
     if end > words[-1]["end_time"]:
         gaps.append((words[-1]["end_time"] + 0.02, end))
 
@@ -116,7 +142,12 @@ def find_in_source(sid, apply, label=None, min_dur=0.0):
     for g_start, g_end in gaps:
         if g_end - g_start < _MIN_GAP:
             continue
-        for (st, en, peak) in _bursts_in_gap(sf, g_start, g_end):
+        s_idx = max(0, int(g_start * _SR))
+        e_idx = min(len(full_audio), int(g_end * _SR))
+        if e_idx <= s_idx:
+            continue
+        slice_d = full_audio[s_idx:e_idx]
+        for (st, en, peak) in _bursts_in_slice(slice_d, g_start):
             # A breath, a lip smack and the plosive at the front of a word are
             # all bursts, and all short. When you are after one particular
             # sustained noise -- a hum, a groan -- length is what separates it

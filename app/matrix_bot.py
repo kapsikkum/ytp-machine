@@ -339,8 +339,11 @@ class Bot:
         })
 
     async def react(self, room_id: str, event_id: str, key: str) -> None:
-        await self.client.room_send(room_id, "m.reaction", {
-            "m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": key}})
+        try:
+            await self.client.room_send(room_id, "m.reaction", {
+                "m.relates_to": {"rel_type": "m.annotation", "event_id": event_id, "key": key}})
+        except Exception as exc:
+            log.warning("Could not react with %r on %s: %s", key, event_id, exc)
 
     async def send_video(self, room_id: str, video_url: str, caption: str,
                          reply_to: str | None) -> None:
@@ -684,10 +687,26 @@ class Bot:
                 loop.add_signal_handler(getattr(signal, sig), syncing.cancel)
             except (AttributeError, NotImplementedError):   # Windows has neither
                 pass
+        backoff = 1.0
+        max_backoff = 60.0
         try:
-            await self.client.sync_forever(timeout=30000, full_state=False)
-        except asyncio.CancelledError:
-            log.info("asked to stop")
+            while True:
+                try:
+                    await self.client.sync_forever(timeout=30000, full_state=False)
+                    backoff = 1.0
+                    break
+                except asyncio.CancelledError:
+                    log.info("asked to stop")
+                    break
+                except Exception as exc:
+                    log.warning("sync_forever disconnected (%s: %s). Reconnecting in %.1fs...",
+                                type(exc).__name__, exc, backoff)
+                    try:
+                        await asyncio.sleep(backoff)
+                    except asyncio.CancelledError:
+                        log.info("asked to stop during reconnect backoff")
+                        break
+                    backoff = min(backoff * 2.0, max_backoff)
         finally:
             watcher.cancel()
             await self.api.close()

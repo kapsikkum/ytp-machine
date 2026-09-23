@@ -367,7 +367,8 @@ def _default_settings_for(part: music.Part, rec: dict) -> dict:
         "octave": rec.get("octave", 0),
         "transpose": 0,
         "volume": _VOLUME.get(part.role, 0.8),
-        "pan": _PAN.get(part.role, 0.0),
+        "pan": _num(rec.get("pan"), part.pan if part.pan is not None else _PAN.get(part.role, 0.0), -1.0, 1.0),
+        "haas": bool(rec.get("haas", False)),
         "mode": rec.get("mode") or ("raw" if part.is_drums else "perfect"),
         "sustain": "ring" if part.is_drums else "note",
         # What the part is played through, and always nothing until asked.
@@ -433,6 +434,8 @@ def _merge(defaults: dict, given: dict | None) -> dict:
         s["program"] = _num(given["program"], defaults["program"], 0, 127, int)
     if "hit" in given:
         s["hit"] = bool(given["hit"])
+    if "haas" in given:
+        s["haas"] = bool(given["haas"])
     if s["text"] and defaults.get("text") is None:
         # Given a sound where none was suggested: it is meant to be heard.
         s["mute"], s["visible"] = False, True
@@ -673,9 +676,17 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # because its tile is a picture of the sound it makes.
     cols, rows, tw, th = grid(len([p for p in shown if p.id in sample_of]) or 1)
     W, H = cols * tw, rows * th
-    if synth:
+    draft = bool(opts.get("draft", False))
+    is_retro = screen in screens.SIZES
+    if is_retro:
         cw, ch = screens.SIZES[screen]
         sw, sh = cw // cols, ch // rows            # a tile, in the console's own pixels
+    elif draft:
+        cw, ch = W // 2, H // 2
+        sw, sh = tw // 2, th // 2
+    else:
+        cw, ch = W, H
+        sw, sh = tw, th
     traces: dict[str, np.ndarray] = {}
     scratch = np.zeros_like(mix) if balance or synth else None
     levels: dict[str, dict] = {}
@@ -709,8 +720,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             gl, gr = math.cos(pan), math.sin(pan)
             stem = np.lib.format.open_memmap(os.path.join(stemdir, f"{len(stems)}.npy"),
                                              mode="w+", dtype=np.float16, shape=(N,))
+            denom = gl + gr if abs(gl + gr) > 1e-6 else 1.0
             for i in range(0, N, chunk):
-                stem[i:i + chunk] = scratch[i:i + chunk].sum(axis=1) / (gl + gr)
+                stem[i:i + chunk] = scratch[i:i + chunk].sum(axis=1) / denom
             # What the person asked for over and above the old table, kept:
             # the measurement decides where a part sits on its own, and
             # somebody who has moved a slider still outranks it.
@@ -745,7 +757,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         tiles = [p for p in playing if p.id in sample_of][:1]
         cols, rows, tw, th = grid(len(tiles))
         W, H = cols * tw, rows * th
-    frames_of = {} if synth else {p.id: [smp.frames(tw, th) for smp in sample_of[p.id]]
+    tile_w = sw if (is_retro or draft) else tw
+    tile_h = sh if (is_retro or draft) else th
+    frames_of = {} if synth else {p.id: [smp.frames(tile_w, tile_h) for smp in sample_of[p.id]]
                                   for p in tiles}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
@@ -753,21 +767,25 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     os.makedirs("output", exist_ok=True)
     out_path = os.path.join("output", f"ytpmv_{run_id}.mp4")
     vf = ["format=yuv420p"]
-    src_w, src_h = (screens.SIZES[screen] if screen in screens.SIZES else (W, H))
-    if synth:
+    src_w, src_h = (screens.SIZES[screen] if is_retro else (W // 2, H // 2) if draft else (W, H))
+    if synth or is_retro or draft:
         # Drawn in the console's pixels, so a label goes where its tile is
         # once they are blown up, not where a full-size tile would have been.
-        tw, th = sw * W // src_w, sh * H // src_h
+        label_tw, label_th = sw * W // src_w, sh * H // src_h
+    else:
+        label_tw, label_th = tw, th
     font = g.subtitle_font() if labels else None
     if font:
         for i, p in enumerate(tiles):
-            x, y = (i % cols) * tw, (i // cols) * th
+            x, y = (i % cols) * label_tw, (i // cols) * label_th
             text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
             f = font.replace("\\", "/").replace(":", "\\:")
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
-                         f":fontsize={max(12, th // 12)}:borderw=2:bordercolor=black"
-                         f":x={x + 8}:y={y + th - th // 12 - 10}")
-    if screen in screens.SIZES:
+                         f":fontsize={max(12, label_th // 12)}:borderw=2:bordercolor=black"
+                         f":x={x + 8}:y={y + label_th - label_th // 12 - 10}")
+    if draft and not is_retro:
+        vf.insert(0, f"scale={W}:{H}:flags=bilinear")
+    if is_retro:
         # Blown back up first, so the labels below are still placed in the
         # full-size picture and stay readable rather than becoming eight
         # chunky squares.
@@ -775,18 +793,13 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
            "-s", f"{src_w}x{src_h}", "-r", str(FPS), "-i", "-", "-i", wav,
            "-map", "0:v", "-map", "1:a", "-vf", ",".join(vf),
-           # Flat blocks of a handful of colours compress for almost nothing,
-           # so a console picture is encoded harder: at the usual setting the
-           # codec smears the palette it just went to the trouble of using,
-           # and the point of the filter is that every pixel is one of these
-           # colours and not a blend of two of them.
-           "-c:v", "libx264", "-preset", "veryfast",
-           "-crf", "16" if screen in screens.SIZES else "23",
+           *_encoder_for_ytpmv(),
+           "-crf", "16" if is_retro else "23",
            "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), "-ac", "2",
            "-shortest", "-movflags", "+faststart", out_path]
     errlog = open(os.path.join(tmpdir, "ffmpeg.log"), "w+b")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
-    canvas = np.zeros((src_h, src_w, 3) if synth else (H, W, 3), dtype=np.uint8)
+    canvas = np.zeros((src_h, src_w, 3) if (synth or is_retro or draft) else (H, W, 3), dtype=np.uint8)
     try:
         for f in range(n_frames):
             if f % 25 == 0:
@@ -800,12 +813,14 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                         traces[p.id][f], hits.get(p.id, []), starts_of[p.id], t,
                         sw - 1, sh - 1, flash, dim, screen)
                     continue
-                x0, y0 = (i % cols) * tw, (i // cols) * th
-                canvas[y0:y0 + th, x0:x0 + tw] = _tile(frames_of[p.id], hits.get(p.id, []),
-                                                       starts_of[p.id], t, flash, dim)
+                x0, y0 = (i % cols) * tile_w, (i // cols) * tile_h
+                canvas[y0:y0 + tile_h, x0:x0 + tile_w] = _tile(frames_of[p.id], hits.get(p.id, []),
+                                                               starts_of[p.id], t, flash, dim)
             try:
-                proc.stdin.write(screens.apply(canvas, screen).tobytes()
-                                 if screen in screens.SIZES else canvas.tobytes())
+                if is_retro:
+                    proc.stdin.write(screens.apply(canvas, screen).tobytes())
+                else:
+                    proc.stdin.write(memoryview(canvas))
             except (BrokenPipeError, OSError):
                 break
         proc.stdin.close()
@@ -841,7 +856,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
-                                                   "tone", "program", "mute", "visible")},
+                                                   "tone", "program", "mute", "visible", "pan", "haas")},
+                   "polyphony": p.polyphony()[0],
+                   "typical_polyphony": round(p.polyphony()[1], 2),
                    # How loud the part turned out, and how far it had to be
                    # moved to sit where its job wants it.
                    **levels.get(p.id, {}),
@@ -957,8 +974,21 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
             k = min(len(y), N - a)
             if k > 0:
                 gain = s["volume"] * loud * (0.35 + 0.65 * n.velocity / 127.0)
-                mix[a:a + k, 0] += y[:k] * (gain * gl)
-                mix[a:a + k, 1] += y[:k] * (gain * gr)
+                if s.get("haas"):
+                    delay = int(round(0.018 * SR))  # 18ms Haas delay
+                    if s["pan"] <= 0:
+                        mix[a:a + k, 0] += y[:k] * (gain * gl)
+                        k_d = min(k, max(0, N - (a + delay)))
+                        if k_d > 0:
+                            mix[a + delay:a + delay + k_d, 1] += y[:k_d] * (gain * gr)
+                    else:
+                        k_d = min(k, max(0, N - (a + delay)))
+                        if k_d > 0:
+                            mix[a + delay:a + delay + k_d, 0] += y[:k_d] * (gain * gl)
+                        mix[a:a + k, 1] += y[:k] * (gain * gr)
+                else:
+                    mix[a:a + k, 0] += y[:k] * (gain * gl)
+                    mix[a:a + k, 1] += y[:k] * (gain * gr)
         if n.start != last_start:
             hits.append(_Hit(t0, dur, warp, flip and len(hits) % 2 == 1, pick))
             last_start = n.start
@@ -1002,11 +1032,32 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
             "sample": sample.describe() if sample else None}
 
 
+def _encoder_for_ytpmv() -> list[str]:
+    """Encoder flags for YTPMV output. Uses the same selection as generate.py."""
+    try:
+        from app.generate import _encoder_settings
+        settings = _encoder_settings()
+        if len(settings) > 1 and settings[1] == "libx264":
+            return ["-c:v", "libx264", "-preset", "veryfast"]
+        return settings
+    except (ImportError, Exception):
+        return ["-c:v", "libx264", "-preset", "veryfast"]
+
+
 def _scale(img: np.ndarray, k: float) -> np.ndarray:
-    if k == 1.0:
+    """Brighten or dim an image by factor *k*, staying in uint8."""
+    if abs(k - 1.0) < 0.001:
         return img
-    # uint32: 255 * 320 does not fit in 16 bits, and the flash wrapped to cyan.
-    return np.minimum(img.astype(np.uint32) * int(k * 256) >> 8, 255).astype(np.uint8)
+    if k <= 1.0:
+        # Dimming: direct uint8 multiply truncates naturally, no overflow possible
+        out = np.empty_like(img)
+        np.multiply(img, k, out=out, casting='unsafe')
+        return out
+    # Brightening: clip to 255
+    return np.minimum(
+        np.multiply(img, np.float32(k), dtype=np.float32),
+        255.0
+    ).astype(np.uint8)
 
 
 def _scope_tile(trace: np.ndarray, hits: list[_Hit], starts: list[float], t: float,

@@ -346,7 +346,10 @@
     <div class="progress" id="progress" hidden>
       <div class="track"><div id="progress-bar"></div></div>
     </div>
-    <div id="status" role="status"></div>
+    <div id="status-row" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-top:0.4rem;">
+      <div id="status" role="status"></div>
+      <button type="button" id="cancel-job-btn" class="ghost" style="padding:0.2rem 0.65rem;font-size:0.75rem;color:var(--red);border-color:rgba(239,68,68,0.35);cursor:pointer;" hidden>Cancel</button>
+    </div>
   </section>
 
   <section class="card result" id="result" hidden>
@@ -381,7 +384,37 @@
 
 <footer>
   <span id="stats"></span>
+  <span style="margin-left: auto;">
+    <button type="button" class="linkish" id="btn-server-settings" style="cursor: pointer; color: var(--dim);" title="Server & Encoder Settings">⚙️ server settings</button>
+  </span>
 </footer>
+
+<!-- Server Settings Modal -->
+<div id="server-settings-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:#18181b; border:1px solid var(--line-2); border-radius:12px; padding:1.25rem; width:min(90vw, 360px); box-shadow:0 20px 40px rgba(0,0,0,0.6);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+      <h3 style="margin:0; font-size:1rem; font-weight:600; color:var(--text);">Server Settings</h3>
+      <button type="button" class="linkish" id="btn-close-server-settings" style="font-size:1.3rem; line-height:1; cursor:pointer;">&times;</button>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:1rem; font-size:0.82rem;">
+      <label style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:var(--muted);">Video Encoder</span>
+        <select id="server-encoder" style="background:var(--raised); color:var(--text); border:1px solid var(--line-2); border-radius:6px; padding:0.3rem 0.6rem; font-size:0.8rem;"></select>
+      </label>
+      <label style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:var(--muted);">Concurrent Workers</span>
+        <input type="number" id="server-workers" min="1" max="8" style="width:4.5rem; background:var(--raised); color:var(--text); border:1px solid var(--line-2); border-radius:6px; padding:0.3rem 0.5rem; font-size:0.8rem; text-align:center;">
+      </label>
+      <div style="display:flex; justify-content:space-between; align-items:center; color:var(--dim); font-size:0.75rem;">
+        <span>Word Clip Cache</span>
+        <span id="server-cache-size">0 MB / 500 MB</span>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.5rem;">
+        <button type="button" id="btn-save-server-settings" style="cursor:pointer; background:var(--yellow); color:#000; border:none; border-radius:6px; padding:0.38rem 1rem; font-size:0.8rem; font-weight:600;">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 (() => {
@@ -548,7 +581,17 @@
     const r = await fetchJson('/api/stats');
     if (!r.ok) return;
     const d = r.data;
-    $('stats').innerHTML = `<b>${d.total_clips.toLocaleString()}</b> clips · <b>${d.unique_words.toLocaleString()}</b> words · <b>${d.sources.toLocaleString()}</b> videos`;
+    const vBadge = d.schema_version !== undefined ? ` · <span style="color:var(--dim); font-size:0.72rem; border:1px solid var(--line); border-radius:4px; padding:1px 4px;" title="Corpus Schema Version">v${d.schema_version}</span>` : '';
+    const upgradeBtn = d.needs_upgrade ? ` <button type="button" class="linkish" id="btn-upgrade-corpus" style="color:var(--yellow); text-decoration:underline;">upgrade</button>` : '';
+    $('stats').innerHTML = `<b>${d.total_clips.toLocaleString()}</b> clips · <b>${d.unique_words.toLocaleString()}</b> words · <b>${d.sources.toLocaleString()}</b> videos${vBadge}${upgradeBtn}`;
+    if ($('btn-upgrade-corpus')) {
+      $('btn-upgrade-corpus').addEventListener('click', async () => {
+        $('btn-upgrade-corpus').textContent = 'upgrading…';
+        await postJson('/api/corpus/upgrade');
+        loadStats();
+        loadCorpora();
+      });
+    }
   }
   // Every corpus, for giving words another voice. The first is the active one.
   let voices = [];
@@ -559,10 +602,40 @@
     voices = r.data.corpora.filter(c => !c.error).sort((a, b) => b.active - a.active);
     drawView();                       // the folded text names voices by name, not slug
     if (r.data.corpora.length < 2) return;
-    $('corpus-select').innerHTML = r.data.corpora.map(c =>
-      `<option value="${esc(c.slug)}"${c.active ? ' selected' : ''}${c.error ? ' disabled' : ''}>${esc(c.name)}${c.error ? ' (unreadable)' : ''}</option>`).join('');
+    $('corpus-select').innerHTML = r.data.corpora.map(c => {
+      const v = c.schema_version !== undefined ? ` (v${c.schema_version})` : '';
+      return `<option value="${esc(c.slug)}"${c.active ? ' selected' : ''}${c.error ? ' disabled' : ''}>${esc(c.name)}${v}${c.error ? ' (unreadable)' : ''}</option>`;
+    }).join('');
     $('corpus-wrap').hidden = false;
   }
+
+  // ── Server Settings Modal ──────────────────────────────────────────────────
+  const sModal = $('server-settings-modal');
+  $('btn-server-settings').addEventListener('click', async () => {
+    sModal.style.display = 'flex';
+    const r = await fetchJson('/api/settings/server');
+    if (!r.ok) return;
+    const d = r.data;
+    const encSelect = $('server-encoder');
+    encSelect.innerHTML = Object.entries(d.available_encoders || { libx264: true }).map(([name, avail]) => {
+      const label = name === 'libx264' ? 'libx264 (CPU ultrafast)' : name === 'h264_nvenc' ? 'NVENC (NVIDIA GPU)' : name === 'h264_qsv' ? 'QuickSync (Intel GPU)' : name;
+      return `<option value="${name}"${name === d.encoder ? ' selected' : ''}${!avail ? ' disabled' : ''}>${label}${!avail ? ' (unavailable)' : ''}</option>`;
+    }).join('');
+    $('server-workers').value = d.encode_workers || 1;
+    $('server-cache-size').textContent = `${d.clip_cache_mb} MB / ${d.clip_cache_max_mb} MB`;
+  });
+  $('btn-close-server-settings').addEventListener('click', () => { sModal.style.display = 'none'; });
+  sModal.addEventListener('click', (e) => { if (e.target === sModal) sModal.style.display = 'none'; });
+  $('btn-save-server-settings').addEventListener('click', async () => {
+    const btn = $('btn-save-server-settings');
+    btn.textContent = 'Saving…';
+    await postJson('/api/settings/server', {
+      encoder: $('server-encoder').value,
+      encode_workers: parseInt($('server-workers').value, 10) || 1,
+    });
+    btn.textContent = 'Save';
+    sModal.style.display = 'none';
+  });
   async function loadSpliceMode() {
     const r = await fetchJson('/api/splice-mode');
     if (!r.ok) return;
@@ -1148,12 +1221,34 @@
       loadStats();
     } finally {
       busy = false; progress(undefined);
+      activeJobId = null;
+      $('cancel-job-btn').hidden = true;
+      $('cancel-job-btn').disabled = false;
+      $('cancel-job-btn').textContent = 'Cancel';
       $('again-btn').disabled = false;
       drawChips();
     }
   }
 
+  let activeJobId = null;
+  $('cancel-job-btn').onclick = async () => {
+    if (!activeJobId) return;
+    const idToCancel = activeJobId;
+    $('cancel-job-btn').disabled = true;
+    $('cancel-job-btn').textContent = 'Cancelling…';
+    try {
+      await fetch(`/api/jobs/${idToCancel}`, { method: 'DELETE' });
+      setStatus('Job cancelled.', true);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   async function poll(id, position) {
+    activeJobId = id;
+    $('cancel-job-btn').hidden = false;
+    $('cancel-job-btn').disabled = false;
+    $('cancel-job-btn').textContent = 'Cancel';
     let delay = 250;
     if (position > 0) setStatus(`queued — ${position} ahead of you`);
     for (;;) {
@@ -1163,6 +1258,7 @@
       if (res.error) { setStatus(`Error: ${res.error}`, true); return null; }
       if (!res.ok) { const d = res.data.detail; setStatus(`Error: ${(typeof d === 'object' ? d.message : d) || 'job lost'}`, true); return null; }
       const j = res.data;
+      if (j.status === 'cancelled') { setStatus('Job cancelled.', true); return null; }
       if (j.status === 'error') { setStatus(`Error: ${j.error}`, true); return null; }
       if (j.status === 'done') { setStatus(''); return j.result; }
       if (j.status === 'queued') {

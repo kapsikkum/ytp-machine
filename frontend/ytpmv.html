@@ -277,6 +277,7 @@
     <label title="A flash of brightness on every hit"><input type="checkbox" id="opt-flash" checked> flash</label>
     <label title="Darken a tile when its part is not playing"><input type="checkbox" id="opt-dim" checked> dim idle</label>
     <label title="Write each part's word on its tile, or what plays it when there is no voice"><input type="checkbox" id="opt-labels"> labels</label>
+    <label title="Draft preview renders at half resolution for faster generation"><input type="checkbox" id="opt-draft"> draft preview</label>
     </div>
   </div>
   <div id="actions">
@@ -778,7 +779,7 @@
       speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
       vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked, accurate: $('opt-accurate').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
-      labels: $('opt-labels').checked, synth: synthMode,
+      labels: $('opt-labels').checked, draft: $('opt-draft').checked, synth: synthMode,
     };
     if (len) options.max_seconds = len;
     try {

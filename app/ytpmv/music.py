@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import bisect
 import io
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 
 import mido
@@ -109,6 +109,7 @@ class Part:
     notes: list[Note] = field(default_factory=list)
     role: str = "rhythm"          # bass | lead | chords | rhythm | drums:<group>
     drum_group: str | None = None
+    pan: float | None = None
 
     @property
     def is_drums(self) -> bool:
@@ -168,6 +169,7 @@ class Part:
             "range_midi": [lo, hi],
             "median_midi": self.median_pitch(),
             "common_midi": self.common_pitch(),
+            "pan": round(self.pan, 2) if self.pan is not None else None,
             "polyphony": mx,
             "typical_polyphony": round(typ, 2),
             "first": round(self.notes[0].start, 3) if self.notes else None,
@@ -221,19 +223,24 @@ class Song:
 
 class _TempoMap:
     def __init__(self, tpb: int, changes: list[tuple[int, int]]):
-        self.tpb = tpb
+        self.tpb = abs(tpb) if tpb else 480
+        if self.tpb == 0:
+            self.tpb = 480
         ch = sorted(changes)
         if not ch or ch[0][0] != 0:
             ch.insert(0, (0, 500000))          # MIDI's default: 120 BPM
         self.ticks = [t for t, _ in ch]
-        self.tempi = [v for _, v in ch]
+        self.tempi = [v if v > 0 else 500000 for _, v in ch]
         self.secs = [0.0]
         for i in range(1, len(ch)):
             dt = self.ticks[i] - self.ticks[i - 1]
-            self.secs.append(self.secs[-1] + dt * self.tempi[i - 1] / 1e6 / tpb)
+            self.secs.append(self.secs[-1] + dt * self.tempi[i - 1] / 1e6 / self.tpb)
 
     def seconds(self, tick: int) -> float:
-        i = bisect.bisect_right(self.ticks, tick) - 1
+        if self.tpb <= 0:
+            self.tpb = 480
+        tick = max(0, tick)
+        i = max(0, bisect.bisect_right(self.ticks, tick) - 1)
         return self.secs[i] + (tick - self.ticks[i]) * self.tempi[i] / 1e6 / self.tpb
 
     def main_bpm(self, end_tick: int) -> float:
@@ -243,6 +250,8 @@ class _TempoMap:
             nxt = self.ticks[i + 1] if i + 1 < len(self.ticks) else max(end_tick, t)
             spans[self.tempi[i]] += (nxt - t) * self.tempi[i]      # time, not beats
         tempo = spans.most_common(1)[0][0] if spans else 500000
+        if not tempo or tempo <= 0:
+            tempo = 500000
         return 60e6 / tempo
 
 
@@ -391,10 +400,11 @@ def parse(data: bytes, title: str = "") -> Song:
     raw: dict[tuple[int, int], list[tuple[int, int, int, int]]] = defaultdict(list)
     chan_prog: dict[tuple[int, int], Counter] = defaultdict(Counter)
     names: dict[int, str] = {}
+    pans: dict[tuple[int, int], float] = {}
 
     for ti, track in enumerate(mf.tracks):
         tick = 0
-        open_: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
+        open_: dict[tuple[int, int], deque[tuple[int, int]]] = defaultdict(deque)
         for msg in track:
             tick += msg.time
             if msg.is_meta:
@@ -408,13 +418,16 @@ def parse(data: bytes, title: str = "") -> Song:
             if msg.type == "program_change":
                 programs[msg.channel] = msg.program
                 continue
+            if msg.type == "control_change" and msg.control == 10:
+                pans[(ti, msg.channel)] = max(-1.0, min(1.0, (msg.value - 64) / 64.0))
+                continue
             if msg.type == "note_on" and msg.velocity > 0:
                 open_[(msg.channel, msg.note)].append((tick, msg.velocity))
                 chan_prog[(ti, msg.channel)][programs.get(msg.channel, 0)] += 1
             elif msg.type in ("note_off", "note_on"):
                 q = open_.get((msg.channel, msg.note))
                 if q:
-                    st, vel = q.pop(0)
+                    st, vel = q.popleft()
                     raw[(ti, msg.channel)].append((st, tick, msg.note, vel))
             end_tick = max(end_tick, tick)
         for (ch, pitch), q in open_.items():        # never released: end with the track
@@ -427,6 +440,7 @@ def parse(data: bytes, title: str = "") -> Song:
         evs.sort()
         notes = [Note(tm.seconds(s), max(tm.seconds(e) - tm.seconds(s), 0.0), pch, vel)
                  for s, e, pch, vel in evs]
+        p_pan = pans.get((ti, ch))
         if ch == DRUM_CHANNEL:
             groups: dict[str, list[Note]] = defaultdict(list)
             for n in notes:
@@ -434,11 +448,11 @@ def parse(data: bytes, title: str = "") -> Song:
             for g in _DRUM_ORDER:
                 if groups.get(g):
                     parts.append(Part(id=f"t{ti}c{ch}-{g}", name=g, track=ti, channel=ch,
-                                      program=None, notes=groups[g], drum_group=g))
+                                      program=None, notes=groups[g], drum_group=g, pan=p_pan))
         else:
             prog = chan_prog[(ti, ch)].most_common(1)[0][0] if chan_prog[(ti, ch)] else 0
             parts.append(Part(id=f"t{ti}c{ch}", name=names.get(ti) or GM_PROGRAMS[prog],
-                              track=ti, channel=ch, program=prog, notes=notes))
+                              track=ti, channel=ch, program=prog, notes=notes, pan=p_pan))
 
     _assign_roles(parts)
 
