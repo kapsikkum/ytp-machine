@@ -52,6 +52,18 @@ check("an 80ms clip is not cut to one AAC frame", len(v.x) / SR > 0.06,
 check("and keeps its pitch", v.info.f0 is not None and abs(v.info.f0 - 150) < 3,
       f"{v.info.f0 and round(v.info.f0, 1)}Hz")
 
+# Shorter still -- a 50ms consonant, as mayweb's /g/ and /jh/ are -- and the
+# mp4 kept no sound at all, so the take was refused as silent although the
+# recording has plenty.
+short = dict(clip, word="/yy/", start_time=0.6, end_time=0.65, prev_end=0.6, next_start=0.65)
+samples.unit_takes = lambda _u: [short]
+try:
+    n = len(samples.build("/yy/", 0, "kick").voice.x) / SR
+    check("a 50ms clip still builds, with its sound", n > 0.03, f"{n * 1000:.0f}ms")
+except samples.SampleError as exc:
+    check("a 50ms clip still builds, with its sound", False, str(exc))
+samples.unit_takes = lambda _u: [clip]
+
 # Whatever else makes a take come back without a pitch, a pitched part moves
 # on to the next suggestion that has one rather than playing it.
 from app.ytpmv.recommend import first_that_sings  # noqa: E402

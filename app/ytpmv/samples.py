@@ -351,10 +351,14 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
             try:
                 x = decode_audio(mp4)
             except RuntimeError as exc:
-                # Built fine and still no sound: the recording it was cut from
-                # has none. That is this word being unsayable, not a server fault.
-                os.remove(mp4)
-                raise SampleError(f'"{text}" has no sound in its recording') from exc
+                # Built fine and still no sound. For one clip that is the mp4
+                # cutting a 40-60ms consonant to no AAC frames at all; its
+                # picture is still good and its sound is read from the
+                # recording below. Otherwise the recording it was cut from has
+                # none: that word is unsayable, not a server fault.
+                if not word_takes:
+                    os.remove(mp4)
+                    raise SampleError(f'"{text}" has no sound in its recording') from exc
 
     if word_takes:
         # One clip: its sound straight from the recording, the same window
@@ -370,6 +374,9 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
                 x = src
         except RuntimeError:
             pass                              # the mp4's sound will do
+        if x is None:
+            os.remove(mp4)
+            raise SampleError(f'"{text}" has no sound in its recording')
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))
     audio = x[a:b]
