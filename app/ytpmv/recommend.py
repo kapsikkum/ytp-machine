@@ -75,6 +75,7 @@ _TAKES_PER_WORD = 4
 _ALTERNATIVES = 5
 _ROTATE = 3              # takes of the chosen word to play round-robin
 _POOL = 6                # words good enough for the ultra mode to throw about
+_SING_TRIES = 6          # suggestions built and checked before a pitched part settles
 
 _lock = threading.Lock()
 _mem: dict[str, dict] = {}      # corpus -> {clip key: measurement}
@@ -230,6 +231,22 @@ def _words_for(role: str, available: dict[str, list[dict]], frequent: list[str],
     return words
 
 
+def first_that_sings(ranked: list, sings) -> list:
+    """*ranked* with its first entry that *sings* moved to the front.
+
+    The measurement is taken from the recording; what is played is the
+    sample built from it, and the two can disagree -- a clip that measured
+    on a note came back with no pitch at all. A pitched part that cannot be
+    put on a note is worse than the next suggestion down, which usually
+    sounds nearly as good, so the top few are built and the first that
+    really has a pitch is the one used. None of them: left as it was.
+    """
+    for k, r in enumerate(ranked[:_SING_TRIES]):
+        if r[3].get("f0") and sings(r[1], r[2]):
+            return [r] + ranked[:k] + ranked[k + 1:]
+    return ranked
+
+
 def recommend(song: Song, progress=None) -> dict[str, dict]:
     """For each part: the suggested sound, alternatives, and an octave to play it in.
 
@@ -284,6 +301,16 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
                         cache[_clip_key(clip)] = {**keep, **m}
         _save(corpus)
 
+    heard: dict[tuple[str, int], bool] = {}
+
+    def sings(word: str, take: int) -> bool:
+        if (word, take) not in heard:
+            try:
+                heard[word, take] = samples.build(word, take).voice.info.f0 is not None
+            except samples.SampleError:
+                heard[word, take] = False
+        return heard[word, take]
+
     out: dict[str, dict] = {}
     used: dict[str, int] = {}
     for part in song.parts:
@@ -308,6 +335,8 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
             if r[1] not in seen:
                 seen.add(r[1])
                 uniq.append(r)
+        if not part.is_drums:
+            uniq = first_that_sings(uniq, sings)
         if not uniq:
             out[part.id] = {"text": None, "take": 0, "octave": 0,
                             "mode": "raw" if part.is_drums else "perfect",

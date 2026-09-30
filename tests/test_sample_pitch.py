@@ -52,6 +52,17 @@ check("an 80ms clip is not cut to one AAC frame", len(v.x) / SR > 0.06,
 check("and keeps its pitch", v.info.f0 is not None and abs(v.info.f0 - 150) < 3,
       f"{v.info.f0 and round(v.info.f0, 1)}Hz")
 
+# Whatever else makes a take come back without a pitch, a pitched part moves
+# on to the next suggestion that has one rather than playing it.
+from app.ytpmv.recommend import first_that_sings  # noqa: E402
+
+ranked = [(5.0, "ah", 3, {"f0": 166}), (4.8, "oh", 1, {"f0": None}), (4.6, "ee", 0, {"f0": 220})]
+got = first_that_sings(ranked, lambda w, t: w != "ah")
+check("a take that won't sing gives way to the next that will",
+      [r[1] for r in got] == ["ee", "ah", "oh"], str([r[1] for r in got]))
+check("and nothing moves when none of them sings",
+      first_that_sings(ranked, lambda w, t: False) == ranked)
+
 try:
     os.remove(samples.build("/zz/", 0).mp4)
 except OSError:
