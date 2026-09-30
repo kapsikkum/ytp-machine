@@ -356,6 +356,20 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
                 os.remove(mp4)
                 raise SampleError(f'"{text}" has no sound in its recording') from exc
 
+    if word_takes:
+        # One clip: its sound straight from the recording, the same window
+        # the recommender measured, which the mp4's picture also starts at.
+        # The mp4's own sound is cut to whole AAC frames of 23ms, which a
+        # word never notices -- and which left an 80ms phoneme of Morshu's
+        # as one frame, too short to hold a pitch, so every part that was
+        # recommended a pitched vowel was handed one with no pitch at all.
+        try:
+            s, e = g.extract_window(clip)
+            src = decode_audio(clip["source_file"], s, e - s)
+            if len(src):
+                x = src
+        except RuntimeError:
+            pass                              # the mp4's sound will do
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))
     audio = x[a:b]
