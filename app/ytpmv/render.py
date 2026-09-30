@@ -710,15 +710,24 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     stems: list[dict] = []
     stemdir = tempfile.mkdtemp(prefix="ytpmv_stems_") if balance else None
     chunk = 60 * SR
+    # Where the last part wrote into scratch. Everything outside it is still
+    # zero, so only that much needs clearing, and only a part's own stretch
+    # needs turning into a stem and mixing: a song of three hundred parts,
+    # most of them playing for seconds, was spending most of its time adding
+    # up silence.
+    span = [0, 0]
     for part in wanted.values():
         if part.id not in sample_of:
             continue
         into = mix if part.id in playing_ids else None
         if (balance and into is not None) or synth:
-            scratch.fill(0.0)
+            scratch[span[0]:span[1]] = 0.0
             into = scratch
+        span = [N, 0]
         hits[part.id] = _play(part, settings[part.id], sample_of[part.id], into,
-                              0.0, T, speed, g_transpose, flip, tick, jitter, vary, cuts)
+                              0.0, T, speed, g_transpose, flip, tick, jitter, vary, cuts,
+                              span)
+        lo, hi = span[0], max(span)
         if synth and settings[part.id]["visible"]:
             traces[part.id] = scope.traces(
                 scratch.mean(axis=1), n_frames, spf, max(1, sw - 1),
@@ -726,15 +735,16 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                     part.median_pitch() + 12 * settings[part.id]["octave"]
                     + settings[part.id]["transpose"] + g_transpose))
         if synth and not balance and part.id in playing_ids:
-            mix += scratch
+            mix[lo:hi] += scratch[lo:hi]
         if balance and into is scratch and part.id in playing_ids:
             pan = (settings[part.id]["pan"] + 1) * math.pi / 4
             gl, gr = math.cos(pan), math.sin(pan)
             stem = np.lib.format.open_memmap(os.path.join(stemdir, f"{len(stems)}.npy"),
                                              mode="w+", dtype=np.float16, shape=(N,))
             denom = gl + gr if abs(gl + gr) > 1e-6 else 1.0
-            for i in range(0, N, chunk):
-                stem[i:i + chunk] = scratch[i:i + chunk].sum(axis=1) / denom
+            for i in range(lo, hi, chunk):        # a new stem is zeros already
+                j = min(hi, i + chunk)
+                stem[i:j] = scratch[i:j].sum(axis=1) / denom
             # What the person asked for over and above the old table, kept:
             # the measurement decides where a part sits on its own, and
             # somebody who has moved a slider still outranks it.
@@ -742,15 +752,17 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             ref = _VOLUME.get(part.role, 0.8)
             trim = 20.0 * math.log10(max(vol, 1e-4) / ref) if ref > 0 else 0.0
             stems.append({"id": part.id, "role": part.role, "trim_db": trim, "stem": stem,
-                          "pan": (gl, gr), "power": mastering.block_power(stem)})
+                          "pan": (gl, gr), "power": mastering.block_power(stem),
+                          "span": (lo, hi)})
     del scratch
     if stemdir:
         placed = mastering.balance(stems) if stems else {}
         for st in stems:
             was, gain, rode = placed[st["id"]]
             pair = np.array(st["pan"], dtype=np.float32) * np.float32(gain)
-            for i in range(0, N, chunk):
-                j = min(N, i + chunk)
+            lo, hi = st["span"]
+            for i in range(lo, hi, chunk):
+                j = min(hi, i + chunk)
                 mono = st["stem"][i:j].astype(np.float32) * mastering.envelope(rode, i, j)
                 mix[i:j] += mono[:, None] * pair
             levels[st["id"]] = {"lufs": round(was, 1) if math.isfinite(was) else None,
@@ -812,11 +824,14 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     errlog = open(os.path.join(tmpdir, "ffmpeg.log"), "w+b")
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
     canvas = np.zeros((src_h, src_w, 3) if (synth or is_retro or draft) else (H, W, 3), dtype=np.uint8)
+    drawn: dict[int, tuple] = {}              # tile -> the state last drawn into canvas
+    last_frame = None                         # the last retro frame, while nothing moves
     try:
         for f in range(n_frames):
             if f % 25 == 0:
                 say("frames", f, n_frames)
             t = f / FPS
+            moved = synth
             for i, p in enumerate(tiles):
                 if synth:
                     # A pixel of black between tiles, so the traces do not run together.
@@ -825,12 +840,19 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                         traces[p.id][f], hits.get(p.id, []), starts_of[p.id], t,
                         sw - 1, sh - 1, flash, dim, screen)
                     continue
+                state = _tile_state(frames_of[p.id], hits.get(p.id, []), starts_of[p.id],
+                                    t, flash, dim)
+                if drawn.get(i) == state:
+                    continue                  # the canvas already shows it
+                drawn[i] = state
+                moved = True
                 x0, y0 = (i % cols) * tile_w, (i // cols) * tile_h
-                canvas[y0:y0 + tile_h, x0:x0 + tile_w] = _tile(frames_of[p.id], hits.get(p.id, []),
-                                                               starts_of[p.id], t, flash, dim)
+                canvas[y0:y0 + tile_h, x0:x0 + tile_w] = _draw_tile(frames_of[p.id], state)
             try:
                 if is_retro:
-                    proc.stdin.write(screens.apply(canvas, screen).tobytes())
+                    if moved or last_frame is None:
+                        last_frame = screens.apply(canvas, screen).tobytes()
+                    proc.stdin.write(last_frame)
                 else:
                     proc.stdin.write(memoryview(canvas))
             except (BrokenPipeError, OSError):
@@ -888,8 +910,11 @@ def _hit(part: music.Part, s: dict) -> str | None:
 
 def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from: float,
           T: float, speed: float, g_transpose: int, flip: bool, tick=None,
-          jitter: bool = True, vary: str = "rotate", cuts: dict | None = None) -> list[_Hit]:
+          jitter: bool = True, vary: str = "rotate", cuts: dict | None = None,
+          span: list | None = None) -> list[_Hit]:
     """Sing every note of *part* between t_from and T into *mix*; return its hits.
+
+    *span*, when given as [lo, hi], is widened to cover every sample written.
 
     *takes* are the Samples to play, rotated between hits (see VARY). Times are
     in the rendered song's clock (after *speed*), and the mix starts at t_from.
@@ -1001,6 +1026,10 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
                 else:
                     mix[a:a + k, 0] += y[:k] * (gain * gl)
                     mix[a:a + k, 1] += y[:k] * (gain * gr)
+                if span is not None:
+                    span[0] = min(span[0], a)
+                    span[1] = min(N, max(span[1], a + k + (int(round(0.018 * SR))
+                                                         if s.get("haas") else 0)))
         if n.start != last_start:
             hits.append(_Hit(t0, dur, warp, flip and len(hits) % 2 == 1, pick))
             last_start = n.start
@@ -1084,20 +1113,33 @@ def _scope_tile(trace: np.ndarray, hits: list[_Hit], starts: list[float], t: flo
     return scope.draw(trace, w, h, level, hot=flash and since < 2.0 / FPS, screen=screen)
 
 
-def _tile(takes: list, hits: list[_Hit], starts: list[float], t: float,
-          flash: bool, dim: bool) -> np.ndarray:
+def _tile_state(takes: list, hits: list[_Hit], starts: list[float], t: float,
+                flash: bool, dim: bool) -> tuple[int, int, bool, float]:
+    """What a tile shows at *t*: (take, frame, flipped, brightness).
+
+    Equal states draw equal pictures, so a tile whose state has not changed
+    since the last frame need not be drawn again -- which, in a song of three
+    hundred parts, is most of them most of the time.
+    """
     i = bisect.bisect_right(starts, t) - 1
     if i < 0:
-        return _scale(takes[0][0], 0.35) if dim else takes[0][0]
+        return 0, 0, False, 0.35 if dim else 1.0
     h = hits[i]
-    frames = takes[h.take % len(takes)]
+    take = h.take % len(takes)
     since = t - h.start
     src = h.warp.src(min(since, h.dur))
-    img = frames[min(max(int(src * FPS), 0), len(frames) - 1)]
-    if h.flip:
-        img = img[:, ::-1]
-    if flash and since < 2.0 / FPS:
-        return _scale(img, 1.25)
-    if dim and since > h.dur:
-        return _scale(img, max(0.45, 1.0 - (since - h.dur) / 0.3 * 0.55))
-    return img
+    idx = min(max(int(src * FPS), 0), len(takes[take]) - 1)
+    k = (1.25 if flash and since < 2.0 / FPS else
+         max(0.45, 1.0 - (since - h.dur) / 0.3 * 0.55) if dim and since > h.dur else 1.0)
+    return take, idx, h.flip, k
+
+
+def _draw_tile(takes: list, state: tuple[int, int, bool, float]) -> np.ndarray:
+    take, idx, flip, k = state
+    img = takes[take][idx]
+    return _scale(img[:, ::-1] if flip else img, k)
+
+
+def _tile(takes: list, hits: list[_Hit], starts: list[float], t: float,
+          flash: bool, dim: bool) -> np.ndarray:
+    return _draw_tile(takes, _tile_state(takes, hits, starts, t, flash, dim))

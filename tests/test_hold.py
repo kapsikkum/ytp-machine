@@ -6,7 +6,8 @@
 A ~0.5 s synthetic vowel (glottal pulses through two formants, a little pitch
 glide, noise consonants at both ends) is sung at 220 Hz for 5 s. Past the
 sample's own length the note used to go silent (the stretch was capped) and
-the stretched glides/gaps were heard as pitch jumps.
+the stretched glides/gaps were heard as pitch jumps; a hold that swept
+through the vowel was heard as a flanger.
 """
 import os
 import sys
@@ -69,7 +70,10 @@ check("src stays inside the sample", s.min() >= 0 and s.max() <= voice.duration 
 check("src ends where the word ends", abs(w.src(dur) - voice.duration) < 0.02,
       f"{w.src(dur):.3f} vs {voice.duration:.3f}")
 held = (t > w.v0) & (t < w.v0 + w.hold)
-check("src holds inside the nucleus", (s[held] >= w.v0 - 1e-9).all() and (s[held] <= w.v1 + 1e-9).all())
+# Stays on one moment: sweeping back and forth through the vowel was heard
+# as a flanger.
+check("src stays on the peak while held", held.any() and np.ptp(s[held]) < 1e-9,
+      f"moves {np.ptp(s[held]):.4f}s")
 check("src is continuous", np.abs(np.diff(s)).max() < 0.01, f"{np.abs(np.diff(s)).max():.4f}")
 
 print()

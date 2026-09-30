@@ -96,8 +96,8 @@ for target_midi in (57, 50, 45, 62):          # A3 up, D3 same, A2 down, D4 up
     check(f"{p.note_name(target_midi)} is exactly the note long", len(y) == int(round(0.5 * SR)))
 
 y, w = voice.render(p.midi_to_hz(57), 1.8, "perfect")
-check("a long note draws the vowel out", w.s > 2.0 and np.abs(y[int(1.5 * SR):]).max() > 0.01,
-      f"stretch x{w.s:.2f}")
+check("a long note draws the vowel out", w.hold > 1.0 and np.abs(y[int(1.5 * SR):]).max() > 0.01,
+      f"held {w.hold:.2f}s")
 y, w = voice.render(p.midi_to_hz(57), 1.8, "perfect", stretch=False)
 check("without stretch it ends with the sample",
       np.abs(y[int(0.7 * SR):]).max() == 0.0)

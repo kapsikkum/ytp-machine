@@ -36,8 +36,7 @@ _YIN_THRESH = 0.15      # first dip below this is the period (de Cheveigné's 0.
 _APERIODIC = 0.35       # above this at the chosen period, the frame is not voiced
 _SILENCE = 0.05         # frames quieter than this fraction of the loudest are silence
 _UNVOICED_STEP = 0.010  # hop for copying consonants through untouched
-_NUCLEUS_TOL = 0.03     # a steady nucleus keeps every period within +-3% (~50 cents)
-_NUCLEUS_MIN = 0.040    # and is at least this long, when the sample has one
+_PEAK_SPAN = 0.025      # the held grain's width is the median period this near the peak
 _FADE_IN = 0.002
 _FADE_OUT = 0.010
 _MIN_NOTE = 0.030
@@ -352,17 +351,17 @@ class Warp:
     exactly as long as it is heard.
 
     Two shapes. With hold == 0, the vowel v0..v1 is drawn out by s (uniformly).
-    With hold > 0, v0..v1 is a steady nucleus: the sample plays 1:1 up to v0,
-    then the nucleus is swept forward-back-forward (k sweeps, k odd, so it ends
-    on v1) for *hold* seconds, then the rest plays 1:1. src never leaves v0..v1
-    while holding, however long that is. P is the nucleus period in samples.
+    With hold > 0, v0 == v1 is the peak of the vowel: the sample plays 1:1 up
+    to it, stays on it for *hold* seconds, then plays the rest 1:1 -- a sung
+    note held on its loudest moment, however long the note is. Sweeping back
+    and forth through the vowel instead was heard as a flanger. P is the held
+    grain's period in samples.
     """
     v0: float = 0.0
     v1: float = 0.0
     s: float = 1.0
     rate: float = 1.0         # tape speed; when not 1, it replaces the rest
     hold: float = 0.0
-    k: int = 1
     P: float = 0.0
 
     def src(self, t: float) -> float:
@@ -371,14 +370,7 @@ class Warp:
         if self.hold > 0.0:
             if t < self.v0:
                 return t
-            u = t - self.v0
-            if u >= self.hold:
-                return self.v1 + (u - self.hold)
-            n = self.v1 - self.v0
-            f = u / self.hold * self.k            # sweeps done so far
-            i = int(f)
-            f -= i
-            return self.v0 + n * (f if i % 2 == 0 else 1.0 - f)
+            return self.v0 if t < self.v0 + self.hold else t - self.hold
         if self.s == 1.0 or t < self.v0:
             return t
         span = (self.v1 - self.v0) * self.s
@@ -445,50 +437,28 @@ class Voice:
     def duration(self) -> float:
         return len(self.x) / self.sr
 
-    def nucleus(self) -> tuple[float, float, float] | None:
-        """(start s, end s, median period samples) of the steadiest voiced run."""
-        m, P, mv = self.marks, self.periods, self.mvoiced
-        best = None                                   # (steady?, length, i, j)
-        i, n = 0, len(m)
-        while i < n:
-            if not mv[i]:
-                i += 1
-                continue
-            j = i
-            while j + 1 < n and mv[j + 1]:
-                j += 1
-            run = (i, j)                              # voiced run i..j
-            # longest sub-run whose periods stay within tolerance of each other
-            lo = i
-            for hi in range(i, j + 1):
-                while P[lo:hi + 1].max() > P[lo:hi + 1].min() * (1 + 2 * _NUCLEUS_TOL):
-                    lo += 1
-                cand = (True, (m[hi] - m[lo]) / self.sr, lo, hi)
-                if best is None or cand[1] > best[1]:
-                    best = cand
-            if best is None or (m[j] - m[i]) / self.sr > best[1] and best[1] < _NUCLEUS_MIN:
-                best = (False, (m[j] - m[i]) / self.sr, *run)
-            i = j + 1
-        if best is None or best[1] < 0.01:
+    def peak(self) -> tuple[float, float] | None:
+        """(seconds, period in samples) of the loudest voiced pulse."""
+        v = np.flatnonzero(self.mvoiced)
+        if not len(v):
             return None
-        _, _, lo, hi = best
-        return m[lo] / self.sr, m[hi] / self.sr, float(np.median(P[lo:hi + 1]))
+        m = self.marks[v]
+        loud = self.track.rms[[self.track.frame_at(x / self.sr) for x in m]]
+        i = int(np.argmax(loud))
+        # The period from its neighbours, not the pulse alone: one mark with
+        # an octave error, held for seconds, is a note an octave out.
+        near = np.abs(m - m[i]) <= _PEAK_SPAN * self.sr
+        return float(m[i]) / self.sr, float(np.median(self.periods[v][near]))
 
     def plan(self, dur: float, stretch: bool) -> Warp:
         L = self.duration
         if not stretch or dur <= L:
             return Warp(self.v0, self.v1, 1.0)
-        nuc = self.nucleus()
-        if nuc is None:
-            vlen = self.v1 - self.v0
-            if vlen < 0.02:
-                return Warp(self.v0, self.v1, 1.0)
-            return Warp(self.v0, self.v1, (dur - (L - vlen)) / vlen)
-        n0, n1, P = nuc
-        N = n1 - n0
-        hold = dur - L + N
-        k = max(1, int(round(hold / N)) | 1) if hold / N >= 2 else 1   # odd: ends on n1
-        return Warp(n0, n1, hold / N, hold=hold, k=k, P=P)
+        pk = self.peak()
+        if pk is None:
+            return Warp(self.v0, self.v1, 1.0)
+        at, P = pk
+        return Warp(at, at, 1.0, hold=dur - L, P=P)
 
     def render(self, target_hz: float | None, dur: float, mode: str = "perfect",
                semitones: float = 0.0, stretch: bool = True) -> tuple[np.ndarray, Warp]:
@@ -552,9 +522,7 @@ class Voice:
                 k -= 1
             c = int(round(t)) + pad
             if mv[k]:
-                # held: one width for every grain, or an octave-error mark
-                # in the nucleus would sing as a pitch jump
-                held = warp.hold > 0.0 and warp.v0 <= src / sr <= warp.v1
+                held = warp.hold > 0.0 and warp.v0 <= t / sr < warp.v0 + warp.hold
                 half = max(2, int(round(warp.P if held else periods[k])))
                 g_orig = _grain(x, int(marks[k]), half)
                 h2 = max(2, int(round(half / formant)))
