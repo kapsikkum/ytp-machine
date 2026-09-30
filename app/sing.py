@@ -147,7 +147,8 @@ def sung(v: pitch.Voice, hz: float, n_out: int, amount: float = 1.0,
                 g = np.interp(np.linspace(0.0, 2 * half - 1, 2 * h2), np.arange(2 * half), g_orig)
             else:
                 g = g_orig.copy()
-            if preserve_formants and len(g) >= 16:
+            # at formant 1 the correction is a ratio of 1: only a second hann
+            if preserve_formants and formant != 1.0 and len(g) >= 16:
                 n_fft = max(128, 1 << int(math.ceil(math.log2(max(len(g), len(g_orig))))))
                 env_orig = dsp.spectral_envelope_lifter(g_orig, n_fft=n_fft, cutoff=16)
                 if formant != 1.0:

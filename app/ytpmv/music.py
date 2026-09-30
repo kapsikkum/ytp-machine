@@ -352,6 +352,24 @@ def _assign_roles(parts: list[Part]) -> None:
             p.role = "lead" if p is lead else "rhythm"
 
 
+def _chunks(data: bytes):
+    """(header, [chunk, ...]) of a MIDI file, each chunk with its 8-byte head."""
+    if data[:4] != b"MThd":
+        raise ValueError("not a MIDI file")
+    hlen = int.from_bytes(data[4:8], "big")
+    i, out = 8 + hlen, []
+    while i + 8 <= len(data):
+        n = int.from_bytes(data[i + 4:i + 8], "big")
+        out.append(data[i:i + 8 + n])
+        i += 8 + n
+    return data[:8 + hlen], out
+
+
+def _one_track(head: bytes, chunk: bytes, clip: bool = True) -> "mido.MidiTrack":
+    one = b"MThd" + (6).to_bytes(4, "big") + bytes((0, 1, 0, 1)) + head[12:14] + chunk
+    return mido.MidiFile(file=io.BytesIO(one), clip=clip).tracks[0]
+
+
 def _salvage(data: bytes) -> "mido.MidiFile":
     """The tracks of *data* that read, when one that does not sinks the file.
 
@@ -359,26 +377,175 @@ def _salvage(data: bytes) -> "mido.MidiFile":
     defined -- in one short track of fifty-nine, and mido refuses the whole
     file for it. Each track is tried on its own and the broken ones left out.
     """
-    if data[:4] != b"MThd":
-        raise ValueError("not a MIDI file")
-    hlen = int.from_bytes(data[4:8], "big")
-    head, i, good = data[8:8 + hlen], 8 + hlen, []
-    while i + 8 <= len(data):
-        n = int.from_bytes(data[i + 4:i + 8], "big")
-        chunk = data[i:i + 8 + n]
-        i += 8 + n
+    head, chunks = _chunks(data)
+    good = []
+    for chunk in chunks:
         if chunk[:4] != b"MTrk":
             continue
-        one = b"MThd" + (6).to_bytes(4, "big") + bytes((0, 1, 0, 1)) + head[4:6] + chunk
         try:
-            good.append(mido.MidiFile(file=io.BytesIO(one), clip=True).tracks[0])
+            good.append(_one_track(head, chunk))
         except (OSError, EOFError, KeyError, ValueError):
             pass                             # a broken track is left out
     if not good:
         raise ValueError("no track in the file could be read")
-    mf = mido.MidiFile(type=1, ticks_per_beat=int.from_bytes(head[4:6], "big"))
+    mf = mido.MidiFile(type=1, ticks_per_beat=int.from_bytes(head[12:14], "big"))
     mf.tracks.extend(good)
     return mf
+
+
+# Some writer, given more than sixteen parts, kept counting channels and ORed
+# the count straight into the status byte: status = (type << 4) | c with c up
+# to 0x7F. Channel 0x34's note-on is then 0xB4, which reads as a controller;
+# 0x3F's program change is 0xFF, which reads as a meta event; 0x4D's note-off
+# and program change are both 0xCD. mido refuses some of those tracks and
+# misreads the rest -- note-offs taken for note-ons, so notes never end and a
+# 3:24 song came out 44 minutes long.
+#
+# Such a track is spotted by failing to read as plain MIDI (mido, without
+# clipping: a data byte over 127 is the telltale) and then read again for
+# each possible overflow h = c >> 4: a status s can be any type t with
+# t | h == s >> 4. That is ambiguous event by event (0xCD: note-off with two
+# data bytes, or program change with one), so the whole track is solved at
+# once, backwards -- which positions can still reach the end cleanly -- and
+# read forwards along a path that does. Running status is not allowed there;
+# the writer never used it, and it is what keeps the solve cheap and certain.
+# Of the overflows that read, the largest is taken: every status carries the
+# bits of h, so a smaller h that also reads has dropped a bit it should keep
+# (0x3F's program change, 0xF_, read with h = 2 comes out channel pressure).
+#
+# A meta event is told from a channel event with status 0xFF by its shape:
+# the meta types MIDI defines, at the lengths it defines them, beat the
+# channel reading. 0xFF 0x59 0x64 is a note-on, not a key signature of length
+# 100 -- mido would refuse the key -- and 0xFF 0x2F 0x00 ends the track only
+# where the track ends. An unknown type is kept as a last resort.
+_META = {0x00: 2, 0x20: 1, 0x21: 1, 0x2F: 0, 0x51: 3, 0x54: 5, 0x58: 4, 0x59: 2,
+         **{t: None for t in (1, 2, 3, 4, 5, 6, 7, 8, 9, 0x7F)}}
+# When more than one reading gets to the end, the likeliest is taken. This
+# writer puts a program change first and then only notes, so: the program
+# change first, then notes, then notes with a velocity over 127 (it writes
+# those too, and they are clamped), then anything else. Taking a loud note
+# over a program change anywhere but the start is what keeps 0xF8 0x36 0x8A
+# a note; taking the program change at the start is what keeps 0xD0 0x50
+# 0x86 0x98 0x00 a program change and a delta, not a note and a shorter delta.
+# A controller that shares a status with a note-on reads as the note.
+_TYPES = (9, 8, 12, 11, 14, 13, 10)
+
+
+def _vlq(b: bytes, i: int) -> tuple[int | None, int]:
+    v = 0
+    for _ in range(4):
+        if i >= len(b):
+            break
+        x, i = b[i], i + 1
+        v = (v << 7) | (x & 0x7F)
+        if x < 0x80:
+            return v, i
+    return None, i
+
+
+def _readings(b: bytes, p: int, h: int, first: bool = False) -> list:
+    """Every way the event whose status is b[p] reads, as (type, end), likeliest first."""
+    s, out = b[p], []
+    for i, t in enumerate(_TYPES):
+        end = p + (2 if t in (12, 13) else 3)
+        note = t in (8, 9)
+        if t | h == s >> 4 and end <= len(b) and all(x < 0x80 for x in b[p + 1:end - note]):
+            rank = -1 if first and t == 12 else (b[end - 1] >= 0x80) if note else 2
+            out.append((rank, i, t, end))
+    ln, q = _vlq(b, p + 2) if s == 0xFF else _vlq(b, p + 1) if s in (0xF0, 0xF7) else (None, 0)
+    if ln is not None and q + ln <= len(b):
+        known = s == 0xFF and b[p + 1] in _META
+        if not known:
+            out.append((3, 0, "meta", q + ln))           # a sysex or unknown meta, last
+        elif _META[b[p + 1]] in (None, ln) and (b[p + 1] != 0x2F or q + ln == len(b)):
+            out.append((-2, 0, "meta", q + ln))
+    return [(t, end) for _r, _i, t, end in sorted(out)]
+
+
+def _unoverflow(body: bytes, h: int) -> bytes | None:
+    """*body* rewritten as plain MIDI, read with overflow *h*; None if it will not read."""
+    n = len(body)
+    # Forwards: where each event reachable from the start could end. Then
+    # backwards: which of those can still get to the end of the track.
+    reach, ends = bytearray(n + 1), {}
+    reach[0] = 1
+    for pos in range(n):
+        if reach[pos]:
+            d, p = _vlq(body, pos)
+            ends[pos] = [e for _t, e in _readings(body, p, h)] if d is not None and p < n else []
+            for e in ends[pos]:
+                reach[e] = 1
+    if not reach[n]:
+        return None
+    ok = bytearray(n + 1)
+    ok[n] = 1
+    for pos in sorted(ends, reverse=True):
+        ok[pos] = any(ok[e] for e in ends[pos])
+    out, pos, first = bytearray(), 0, True
+    while pos < n:
+        _d, p = _vlq(body, pos)
+        t, end = next(r for r in _readings(body, p, h, first) if ok[r[1]])
+        first = first and t == "meta"
+        data = body[p + 1:end]
+        # The low nibble is the channel. Channel 9 there is not a drum kit --
+        # the writer's kits all sit on a true channel 9, and a count of 0x19
+        # is its 26th melodic part -- so a rewritten track is never drums.
+        ch = body[p] & 0x0F if body[p] & 0x0F != DRUM_CHANNEL else 8
+        if t == "meta":
+            out += body[pos:end]
+        elif t in (8, 9):
+            # With h odd a note-on and a note-off share one status, and only
+            # the velocity tells them apart: this writer releases with 0. It
+            # also stacks the same pitch on itself, so "already sounding"
+            # would not mean "being released".
+            off = t == 8 or data[1] == 0
+            out += body[pos:p] + bytes((0x80 | ch if off else 0x90 | ch, data[0], min(data[1], 127)))
+        else:
+            out += body[pos:p] + bytes(((t << 4) | ch,)) + data
+        pos = end
+    return bytes(out)
+
+
+def _h1(track) -> bool:
+    """Whether a track that reads may still be overflowed by 0x10.
+
+    With h = 1 every status still reads: note-ons stay note-ons and the
+    program change turns into channel pressure. Pressure with no program
+    change, and nothing whose status lacks the 0x10 bit, is that track.
+    """
+    types = {m.type for m in track if not m.is_meta}
+    return "aftertouch" in types and types <= {"note_on", "control_change", "aftertouch", "sysex"}
+
+
+def _plain(head: bytes, chunk: bytes) -> bool:
+    try:
+        try:
+            track = _one_track(head, chunk, clip=False)
+        except (OSError, EOFError, KeyError, ValueError):
+            # A velocity over 127 alone, as in "Chaos King", is no overflow.
+            if _unoverflow(chunk[8:], 0) is None:
+                return False
+            track = _one_track(head, chunk)
+        return not _h1(track)
+    except (OSError, EOFError, KeyError, ValueError):
+        return False
+
+
+def _repair(data: bytes) -> bytes:
+    """*data* with every channel-overflowed track rewritten as plain MIDI."""
+    try:
+        head, chunks = _chunks(data)
+    except ValueError:
+        return data
+    fixed, changed = [], False
+    for chunk in chunks:
+        new = None
+        if chunk[:4] == b"MTrk" and not _plain(head, chunk):
+            new = next((r for h in range(7, 0, -1) if (r := _unoverflow(chunk[8:], h)) is not None), None)
+        if new is not None:
+            chunk, changed = b"MTrk" + len(new).to_bytes(4, "big") + new, True
+        fixed.append(chunk)
+    return head + b"".join(fixed) if changed else data
 
 
 def parse(data: bytes, title: str = "") -> Song:
@@ -386,18 +553,27 @@ def parse(data: bytes, title: str = "") -> Song:
     # the wild have them -- one exported "Chaos King" has a velocity out of
     # range -- and mido's default is to raise, which threw away a whole song
     # over one byte in one note.
+    #
+    # A file that reads strictly reads the same clipped, so it is read once;
+    # only one that does not (or looks overflowed by 0x10) is repaired first.
     try:
-        mf = mido.MidiFile(file=io.BytesIO(data), clip=True)
+        mf = mido.MidiFile(file=io.BytesIO(data))
+        if any(_h1(t) for t in mf.tracks):
+            raise ValueError("overflowed channels")
     except (OSError, EOFError, KeyError, ValueError):
-        mf = _salvage(data)
+        data = _repair(data)
+        try:
+            mf = mido.MidiFile(file=io.BytesIO(data), clip=True)
+        except (OSError, EOFError, KeyError, ValueError):
+            mf = _salvage(data)
     tpb = mf.ticks_per_beat or 480
 
     tempo_changes: list[tuple[int, int]] = []
     time_sig = (4, 4)
     programs: dict[int, int] = {}
     end_tick = 0
-    # (track, channel) -> list of (start_tick, end_tick, pitch, velocity)
-    raw: dict[tuple[int, int], list[tuple[int, int, int, int]]] = defaultdict(list)
+    # (track, channel) -> list of (start_tick, end_tick, pitch, velocity, released)
+    raw: dict[tuple[int, int], list[tuple[int, int, int, int, bool]]] = defaultdict(list)
     chan_prog: dict[tuple[int, int], Counter] = defaultdict(Counter)
     names: dict[int, str] = {}
     pans: dict[tuple[int, int], float] = {}
@@ -428,18 +604,29 @@ def parse(data: bytes, title: str = "") -> Song:
                 q = open_.get((msg.channel, msg.note))
                 if q:
                     st, vel = q.popleft()
-                    raw[(ti, msg.channel)].append((st, tick, msg.note, vel))
+                    raw[(ti, msg.channel)].append((st, tick, msg.note, vel, True))
             end_tick = max(end_tick, tick)
         for (ch, pitch), q in open_.items():        # never released: end with the track
             for st, vel in q:
-                raw[(ti, ch)].append((st, tick, pitch, vel))
+                raw[(ti, ch)].append((st, tick, pitch, vel, False))
 
     tm = _TempoMap(tpb, tempo_changes)
+    # A note never released rings to the end of its track, and one stuck note
+    # in a track that runs on (or one misread file) made a song last forty
+    # minutes. So it rings at most a few seconds past the last note that was
+    # properly let go -- or past its own start, if it starts later than that.
+    last = max((e for evs in raw.values() for _s, e, _p, _v, rel in evs if rel), default=None)
+    last = tm.seconds(last) if last is not None else None
+
+    def end(s: int, e: int, rel: bool) -> float:
+        e_s = tm.seconds(e)
+        return e_s if rel or last is None else min(e_s, max(tm.seconds(s), last) + 4.0)
+
     parts: list[Part] = []
     for (ti, ch), evs in sorted(raw.items()):
         evs.sort()
-        notes = [Note(tm.seconds(s), max(tm.seconds(e) - tm.seconds(s), 0.0), pch, vel)
-                 for s, e, pch, vel in evs]
+        notes = [Note(tm.seconds(s), max(end(s, e, rel) - tm.seconds(s), 0.0), pch, vel)
+                 for s, e, pch, vel, rel in evs]
         p_pan = pans.get((ti, ch))
         if ch == DRUM_CHANNEL:
             groups: dict[str, list[Note]] = defaultdict(list)

@@ -95,6 +95,9 @@ def save_midi(data: bytes, filename: str = "") -> str:
     return mid
 
 
+_songs: dict = {}
+
+
 def load_song(midi_id: str) -> music.Song:
     if not _ID_RE.match(midi_id or ""):
         raise YtpmvError("No such MIDI file.")
@@ -109,10 +112,19 @@ def load_song(midi_id: str) -> music.Song:
             title = fh.read().strip()
     except OSError:
         title = ""
-    try:
-        song = music.parse(data, title=title)
-    except Exception as exc:  # noqa: BLE001 -- mido raises a zoo of types on bad files
-        raise YtpmvError(f"Couldn't read that MIDI file: {exc}") from exc
+    # One render asks for the song three times (analyse, recommend, render),
+    # and a big file is seconds of parsing each time. Nothing changes a Song
+    # once it is parsed, so the same one is handed out while the file is.
+    key = (midi_id, hashlib.sha1(data).hexdigest(), title)
+    song = _songs.get(key)
+    if song is None:
+        try:
+            song = music.parse(data, title=title)
+        except Exception as exc:  # noqa: BLE001 -- mido raises a zoo of types on bad files
+            raise YtpmvError(f"Couldn't read that MIDI file: {exc}") from exc
+        if len(_songs) >= 4:
+            _songs.pop(next(iter(_songs)))
+        _songs[key] = song
     if not song.parts:
         raise YtpmvError("That MIDI file has no notes in it.")
     return song

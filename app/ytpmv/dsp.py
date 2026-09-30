@@ -31,6 +31,9 @@ if _HAVE_NUMBA:
         for i in range(len(x)):
             w = x[i] - a1 * w1 - a2 * w2
             y[i] = b0 * w + b1 * w1 + b2 * w2
+            # a decaying tail would sink into denormals, ~10x slower per sample
+            if -1e-30 < w < 1e-30:
+                w = 0.0
             w2 = w1
             w1 = w
         return y
