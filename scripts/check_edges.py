@@ -15,15 +15,14 @@ that word and of its neighbours:
 
 The aligner is not ground truth, and is noisy to about 20ms; what it is good
 for is comparing two ways of cutting the same words. Needs torch (the same
-model the splicer uses). Alignments are slow, so they are kept in a pickle
-in the temp directory between runs.
+model the splicer uses). Its fingerprinted alignment cache is reused between
+runs; it lives in the corpus database.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import pickle
 import random
 import sys
 
@@ -36,6 +35,8 @@ def main():
     ap.add_argument("-n", type=int, default=350)
     ap.add_argument("--seed", type=int, default=5)
     args = ap.parse_args()
+    if args.n <= 0:
+        ap.error("-n must be positive")
 
     from app import database, forced_align
     if args.corpus:
@@ -44,20 +45,14 @@ def main():
     if not forced_align._ensure_model():
         raise SystemExit("needs the forced-alignment model (torch, torchaudio)")
 
-    # In the temp directory, not the corpus: corpora are committed, and this is not.
-    import tempfile
-    cache_path = os.path.join(tempfile.gettempdir(), f"edge_alignments_{database.active()['slug']}.pkl")
-    fa = pickle.load(open(cache_path, "rb")) if os.path.exists(cache_path) else {}
-
-    def letters(c):
-        if c["id"] not in fa:
-            fa[c["id"]] = forced_align.char_times(c)
-        return fa[c["id"]]
+    letters = forced_align.char_times
 
     g._ensure_cache()
     seqs, cbw = g._ordered_by_source, g._clips_by_word_cache
     where = {c["id"]: (s, i) for s, seq in seqs.items() for i, c in enumerate(seq)}
     uses = [c["word"] for seq in seqs.values() for c in seq if c["word"] in cbw]
+    if not uses:
+        raise SystemExit("This corpus has no usable word clips to check")
     rng = random.Random(args.seed)
     draws = [rng.choice(uses) for _ in range(args.n)]
 
@@ -87,7 +82,6 @@ def main():
         return tally
 
     rows = {"any take": score(False), "clean takes first": score(True)}
-    pickle.dump(fa, open(cache_path, "wb"))
     print(f"{args.n} words from {database.active()['slug']}")
     print(f"  {'':<20}" + "".join(f"{k:>12}" for k in ("adjacent", "end_cut", "start_cut", "into_next", "from_prev")))
     for name, t in rows.items():

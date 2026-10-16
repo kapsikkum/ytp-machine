@@ -6,8 +6,8 @@ to find where each *character* of a word sits in time inside a clip.  That lets
 us cut a source word at an accurate sub-word boundary — e.g. take just the "th"
 onset of "thought" — instead of only using whole words.
 
-The model is loaded lazily and cached; per-clip character timings are memoised
-by clip id so a word is never aligned twice in a session.
+The model is loaded lazily and cached; character timings are memoised for each
+clip's source, label and boundaries so unchanged clips need only one pass.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def _ensure_model() -> bool:
         # This pass is the long one when building a corpus -- one Wav2Vec2
         # forward per word clip, and a corpus is tens of thousands of them --
         # so leaving the model on the CPU was quietly costing hours.
-        _model = bundle.get_model().to(_device)
+        _model = bundle.get_model().eval().to(_device)
         _labels = bundle.get_labels()
         _dict = {c: i for i, c in enumerate(_labels)}
         log.info("  forced-aligner loaded (%d labels) on %s",
@@ -55,21 +55,55 @@ def _ensure_model() -> bool:
 
 
 # ── Per-clip character timings ───────────────────────────────────────────────
-# Keyed on (source file, clip id): ids start again at 1 in every corpus, and
-# a sentence can now hold words from two of them.
+# Ids start again at 1 in every corpus, and a sentence can hold two voices.
+# Include the source, label and bounds: the same id can describe a new word
+# after an edit, even when the caller has not explicitly invalidated it yet.
 _char_cache: dict[tuple, list[tuple[str, float, float]] | None] = {}
 
 import json as _json
 
 
-def _load_alignment(clip_id: int) -> list[tuple[str, float, float]] | None:
-    """Load persisted alignment from SQLite, or None."""
+def _clip_key(clip: dict[str, Any]) -> tuple:
+    """Source and clip fingerprint, keeping id at index 1 for invalidate()."""
+    from app.database import normalise_sep, resolve_path
+
+    source = clip.get("source_file")
+    if source:
+        source = normalise_sep(source)
+        # Borrowed clips already have an absolute path checked by their pool.
+        # Resolve relative paths only against the active corpus.
+        source = source if os.path.isabs(source) else resolve_path(source)
+        source = os.path.normcase(os.path.realpath(source))
+    return (source, clip.get("id"), clip.get("word"),
+            clip.get("start_time"), clip.get("end_time"))
+
+
+def _active_clip(conn, clip: dict[str, Any]) -> dict[str, Any] | None:
+    """The matching active-corpus row; borrowed and edited inputs decline.
+
+    Persistent alignments are keyed by id within the active database. An id
+    alone cannot identify a clip from another voice, so never consult or write
+    that table unless the supplied source, word and bounds match its own row.
+    """
+    row = conn.execute(
+        "SELECT id, source_file, word, start_time, end_time FROM word_clips WHERE id=?",
+        (clip.get("id"),)).fetchone()
+    if row is None:
+        return None
+    stored = dict(row)
+    return stored if _clip_key(stored) == _clip_key(clip) else None
+
+
+def _load_alignment(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
+    """Load a matching active clip's persisted alignment, or None."""
     try:
         from app.database import get_db
         with get_db() as conn:
+            if _active_clip(conn, clip) is None:
+                return None
             row = conn.execute(
                 "SELECT alignment FROM clip_alignments WHERE clip_id=?",
-                (clip_id,)
+                (clip["id"],)
             ).fetchone()
             if row:
                 data = _json.loads(row["alignment"] if isinstance(row, dict) else row[0])
@@ -79,15 +113,21 @@ def _load_alignment(clip_id: int) -> list[tuple[str, float, float]] | None:
     return None
 
 
-def _save_alignment(clip_id: int, alignment: list[tuple[str, float, float]]) -> None:
-    """Persist alignment to SQLite. Best-effort, never raises."""
+def _save_alignment(clip: dict[str, Any], alignment: list[tuple[str, float, float]]) -> None:
+    """Persist a matching active clip's alignment. Best-effort, never raises."""
     try:
         from app.database import get_db
         data = _json.dumps([(ch, round(s, 6), round(e, 6)) for ch, s, e in alignment])
         with get_db() as conn:
+            stored = _active_clip(conn, clip)
+            if stored is None:
+                return
             conn.execute(
-                "INSERT OR REPLACE INTO clip_alignments (clip_id, alignment) VALUES (?, ?)",
-                (clip_id, data)
+                "INSERT OR REPLACE INTO clip_alignments (clip_id, alignment) "
+                "SELECT id, ? FROM word_clips WHERE id=? AND source_file=? "
+                "AND word=? AND start_time=? AND end_time=?",
+                (data, stored["id"], stored["source_file"], stored["word"],
+                 stored["start_time"], stored["end_time"])
             )
     except Exception:
         pass
@@ -128,17 +168,36 @@ def invalidate(clip_id: int | None = None) -> None:
             pass
 
 
+def invalidate_many(clip_ids, *, persisted: bool = True) -> None:
+    """Drop several clip fingerprints without rescanning the cache per id."""
+    ids = set(clip_ids)
+    for key in list(_char_cache):
+        if key[1] in ids:
+            _char_cache.pop(key, None)
+    if persisted and ids:
+        try:
+            from app.database import get_db
+            with get_db() as conn:
+                conn.executemany("DELETE FROM clip_alignments WHERE clip_id=?", [(cid,) for cid in ids])
+        except Exception:
+            pass
+
+
 def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     """Return [(char, start_s, end_s), …] for *clip*'s word, times relative to
     the clip's own start_time.  None if alignment fails."""
     cid = clip.get("id")
-    key = (clip.get("source_file"), cid)
+    try:
+        key = _clip_key(clip)
+    except (OSError, ValueError, TypeError) as exc:
+        log.warning("  invalid alignment source for %r: %s", clip.get("word"), exc)
+        return None
     if cid is not None and key in _char_cache:
         return _char_cache[key]
 
     # Check persistent storage before running the model
     if cid is not None:
-        result = _load_alignment(cid)
+        result = _load_alignment(clip)
         if result is not None:
             _char_cache[key] = result
             return result
@@ -147,7 +206,7 @@ def char_times(clip: dict[str, Any]) -> list[tuple[str, float, float]] | None:
     if cid is not None:
         _char_cache[key] = result
         if result is not None:
-            _save_alignment(cid, result)
+            _save_alignment(clip, result)
     return result
 
 

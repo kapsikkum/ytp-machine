@@ -356,11 +356,11 @@ def _letters_to_phones(letters: str) -> list[str] | None:
     return out or None
 
 
-def _number_to_phones(digits: str) -> list[str] | None:
-    """Phonemes for a run of digits, spoken as a number: 50 -> "fifty"."""
+def _number_to_phones(digits: str, ordinal: bool = False) -> list[str] | None:
+    """Phonemes for digits spoken as a cardinal or ordinal number."""
     try:
         from num2words import num2words
-        spoken = num2words(int(digits))
+        spoken = num2words(int(digits), to="ordinal" if ordinal else "cardinal")
     except Exception:
         return None
     out: list[str] = []
@@ -492,6 +492,16 @@ def _spelling_variants(w: str):
 # tell a program that "wii" rhymes with "wee".
 _USER_DICT_NAME = "pronunciations.csv"
 _user_dict: dict[str, list[str] | None] | None = None
+_user_entries: dict[str, tuple[str, str]] | None = None
+_user_dict_ref: dict | None = None
+_user_dict_key: tuple | None = None
+_user_dicts: dict[tuple, tuple[dict, dict]] = {}
+_dictionary_lock = threading.RLock()
+_dictionary_epoch = 0
+
+
+def _dictionary_key() -> tuple:
+    return (_dictionary_epoch, *(os.path.normcase(os.path.abspath(p)) for p in _dict_paths()))
 
 _ARPABET = _VOWELS | {"B", "CH", "D", "DH", "F", "G", "HH", "JH", "K", "L",
                       "M", "N", "NG", "P", "R", "S", "SH", "T", "TH", "V",
@@ -555,16 +565,44 @@ def _parse_user_value(value: str) -> list[str] | None | str:
 
 
 def _load_user_dict() -> dict[str, list[str] | None]:
-    global _user_dict
+    global _user_dict, _user_entries, _user_dict_ref, _user_dict_key
+    with _dictionary_lock:
+        # Honor explicit in-process dictionary fixtures/custom callers. Normal
+        # loaded dictionaries are retained separately for each corpus context.
+        if _user_dict is not None and _user_dict is not _user_dict_ref:
+            return _user_dict
+        key = _dictionary_key()
+        if _user_dict_key == key and _user_dict is not None:
+            return _user_dict
+        if key in _user_dicts:
+            _user_dict, _user_entries = _user_dicts[key]
+        else:
+            _user_dict = _user_entries = None
+            _user_dict_key = key
+            _read_user_dict()
+            _user_dicts[key] = (_user_dict, _user_entries)
+        _user_dict_key = key
+        _user_dict_ref = _user_dict
+        return _user_dict
+
+
+def _read_user_dict() -> dict[str, list[str] | None]:
+    global _user_dict, _user_entries
     if _user_dict is not None:
         return _user_dict
     _user_dict = {}
+    _user_entries = {}
     rejected: list[tuple[str, str, str]] = []
     import csv
+    try:
+        voice_path = os.path.realpath(user_dict_path())
+    except Exception:
+        voice_path = None
     for path in _dict_paths():
         if not os.path.exists(path):
             continue
         loaded = 0
+        scope = "voice" if os.path.realpath(path) == voice_path else "all"
         try:
             with open(path, encoding="utf-8-sig", newline="") as f:
                 for row in csv.reader(f):
@@ -585,6 +623,10 @@ def _load_user_dict() -> dict[str, list[str] | None]:
                         continue
                     else:
                         _user_dict[word] = parsed   # list, or None to suppress
+                    # Keep the raw winning value with the same acceptance and
+                    # order as the sounds. A later invalid row must not make
+                    # the editor display an override the runtime rejected.
+                    _user_entries[word] = (scope, row[1].strip())
                     loaded += 1
         except Exception as exc:
             log.warning("could not read %s: %s", path, exc)
@@ -605,18 +647,12 @@ def _dict_word(cell: str) -> str:
 def user_entry(word: str) -> tuple[str, str] | None:
     """*word*'s own line in a pronunciations.csv, as (scope, value).
 
-    Scope "voice" for the active corpus's file, "all" for the shared one; the
-    voice's is looked at first because it wins.
+    Scope "voice" for the active corpus's file, "all" for the shared one.
+    Return the last valid matching row, just as the runtime dictionary does.
     """
-    import csv
-    for scope, path in (("voice", user_dict_path()), ("all", global_dict_path())):
-        if not os.path.exists(path):
-            continue
-        with open(path, encoding="utf-8-sig", newline="") as f:
-            for row in csv.reader(f):
-                if len(row) >= 2 and not row[0].lstrip().startswith("#") and _dict_word(row[0]) == word:
-                    return scope, row[1].strip()
-    return None
+    with _dictionary_lock:
+        _load_user_dict()
+        return (_user_entries or {}).get(word)
 
 
 def try_pronunciation(word: str, value: str) -> tuple[list[str] | None, str, bool]:
@@ -696,8 +732,11 @@ def _write_pronunciation(word: str, value: str | None, scope: str) -> None:
 
 def invalidate_user_dict() -> None:
     """Forget the CSV so an edit takes effect on the next lookup."""
-    global _user_dict
-    _user_dict = None
+    global _user_dict, _user_entries, _user_dict_ref, _user_dict_key, _dictionary_epoch
+    with _dictionary_lock:
+        _dictionary_epoch += 1
+        _user_dict = _user_entries = _user_dict_ref = _user_dict_key = None
+        _user_dicts.clear()
     # Memoised answers were computed against the old file, and the index is
     # built from them.
     try:
@@ -728,6 +767,10 @@ def _direct(w: str) -> list[str] | None:
         return list(_SAID_AS_WORD[w])
     if w.isdigit():
         return _number_to_phones(w)
+    ordinal = re.fullmatch(r"([0-9]+)(?:st|nd|rd|th)", w)
+    if ordinal:
+        # "22nd" is "twenty second", rather than "twenty two en dee".
+        return _number_to_phones(ordinal.group(1), ordinal=True)
     if w in _SPELLED_OUT:
         return _letters_to_phones(w)
     # Drawn-out vocalisations: "ohhhhh", "brrrrrrra", "hahahaha". Whisper
@@ -871,8 +914,13 @@ def _resolve_simple(w: str) -> list[str] | None:
     return None
 
 
-@lru_cache(maxsize=100_000)
 def word_to_phonemes(word: str) -> list[str] | None:
+    """Resolve a word with memoized results scoped to its corpus dictionary."""
+    return _word_to_phonemes(word, _dictionary_key())
+
+
+@lru_cache(maxsize=100_000)
+def _word_to_phonemes(word: str, dictionary_key: tuple) -> list[str] | None:
     """Return stripped ARPAbet phonemes for *word*, or None.
 
     Tries: overrides → CMU → inflections → compound split (run-together words
@@ -908,6 +956,10 @@ def word_to_phonemes(word: str) -> list[str] | None:
             best = a + b
             break
     return best
+
+
+word_to_phonemes.cache_clear = _word_to_phonemes.cache_clear
+word_to_phonemes.cache_info = _word_to_phonemes.cache_info
 
 
 # Letter clusters to ARPAbet, longest cluster first, for words no dictionary
@@ -1811,6 +1863,9 @@ def realise_groups(target_word: str, groups: list[dict[str, Any]],
 # ── Saved recipes ─────────────────────────────────────────────────────────────
 
 _user_recipes: dict[str, list] | None = None
+_user_recipes_key: str | None = None
+_user_recipes_ref: dict | None = None
+_recipes_by_corpus: dict[str, dict] = {}
 
 
 def _load_user_recipes() -> dict[str, list]:
@@ -1835,15 +1890,26 @@ def _load_user_recipes() -> dict[str, list]:
 
 
 def user_recipe(word: str) -> list | None:
-    global _user_recipes
-    if _user_recipes is None:
-        _user_recipes = _load_user_recipes()
-    return _user_recipes.get(word.lower())
+    from app.database import active
+    global _user_recipes, _user_recipes_key, _user_recipes_ref
+    key = os.path.normcase(os.path.abspath(active()["db"]))
+    with _dictionary_lock:
+        if _user_recipes is not None and _user_recipes is not _user_recipes_ref:
+            return _user_recipes.get(word.lower())
+        if _user_recipes_key != key or _user_recipes is None:
+            if key not in _recipes_by_corpus:
+                _recipes_by_corpus[key] = _load_user_recipes()
+            _user_recipes = _recipes_by_corpus[key]
+            _user_recipes_key = key
+            _user_recipes_ref = _user_recipes
+        return _user_recipes.get(word.lower())
 
 
 def invalidate_recipes() -> None:
-    global _user_recipes
-    _user_recipes = None
+    global _user_recipes, _user_recipes_key, _user_recipes_ref
+    with _dictionary_lock:
+        _user_recipes = _user_recipes_key = _user_recipes_ref = None
+        _recipes_by_corpus.clear()
 
 # A pinned unit is given a private name -- "catch#11265" -- mapping to just
 # that one clip.

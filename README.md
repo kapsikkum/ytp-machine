@@ -8,6 +8,9 @@ Words the corpus has are spliced in directly. Words it doesn't are built from
 phonemes taken out of other words, so `rice` can come from the `r` of one word
 and the `ice` of another.
 
+See the [repository audit](docs/audit-2026-10-03.md) for the recent ingestion,
+security, performance and editor fixes, their verification, and remaining work.
+
 ## TLDR: get it running
 
 From a clone:
@@ -32,7 +35,7 @@ It carries **no corpus** — one has to be mounted, because a voice is 100 MB to
 2 GB of video and does not belong inside an image. So point it at one:
 
 ```bash
-docker run -p 8765:8765 -v ytp-data:/app/data -v ./corpora/michael-rosen:/corpus:ro ghcr.io/kapsikkum/ytp-machine:latest
+docker run -p 127.0.0.1:8765:8765 -v ytp-data:/app/data -v ./corpora/michael-rosen:/corpus:ro ghcr.io/kapsikkum/ytp-machine:latest
 ```
 
 Any of three sources works: a corpus directory or a `.tar.zst` bundle mounted at
@@ -45,7 +48,7 @@ a corpus and attaches it to a release, which is the only place a 100 MB+ bundle
 can sit at a stable public URL:
 
 ```bash
-docker run -p 8765:8765 -v ytp-data:/app/data -e CORPUS_URL=https://github.com/kapsikkum/ytp-machine/releases/download/corpus/michael-rosen.tar.zst ghcr.io/kapsikkum/ytp-machine:latest
+docker run -p 127.0.0.1:8765:8765 -v ytp-data:/app/data -e CORPUS_URL=https://github.com/kapsikkum/ytp-machine/releases/download/corpus/michael-rosen.tar.zst ghcr.io/kapsikkum/ytp-machine:latest
 ```
 
 Run it from the Actions tab, or push a `corpus-*` tag. It packs, unpacks the
@@ -59,6 +62,19 @@ docker pull ghcr.io/kapsikkum/ytp-machine:e4f6b8250ad18f0157acae513c779e83e7d7ca
 ```
 
 No GPU needed to *run* it. You do want one to build a new corpus.
+
+Compose publishes port 8765 on localhost by default. The operator API can edit
+and replace corpora and has no built-in login. For remote use, put an
+authenticated reverse proxy in front of it and set `MRS_BIND_ADDRESS` to the
+interface the proxy needs. Browser origin checks and Matrix allow-lists do not
+provide authentication for the HTTP API.
+
+Mounted corpus directories are seeded with a consistent SQLite snapshot,
+including committed WAL writes and pronunciation overrides. Imports validate
+in staging before activation. Forced replacements retain the previous corpus
+under `corpora/.backups/`; loose `unpack --force` keeps replaced members under
+`.corpus-backups/`. Allow disk space for staging and these retained backups.
+Stop the app before running the legacy migration command.
 
 ---
 
@@ -111,7 +127,7 @@ usb,=letters
 Then `POST /api/reload`. To rebuild that list later, point it at the corpus:
 
 ```bash
-MRS_DATA_DIR=C:/Users/you/ytp-corpora/some-channel MRS_CORPUS=some-channel python scripts/verify_corpus.py --unspliceable --write-template
+MRS_DATA_DIR=C:/Users/you/ytp-corpora/some-channel MRS_CORPUS=some-channel python scripts/verify_corpus.py --unspliceable --write-template --per-corpus
 ```
 
 ---
@@ -208,10 +224,22 @@ python scripts/build_corpus.py https://youtube.com/@Name --name my-corpus --mode
 ```
 
 It names the corpus from the channel handle unless you pass `--name`, and
-defaults to 40 videos (`--limit 0` for the whole channel). Videos already
-ingested are skipped, so an interrupted run resumes by re-running it. Use
+defaults to a target of 40 total videos in the corpus (`--limit 0` for the whole
+channel). Videos already ingested count towards that target, so interrupting at
+25/40 and rerunning adds up to 15 more. The standalone `ingest_channel.py`
+counts new videos instead. Use
 `--skip-ingest` / `--skip-refine` / `--skip-pack` to redo part of it, and
 `--data-dir` to build somewhere other than the project root.
+
+The build transcribes first, refines word boundaries second, and places phonemes
+last. Each model runs in its own process, which keeps Whisper and the phoneme
+model from sharing GPU memory. `--skip-align` also skips alignment during ingest.
+Phoneme results are checkpointed every 50 clips and on a handled interruption,
+so resuming skips completed clips without a database transaction for each one.
+If a clip is relabeled or retimed while alignment runs, the checkpoint leaves
+that edit intact. Standalone channel ingestion also resumes missing phoneme
+alignment for previously ingested videos. Empty legacy sources remain eligible
+for ingestion.
 
 It checks the dependencies, ffmpeg and the GPU before starting, because the
 alternative is finding out four hours in.
@@ -249,6 +277,27 @@ python scripts/ingest_channel.py https://www.youtube.com/@SomeChannel/videos --l
 `--model` trades speed for accuracy. Every later step inherits these labels, so
 `small` or `medium` is worth it. `--normalise` re-encodes to the corpus format
 (480x270), which makes bundles far smaller and generation cheaper.
+Original imports also render correctly: generation checks their actual size,
+frame rate and display rotation, then scales with letterboxing when needed.
+Local imports refuse to overwrite an existing recording with the same filename.
+
+For English speech, `--language en` avoids detecting the language from the
+opening audio. The English-only models (`small.en`, `medium.en`) and `turbo`
+are also accepted by build, ingest and realign. Compare models on a short,
+manually transcribed sample from the speaker before committing to a whole
+channel: the fastest model and the most accurate one depend on the material.
+The word and phoneme aligners currently use English models and pronunciations.
+
+Supply a short vocabulary hint when names or recurring terms are misheard:
+
+```bash
+python scripts/build_corpus.py @SomeChannel --model medium.en --language en --initial-prompt "Names and terms: Morshu, Hyrule, rupees." --limit 10
+```
+
+These options also work with `scripts/realign.py`, which reuses downloaded
+videos. Forced alignment adjusts timings; misheard words still need a better
+transcription or a corrected transcript. Empty transcriptions and invalid word
+durations are rejected, and refinement preserves hand-edited clip boundaries.
 
 **2. Sharpen the timings.** Whisper's word boundaries run early and wander by
 100–350 ms, so short clips grab the tail of the previous word:
@@ -262,9 +311,17 @@ python scripts/refine_boundaries.py --all --apply       # frame-accurate, everyt
 `refine_boundaries` matters most for splice quality. It needs `--all` or a
 `--source-id` to pick targets and `--apply` to write.
 
+Re-transcription refuses sources with hand-edited clips unless you pass
+`--replace-edited`. It also aborts if clips or the recording change during the
+run. Replacement removes stale dependent alignments and votes. Pinned splice
+recipes are remapped when a new clip unambiguously contains the same cut;
+otherwise their clip pin is released while retaining the sound preference.
+
 **3. Fix misheard labels** (optional, needs a real transcript). Relabels only
 high-confidence phonetically-close swaps, never timestamps. Put the true text
-in `transcripts/<video_id>.txt`:
+in the active corpus's `transcripts/<video_id>.txt` (`--transcripts-dir` overrides
+the directory). Relabeling clears the affected character and phoneme alignment
+so it can be measured against the corrected word:
 
 ```bash
 python scripts/correct.py --all            # dry run
@@ -289,9 +346,10 @@ python scripts/corpus.py pack --corpus <name>
 python scripts/corpus.py info corpus-*.tar.zst
 ```
 
-`pack` checkpoints the SQLite WAL first; tarring a live database with an
-unmerged WAL captures a torn state. Bundles are `.tar.zst`, or `.tar.gz` if
-`zstandard` isn't installed. `unpack` reads either.
+`pack` takes a consistent SQLite backup, including committed WAL writes,
+without checkpointing the live database. Bundles carry the effective global
+and voice pronunciation rules together, with voice overrides last. They are
+`.tar.zst`, or `.tar.gz` if `zstandard` isn't installed. `unpack` reads either.
 
 ## Markup in the input
 
@@ -337,6 +395,13 @@ Change any of it: type a word or phrase, cycle through takes, click an
 alternative, press ▶ part to hear a part on its own, move an octave, mute a
 part, choose `tape` for the classic chipmunk sound instead of `pitch perfect`.
 Render goes through the same queue as sentences.
+
+Voice parts also have a **corpus** dropdown containing the installed voices.
+Choose a different performer for each part, or leave it on **follow page voice**.
+Switching a part's corpus refreshes its suggested sounds, takes and vocabulary;
+previews and the finished video use that same corpus. The voice at the top is
+this page's default and leaves the server's active corpus unchanged. Explicit
+part choices survive changes to that default and are restored on page reload.
 
 From a terminal:
 
@@ -594,6 +659,12 @@ edges in grey. Click the waveform to move the start, shift-click to move the
 end, or nudge by 10ms and 50ms. Space plays just that clip, so you can hear the
 edit before saving it.
 
+The optional spectrogram shows measured audio frequencies, using a bounded
+STFT calculation when opened. Corpus and source changes discard stale editor
+responses. Generation history records its voice, so clip actions apply to the
+corpus that produced the result. API clients can send `X-Corpus: <slug>` to pin
+their request; a write for a corpus that is no longer selected returns 409.
+
 Words are flagged when their shape has caused trouble before — very short, very
 long, or overlapping the next word. On one ASMR source, 335 of 1,011 clips
 overlap their neighbour.
@@ -645,9 +716,9 @@ corpora/<name>/pronunciations.csv    just that one, and packs with its bundle
 Use the global file. Most of what needs teaching is not specific to a speaker —
 "usb", "wii" and "kilometres" are the same words whoever says them — and a
 per-corpus copy would have to be maintained again for every channel ingested.
-The per-corpus file is for a speaker's own coinages; it overrides the global one
-and travels inside the bundle, so a corpus arrives able to say its own words on
-a machine that has never heard of them.
+The per-corpus file is for a speaker's own coinages; it overrides the global one.
+Packing includes both files' rules in the bundle's dictionary, so a corpus
+arrives with its pronunciations on a machine that has never heard of them.
 
 Two columns, and the second can be written whichever way suits:
 
@@ -759,7 +830,8 @@ once exhausted the container's thread ceiling before the queue existed.
 | `POST /api/reload` | drop the clip cache after an ingest or correction |
 | `GET /api/stats` | corpus totals |
 | `POST /api/ytpmv/midi` | upload a MIDI file (multipart `midi`) → key, tempo, parts, suggested sounds |
-| `POST /api/ytpmv/sample` | `{"text","take"}` → the clip as an instrument, and the note it is on |
+| `GET /api/ytpmv/midi/{id}/part/{part_id}?corpus={slug}` | suggested sounds for one part from an installed corpus |
+| `POST /api/ytpmv/sample` | `{"text","take","corpus"}` → the clip as an instrument, and the note it is on; corpus is optional |
 | `POST /api/ytpmv/preview` | `{"midi_id","part"}` → a few seconds of one part, audio only |
 | `POST /api/ytpmv/render` | `{"midi_id","parts","options"}` → `202` with a job id, polled like the rest |
 
@@ -770,6 +842,11 @@ python tests/test_tokenize.py        # tokeniser: expansions, markers, boundarie
 python tests/test_splice_modes.py    # pronunciations, substitutions, cost order
 python tests/test_corpus_select.py   # which corpus a run writes into
 python tests/test_bundle.py          # a bundle survives a round trip
+python tests/test_corpus_export.py   # live WAL snapshots and portable pronunciation rules
+python tests/test_corpus_metadata.py # corrections and edits preserve unrelated clip data
+python tests/test_numeric_alignment.py # numbers and ordinals keep their spoken meaning
+python tests/test_source_formats.py # original and rotated videos concatenate correctly
+python tests/test_clip_cache.py     # voice/source/window identity and actual cached audio
 python tests/test_pitch.py           # YTPMV: a wobbling vowel lands on the note
 python tests/test_music.py           # YTPMV: tempo, key and parts from a MIDI file
 python tests/test_matrix_commands.py # what the Matrix bot hears in a message

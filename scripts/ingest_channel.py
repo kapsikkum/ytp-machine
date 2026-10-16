@@ -26,7 +26,22 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-from scripts.ingest import ingest
+from scripts.ingest import MODEL_CHOICES, add_transcription_arguments, ingest
+
+
+def _error_reason(exc: Exception) -> str:
+    lines = str(exc).strip().splitlines()
+    return (lines[-1] if lines else type(exc).__name__)[:120]
+
+
+def _resume_phonemes(source_id: int, device: str | None) -> None:
+    """Finish a committed source without downloading or transcribing it again."""
+    from scripts.align_phones import align_corpus
+
+    print(f"  Resuming phoneme alignment for source {source_id} …")
+    _aligned, _skipped, failed = align_corpus(source_id=source_id, device=device)
+    if failed:
+        raise RuntimeError(f"Could not align {failed} clip(s) from source {source_id}")
 
 
 def _fetch_date(vid_id: str, cookies_from_browser: str | None = None) -> dict | None:
@@ -92,7 +107,16 @@ def list_channel_videos(
     if raw and isinstance(raw[0], dict) and "entries" in raw[0]:
         raw = raw[0].get("entries") or []
 
-    entries = [e for e in raw if e and e.get("id")]
+    # Channel and playlist listings can repeat the same upload. Keep the first
+    # position, both for a predictable --skip/--limit and to avoid transcribing
+    # it twice before the next run's database check can see it.
+    seen: set[str] = set()
+    entries: list[dict] = []
+    for entry in raw:
+        if not entry or not entry.get("id") or entry["id"] in seen:
+            continue
+        seen.add(entry["id"])
+        entries.append(entry)
     all_ids = [e["id"] for e in entries]
     print(f"Found {len(all_ids)} videos in channel listing.")
 
@@ -144,7 +168,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="base",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=MODEL_CHOICES,
         help="Whisper model size (default: base)",
     )
     parser.add_argument("--skip-errors", action="store_true", help="Continue on per-video failures")
@@ -175,6 +199,11 @@ def main() -> None:
         "--normalise", "--normalize", action="store_true", dest="normalise",
         help="Re-encode each video to the corpus format after download.",
     )
+    parser.add_argument(
+        "--no-align", dest="align", action="store_false",
+        help="Leave phoneme alignment for a later stage. This avoids keeping "
+             "the transcription and alignment models loaded together.",
+    )
     from app.device import add_argument as _device_arg
     _device_arg(parser)
     parser.add_argument(
@@ -185,6 +214,7 @@ def main() -> None:
              "(e.g. chrome, firefox, edge, chromium). "
              "Required when YouTube demands 'Sign in to confirm you're not a bot'.",
     )
+    add_transcription_arguments(parser)
     args = parser.parse_args()
 
     videos = list_channel_videos(args.channel, args.year, args.cookies_from_browser)
@@ -193,6 +223,8 @@ def main() -> None:
         sys.exit("No videos found matching the criteria.")
 
     total_found = len(videos)
+    failed: list[tuple[str, str]] = []
+    alignment_failed = False
 
     # Drop anything already in this corpus before counting off skip/limit.
     #
@@ -206,13 +238,47 @@ def main() -> None:
         from app.database import init_db, get_db
         init_db()
         with get_db() as conn:
-            known = {r[0] for r in conn.execute("SELECT video_id FROM sources")}
+            # Earlier ingests could commit an empty source. Such a row is a
+            # retry candidate, not evidence that the upload was transcribed.
+            # Positive infinity is possible in old REAL columns too, so only
+            # finite nonnegative spans count as usable material.
+            stored = [dict(r) for r in conn.execute(
+                "SELECT s.id, s.video_id, EXISTS ("
+                "SELECT 1 FROM word_clips w WHERE w.source_id=s.id "
+                "AND w.start_time >= 0 AND w.end_time > w.start_time "
+                "AND w.end_time < ? AND (w.phones IS NULL OR w.phones='')"
+                ") AS needs_alignment FROM sources s WHERE EXISTS ("
+                "SELECT 1 FROM word_clips w WHERE w.source_id=s.id "
+                "AND w.start_time >= 0 AND w.end_time > w.start_time "
+                "AND w.end_time < ?)", (float("inf"), float("inf")))]
+        known = {s["video_id"] for s in stored}
+        if args.align:
+            matching = {v["id"] for v in videos}
+            for source in stored:
+                if source["video_id"] not in matching or not source["needs_alignment"]:
+                    continue
+                try:
+                    _resume_phonemes(source["id"], args.device)
+                except Exception as exc:
+                    print(f"  ERROR resuming source {source['id']}: {exc}")
+                    failed.append((f"{source['video_id']} (source {source['id']}, alignment)",
+                                   _error_reason(exc)))
+                    alignment_failed = True
+                    if not args.skip_errors:
+                        sys.exit(1)
         if known:
             before = len(videos)
             videos = [v for v in videos if v["id"] not in known]
             if before != len(videos):
                 print(f"\nSkipping {before - len(videos)} video(s) already in "
                       f"this corpus (pass --reingest to force).")
+        if not videos:
+            # This is the ordinary end of a resumed build. The wrapper still
+            # needs to refine, align and pack the material already stored.
+            print("All matching videos are already in this corpus.")
+            if alignment_failed:
+                sys.exit(1)
+            return
 
     if args.skip:
         videos = videos[args.skip:]
@@ -241,7 +307,6 @@ def main() -> None:
     print(f"Starting ingestion  (Whisper model: {args.model})\n{'─'*60}")
 
     ok = 0
-    failed: list[tuple[str, str]] = []
     for v in videos:
         if ok >= want:
             break
@@ -256,11 +321,14 @@ def main() -> None:
                 device=args.device,
                 max_height=args.max_height,
                 normalise=args.normalise,
+                align=args.align,
+                language=args.language,
+                initial_prompt=args.initial_prompt,
             )
             ok += 1
         except Exception as exc:
             print(f"  ERROR: {exc}")
-            failed.append((v["title"], str(exc).strip().splitlines()[-1][:120]))
+            failed.append((v["title"], _error_reason(exc)))
             if not args.skip_errors:
                 sys.exit(1)
 
@@ -276,6 +344,10 @@ def main() -> None:
         for title, why in failed:
             print(f"    {title[:52]}")
             print(f"      {why}")
+    if alignment_failed or (ok == 0 and want > 0):
+        # --skip-errors makes individual failures survivable, but an entirely
+        # failed run must stop the build rather than pack an empty corpus.
+        sys.exit(1)
 
 
 if __name__ == "__main__":

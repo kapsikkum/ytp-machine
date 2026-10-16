@@ -21,7 +21,9 @@ import json
 import logging
 import os
 import threading
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 import numpy as np
 
@@ -101,10 +103,18 @@ def _save(corpus: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with _lock:
         data = dict(_mem.get(corpus, {}))
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
-    os.replace(tmp, path)
+        # Two analyses can finish together; a shared .tmp path let one
+        # replace the other's open file, corrupting it or losing the rename.
+        tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path),
+                                             prefix=os.path.basename(path) + ".", suffix=".tmp", delete=False) as fh:
+                tmp = fh.name
+                json.dump(data, fh)
+            os.replace(tmp, path)
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
 
 
 def _clip_key(clip: dict) -> str:
@@ -153,17 +163,24 @@ def measure(x: np.ndarray) -> dict:
     }
 
 
-def _measure_clip(clip: dict, groups: tuple[str, ...] = ()) -> dict | None:
+def _measure_clip(clip: dict, groups: tuple[str, ...] = (), check_cancel=None) -> dict | None:
     """The clip measured whole, and cut into each drum hit in *groups*."""
     try:
+        if check_cancel:
+            check_cancel()
         start, end = g.extract_window(clip)
-        x = decode_audio(clip["source_file"], start, end - start)
+        x = decode_audio(clip["source_file"], start, end - start,
+                         **({"check_cancel": check_cancel} if check_cancel else {}))
+        if check_cancel:
+            check_cancel()
         out = {"v": _MEASURE_VERSION, "word": measure(x)}
         a, b = samples._trim(x)
         for grp in groups:
             out[grp] = measure(drums.shape(x[a:b], grp)[0])
         return out
     except Exception as exc:  # noqa: BLE001 -- one bad file must not sink the lot
+        if check_cancel:
+            check_cancel()          # cancellation must not become a bad-clip skip
         log.warning("ytpmv: could not measure clip %s: %s", clip.get("id"), exc)
         return None
 
@@ -247,15 +264,18 @@ def first_that_sings(ranked: list, sings) -> list:
     return ranked
 
 
-def recommend(song: Song, progress=None) -> dict[str, dict]:
+def recommend(song: Song, progress=None, pool: dict | None = None) -> dict[str, dict]:
     """For each part: the suggested sound, alternatives, and an octave to play it in.
 
     Returns {part_id: {"text", "take", "octave", "mode", "score", "pitch",
     "alternatives": [{"text", "take", "score"}]}}.
     """
     corpus = active()["slug"]
-    g._ensure_cache()
-    cbw = g._clips_by_word_cache or {}
+    if pool is None:
+        g._ensure_cache()
+        cbw = g._clips_by_word_cache or {}
+    else:
+        cbw = pool["clips_by_word"]
     frequent = [w for w, rows in sorted(cbw.items(), key=lambda kv: -len(kv[1]))
                 if w.isalpha()][:_FALLBACK_WORDS]
     roles = sorted({p.role for p in song.parts})
@@ -288,17 +308,34 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     if todo:
         log.info("ytpmv: measuring %d takes for %s", len(todo), corpus)
         done = 0
+        stopped = threading.Event()
+
+        def check_cancel():
+            if stopped.is_set():
+                raise RuntimeError("Measurement cancelled")
+            if progress:
+                progress("measuring", done, len(todo))
+
         with ThreadPoolExecutor(max_workers=4) as pool:
-            for clip, m in zip(todo, pool.map(lambda c: _measure_clip(c, groups), todo)):
-                done += 1
-                if progress:
-                    progress("measuring", done, len(todo))
-                if m is not None:
-                    with _lock:
-                        old = cache.get(_clip_key(clip))
-                        keep = (old if isinstance(old, dict) and old.get("v") == _MEASURE_VERSION
-                                else {})
-                        cache[_clip_key(clip)] = {**keep, **m}
+            pending = [pool.submit(copy_context().run, _measure_clip, clip, groups,
+                                   check_cancel=check_cancel) for clip in todo]
+            try:
+                for clip, future in zip(todo, pending):
+                    m = future.result()
+                    done += 1
+                    if progress:
+                        progress("measuring", done, len(todo))
+                    if m is not None:
+                        with _lock:
+                            old = cache.get(_clip_key(clip))
+                            keep = (old if isinstance(old, dict) and old.get("v") == _MEASURE_VERSION
+                                    else {})
+                            cache[_clip_key(clip)] = {**keep, **m}
+            except BaseException:
+                stopped.set()
+                for future in pending:
+                    future.cancel()
+                raise
         _save(corpus)
 
     heard: dict[tuple[str, int], bool] = {}
@@ -306,7 +343,9 @@ def recommend(song: Song, progress=None) -> dict[str, dict]:
     def sings(word: str, take: int) -> bool:
         if (word, take) not in heard:
             try:
-                heard[word, take] = samples.build(word, take).voice.info.f0 is not None
+                heard[word, take] = samples.build(word, take,
+                    check_cancel=(lambda: progress("samples", 0, len(song.parts))) if progress else None
+                ).voice.info.f0 is not None
             except samples.SampleError:
                 heard[word, take] = False
         return heard[word, take]

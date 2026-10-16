@@ -35,20 +35,9 @@ seed() {
 
   if [ -n "$SRC_DB" ]; then
     echo "seeding corpus into $SEED_DIR from the files mounted at /corpus"
-    mkdir -p "$SEED_DIR/downloads"
-    cp "$SRC_DB" "$SEED_DIR/corpus.db"
-    # Written as `if` rather than `[ -d x ] && cp ...` on purpose: under set -e
-    # a bare test-and-command list that fails its test returns non-zero as a
-    # statement, and the script exits. A missing transcripts directory would
-    # have killed the container instead of being skipped.
-    if [ -d /corpus/downloads ]; then
-      cp -r /corpus/downloads/. "$SEED_DIR/downloads/"
-    fi
-    if [ -d /corpus/transcripts ]; then
-      mkdir -p "$SEED_DIR/transcripts"
-      cp -r /corpus/transcripts/. "$SEED_DIR/transcripts/"
-    fi
-    echo "  $(ls "$SEED_DIR/downloads" | wc -l) videos"
+    # Include committed WAL writes and pronunciation overrides; a failed copy
+    # never leaves a database that would make the next boot skip seeding.
+    python /app/scripts/corpus.py seed-directory /corpus --name "${CORPUS_NAME:-michael-rosen}"
     return 0
   fi
 

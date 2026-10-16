@@ -3,14 +3,17 @@ import os
 import stat
 import threading
 import time
+from urllib.parse import urlsplit
+from contextlib import nullcontext
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.database import init_db
-from app.api import MAX_BUNDLE_BYTES, router
+from app.database import active, init_db, list_corpora, using_corpus
+from app import jobs
+from app.api import MAX_BUNDLE_BYTES, request_mutation, router
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Use a file handler on the "app" logger with propagate=False so our messages
@@ -48,7 +51,7 @@ app = FastAPI(title="YTP Machine", version="1.0.0")
 #
 # That still leaves the requests a browser sends cross-site without asking
 # first -- a form post, a no-cors fetch of an upload -- so a change made from
-# another site is refused outright. Sec-Fetch-Site is set by the browser and
+# another origin is refused outright. Sec-Fetch-Site is set by the browser and
 # cannot be forged by a page; the bot and curl send none and are unaffected.
 #
 # And the size of a request body is held here, before anything reads it:
@@ -63,12 +66,37 @@ class _Guard:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         headers = dict(scope["headers"])
-        if (scope["method"] not in ("GET", "HEAD", "OPTIONS")
-                and headers.get(b"sec-fetch-site") == b"cross-site"):
-            return await JSONResponse({"detail": "not from another site"}, 403)(scope, receive, send)
+        writing = scope["method"] not in ("GET", "HEAD", "OPTIONS")
+        if writing:
+            denied = headers.get(b"sec-fetch-site") in (b"same-site", b"cross-site")
+            if b"origin" in headers:
+                try:
+                    origin = urlsplit(headers[b"origin"].decode("ascii"))
+                    here = urlsplit(scope["scheme"] + "://" + headers.get(b"host", b"").decode("ascii"))
+                    origin_port = origin.port or (443 if origin.scheme == "https" else 80)
+                    here_port = here.port or (443 if here.scheme == "https" else 80)
+                    denied |= (origin.scheme not in ("http", "https") or origin.scheme != here.scheme
+                               or origin.hostname != here.hostname or origin_port != here_port
+                               or bool(origin.path or origin.query or origin.fragment or origin.username))
+                except (ValueError, UnicodeError):
+                    denied = True
+            if denied:
+                return await JSONResponse({"detail": "not from another origin"}, 403)(scope, receive, send)
+        # MIDI and JSON requests cannot use the multi-gigabyte bundle budget.
+        # Enforce before multipart parsing spools the entire file to disk.
+        path = scope.get("path", "")
+        limit = min(_MAX_BODY, MAX_BUNDLE_BYTES + (1 << 20) if path == "/api/corpus/import"
+                    else 3 << 20 if path == "/api/ytpmv/midi" else 1 << 20)
         length = headers.get(b"content-length", b"")
-        if length.isdigit() and int(length) > _MAX_BODY:
+        if length.isdigit() and int(length) > limit:
             return await JSONResponse({"detail": "that is too big to send"}, 413)(scope, receive, send)
+        if writing and path in ("/api/corpus/import", "/api/ytpmv/midi"):
+            content_type = headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+            if content_type != b"multipart/form-data":
+                # These endpoints require a file. Never give URL-encoded form
+                # parsing the bundle's multi-gigabyte size allowance.
+                return await JSONResponse({"detail": "file uploads require multipart/form-data"}, 415)(
+                    scope, receive, send)
 
         seen = 0
 
@@ -77,11 +105,42 @@ class _Guard:
             nonlocal seen
             message = await receive()
             seen += len(message.get("body", b""))
-            if seen > _MAX_BODY:
+            if seen > limit:
                 raise ValueError("request body over the limit")
             return message
 
-        await self.app(scope, counted, send)
+        # ContextVars propagate through FastAPI's threadpool. A request keeps
+        # using the corpus it began with even if another client switches later.
+        if not path.startswith("/api/"):
+            return await self.app(scope, counted, send)
+        mismatch = False
+        maintaining = False
+        with jobs.corpus_guard():
+            maintaining = writing and jobs.maintenance_in_progress()
+            current = active()
+            requested = headers.get(b"x-corpus", b"").decode("utf-8", errors="replace")
+            if requested and requested != current["slug"]:
+                # YTPMV operations create previews/renders, not corpus edits.
+                # Their page-local default may differ from the server's voice.
+                voice_operation = path in {"/api/ytpmv/midi", "/api/ytpmv/sample",
+                                           "/api/ytpmv/preview", "/api/ytpmv/render"}
+                if writing and not voice_operation:
+                    mismatch = True
+                else:
+                    current = next((c for c in list_corpora() if c["slug"] == requested), None)
+                    mismatch = current is None
+        if maintaining:
+            return await JSONResponse({"detail": "a corpus import or export is in progress"}, 409)(
+                scope, receive, send)
+        if mismatch:
+            return await JSONResponse({"detail": "the active corpus changed; reload before editing"}, 409)(
+                scope, receive, send)
+        with using_corpus(current):
+            try:
+                with request_mutation() if writing else nullcontext():
+                    await self.app(scope, counted, send)
+            except HTTPException as exc:
+                return await JSONResponse({"detail": exc.detail}, exc.status_code)(scope, receive, send)
 
 
 app.add_middleware(_Guard)

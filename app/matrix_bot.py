@@ -50,6 +50,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from urllib.parse import quote, urlsplit
 
 import aiohttp
 from nio import (AsyncClient, AsyncClientConfig, InviteMemberEvent, LoginResponse,
@@ -63,6 +64,9 @@ log = logging.getLogger("app.matrix_bot")
 _POLL = 2.0
 _STATUS_EVERY = 5.0
 _JOB_TIMEOUT = 30 * 60
+_MAX_MIDI_BYTES = 2 << 20       # matches the web app's MIDI upload limit
+_MAX_VIDEO_BYTES = 128 << 20
+_MAX_COMMANDS = 32
 _STAGE = {"waiting": "waiting", "loading": "loading the voice", "resolving": "finding clips",
           "encoding": "encoding", "joining": "joining", "measuring": "measuring words",
           "samples": "cutting samples", "notes": "singing notes", "frames": "drawing frames",
@@ -154,6 +158,21 @@ class ApiError(Exception):
     pass
 
 
+class MediaTooLarge(ApiError):
+    pass
+
+
+async def _bounded_media(response, limit: int) -> bytes:
+    if response.content_length is not None and response.content_length > limit:
+        raise MediaTooLarge(f"that file is over {limit / (1 << 20):g} MB")
+    body = bytearray()
+    async for chunk in response.content.iter_chunked(64 << 10):
+        if len(body) + len(chunk) > limit:
+            raise MediaTooLarge(f"that file is over {limit / (1 << 20):g} MB")
+        body.extend(chunk)
+    return bytes(body)
+
+
 class Api:
     """The web app, over HTTP."""
 
@@ -194,12 +213,12 @@ class Api:
         async with s.post(self.base + "/api/ytpmv/midi", data=form) as r:
             return await self._read(r)
 
-    async def fetch(self, url_path: str) -> bytes:
+    async def fetch(self, url_path: str, max_bytes: int = _MAX_VIDEO_BYTES) -> bytes:
         s = await self._session()
         async with s.get(self.base + url_path) as r:
             if r.status >= 400:
                 raise ApiError(f"couldn't fetch the video ({r.status})")
-            return await r.read()
+            return await _bounded_media(r, max_bytes)
 
     async def close(self):
         if self.http and not self.http.closed:
@@ -246,6 +265,7 @@ class Bot:
         self.midi_by_event: dict[str, tuple[str, str]] = {}    # event id -> (mxc, filename)
         self.last_midi: dict[str, tuple[str, str]] = {}        # room id -> (mxc, filename)
         self.upload_limit: int | None = None
+        self._tasks: set[asyncio.Task] = set()
 
     # ── session ──────────────────────────────────────────────────────────────
 
@@ -347,22 +367,25 @@ class Bot:
 
     async def send_video(self, room_id: str, video_url: str, caption: str,
                          reply_to: str | None) -> None:
-        data = await self.api.fetch(video_url)
         limit = await self._upload_limit()
-        if limit and len(data) > limit:
+        cap = min(limit, _MAX_VIDEO_BYTES) if limit else _MAX_VIDEO_BYTES
+        try:
+            data = await self.api.fetch(video_url, max_bytes=cap)
+        except MediaTooLarge:
             if self.cfg.public_url:
                 await self.say(room_id, f"{caption}\nToo big to upload here "
-                               f"({len(data) / 1e6:.0f} MB): {self.cfg.public_url}{video_url}", reply_to)
+                               f"(over {cap / (1 << 20):g} MB): {self.cfg.public_url}{video_url}", reply_to)
             else:
-                await self.say(room_id, f"That came out at {len(data) / 1e6:.0f} MB, more than this "
-                               "server takes. Try a shorter one (max=30).", reply_to)
+                await self.say(room_id, f"That is over {cap / (1 << 20):g} MB. "
+                               "Try a shorter one (max=30).", reply_to)
             return
         with tempfile.TemporaryDirectory(prefix="ytpbot_") as tmp:
             path = os.path.join(tmp, "video.mp4")
             with open(path, "wb") as fh:
                 fh.write(data)
-            info = {"mimetype": "video/mp4", "size": len(data), **_probe(path)}
-            thumb = _thumbnail(path)
+            measured, thumb = await asyncio.gather(asyncio.to_thread(_probe, path),
+                                                   asyncio.to_thread(_thumbnail, path))
+            info = {"mimetype": "video/mp4", "size": len(data), **measured}
         if thumb:
             tresp, _ = await self.client.upload(lambda *_: thumb, content_type="image/jpeg",
                                                 filename="thumb.jpg", filesize=len(thumb))
@@ -391,7 +414,9 @@ class Bot:
             j = await self.api.get(f"/api/jobs/{jid}")
             if j["status"] == "done":
                 return j["result"]
-            if j["status"] == "error":
+            if j["status"] in ("error", "cancelled"):
+                if j["status"] == "cancelled":
+                    raise ApiError("that job was cancelled")
                 raise ApiError(j.get("error") or "it went wrong")
             now = time.monotonic()
             if now - started > _JOB_TIMEOUT:
@@ -440,11 +465,37 @@ class Bot:
         if not found:
             raise ApiError("Post a MIDI file here first (or reply to one), then ask again.")
         mxc, name = found
-        resp = await self.client.download(mxc=mxc)
-        body = getattr(resp, "body", None)
+        body = await self._download_midi(mxc)
         if not body:
             raise ApiError(f"Couldn't download {name} from the homeserver.")
         return await self.api.upload_midi(body, name)
+
+    async def _download_midi(self, mxc: str) -> bytes:
+        try:
+            if len(mxc) > 2048:
+                raise ValueError
+            parsed = urlsplit(mxc)
+        except ValueError as exc:
+            raise ApiError("that MIDI has an invalid media address") from exc
+        media_id = parsed.path.lstrip("/")
+        if (parsed.scheme != "mxc" or not parsed.netloc or parsed.username is not None
+                or not media_id or "/" in media_id or parsed.query or parsed.fragment):
+            raise ApiError("that MIDI has an invalid media address")
+        # Download via the configured homeserver, never the MXC authority.
+        # nio.download buffers the whole file and disables its request timeout.
+        tail = quote(parsed.netloc, safe="") + "/" + quote(media_id, safe="")
+        headers = {"Authorization": f"Bearer {self.client.access_token}"}
+        session = await self.api._session()
+        for prefix in ("/_matrix/client/v1/media/download/", "/_matrix/media/v3/download/"):
+            async with session.get(self.cfg.homeserver + prefix + tail, headers=headers,
+                                   allow_redirects=False,
+                                   timeout=aiohttp.ClientTimeout(total=60, sock_connect=10, sock_read=20)) as r:
+                if r.status == 404 and prefix.startswith("/_matrix/client/"):
+                    continue
+                if r.status >= 300:
+                    raise ApiError(f"couldn't download the MIDI ({r.status})")
+                return await _bounded_media(r, _MAX_MIDI_BYTES)
+        raise ApiError("couldn't download the MIDI")
 
     async def cmd_info(self, room: MatrixRoom, event, cmd: Command) -> None:
         song = await self._analyse(room, event)
@@ -566,7 +617,7 @@ class Bot:
         await self.say(room.room_id, f"Hello! {self.cfg.prefix} help for what I can do.")
 
     async def on_file(self, room: MatrixRoom, event) -> None:
-        if event.sender == self.client.user_id:
+        if event.sender == self.client.user_id or not self.cfg.allowed(event.sender, room.room_id):
             return
         content = event.source.get("content", {})
         name = content.get("filename") or content.get("body") or ""
@@ -623,18 +674,24 @@ class Bot:
         handler = {"say": self.cmd_say, "mv": self.cmd_mv, "info": self.cmd_info,
                    "voices": self.cmd_voices, "voice": self.cmd_voice,
                    "queue": self.cmd_queue}[cmd.name]
-        heavy = cmd.name in ("say", "mv")
+        if len(self._tasks) >= _MAX_COMMANDS:
+            await self.say(room.room_id, "Too many requests are in flight — try again shortly.", event.event_id)
+            return
+        heavy = cmd.name in ("say", "mv", "info")
         if heavy:
             if event.sender in self.busy:
                 await self.say(room.room_id, "Still working on your last one — hang on.", event.event_id)
                 return
-            wait = self.cfg.cooldown - (time.monotonic() - self.last_request.get(event.sender, -1e9))
-            if wait > 0:
-                await self.say(room.room_id, f"Give it {wait:.0f}s.", event.event_id)
-                return
+            if cmd.name != "info":
+                wait = self.cfg.cooldown - (time.monotonic() - self.last_request.get(event.sender, -1e9))
+                if wait > 0:
+                    await self.say(room.room_id, f"Give it {wait:.0f}s.", event.event_id)
+                    return
+                self.last_request[event.sender] = time.monotonic()
             self.busy.add(event.sender)
-            self.last_request[event.sender] = time.monotonic()
-        asyncio.create_task(self._run(handler, room, event, cmd, heavy))
+        task = asyncio.create_task(self._run(handler, room, event, cmd, heavy))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _run(self, handler, room, event, cmd, heavy) -> None:
         try:
@@ -656,6 +713,18 @@ class Bot:
     # ── main loop ────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
+        try:
+            await self._listen()
+        finally:
+            pending = list(self._tasks)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            await self.api.close()
+            await self.client.close()
+
+    async def _listen(self) -> None:
         await self.login()
         if not (self.cfg.allowed_rooms or self.cfg.allowed_users):
             log.warning("no MATRIX_ALLOWED_ROOMS or MATRIX_ALLOWED_USERS: answering anyone who invites me")
@@ -709,8 +778,7 @@ class Bot:
                     backoff = min(backoff * 2.0, max_backoff)
         finally:
             watcher.cancel()
-            await self.api.close()
-            await self.client.close()
+            await asyncio.gather(watcher, return_exceptions=True)
 
 
 def main() -> int:

@@ -21,10 +21,12 @@ something real, not before.
 from __future__ import annotations
 
 import logging
-import queue
 import threading
 import time
 import uuid
+from collections import deque
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,6 +48,10 @@ MAX_QUEUED = 20
 
 class QueueFull(Exception):
     """Too many jobs waiting already."""
+
+
+class CorpusBusy(Exception):
+    """Corpus files are temporarily being maintained."""
 
 
 @dataclass
@@ -94,9 +100,46 @@ class Job:
 
 _jobs: dict[str, Job] = {}
 _order: list[str] = []
-_queue: "queue.Queue[str]" = queue.Queue()
+_queue: deque[str] = deque()
 _lock = threading.Lock()
+_ready = threading.Condition(_lock)
+_worker_lock = threading.Lock()
+_corpus_lock = threading.RLock()
+_maintenance = False
 _worker: threading.Thread | None = None
+
+
+@contextmanager
+def corpus_guard():
+    """Make corpus maintenance checks atomic with new work reservations."""
+    with _corpus_lock:
+        yield
+
+
+def has_live_jobs() -> bool:
+    """Call inside corpus_guard when deciding whether maintenance can start."""
+    with _lock:
+        return any(job.status in ("queued", "running") for job in _jobs.values())
+
+
+def maintenance_in_progress() -> bool:
+    with corpus_guard():
+        return _maintenance
+
+
+def begin_corpus_maintenance() -> None:
+    """Reserve maintenance under corpus_guard, then release it during I/O."""
+    global _maintenance
+    with corpus_guard():
+        if _maintenance:
+            raise CorpusBusy
+        _maintenance = True
+
+
+def end_corpus_maintenance() -> None:
+    global _maintenance
+    with corpus_guard():
+        _maintenance = False
 
 
 def _prune() -> None:
@@ -123,30 +166,39 @@ def _prune() -> None:
 
 
 def _run(job: Job) -> None:
-    if job.abort_event.is_set():
-        job.status = "cancelled"
-        job.stage = "cancelled"
-        job.error = "Job cancelled"
-        job.error_kind = "cancelled"
+    if not job.corpus or job.abort_event.is_set():
+        _run_in_corpus(job)
+        return
+    from app.database import using_corpus
+    try:
+        with using_corpus(job.corpus):
+            _run_in_corpus(job)
+    except Exception as exc:
+        job.status = "error"
+        job.error = f"The requested corpus '{job.corpus}' is unavailable."
+        job.error_kind = "request"
         job.finished = time.time()
         job.ended.set()
-        return
+        log.warning("Failed to activate corpus %s for job %s: %s", job.corpus, job.id, exc)
+
+
+def _run_in_corpus(job: Job) -> None:
+    with _lock:
+        if job.abort_event.is_set():
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.error = "Job cancelled"
+            job.error_kind = "cancelled"
+            job.finished = time.time()
+            job.ended.set()
+            return
+        job.status = "running"
+        job.started = time.time()
 
     def progress(stage: str, done: int, total: int) -> None:
         if job.abort_event.is_set():
             raise RuntimeError("Job cancelled")
         job.stage, job.done, job.total = stage, done, total
-
-    job.status = "running"
-    job.started = time.time()
-
-    if job.corpus:
-        try:
-            from app.database import set_active, active
-            if active()["slug"] != job.corpus:
-                set_active(job.corpus)
-        except Exception as exc:
-            log.warning("Failed to activate corpus %s for job %s: %s", job.corpus, job.id, exc)
 
     try:
         if job.kind == "ytpmv":
@@ -221,24 +273,24 @@ def _run(job: Job) -> None:
 
 def _loop() -> None:
     while True:
-        jid = _queue.get()
-        job = _jobs.get(jid)
+        with _ready:
+            while not _queue:
+                _ready.wait()
+            jid = _queue.popleft()
+            job = _jobs.get(jid)
         if job is None:          # pruned before it ran; nothing to do
-            _queue.task_done()
             continue
         if job.abort_event.is_set() or job.status == "cancelled":
             job.status = "cancelled"
             job.stage = "cancelled"
             job.finished = time.time()
             job.ended.set()
-            _queue.task_done()
             _prune()
             continue
         log.info("JOB %s start  %r", job.id, job.text[:80])
         _run(job)
         log.info("JOB %s %s in %.1fs", job.id, job.status,
                  (job.finished or 0) - (job.started or 0))
-        _queue.task_done()
         _prune()
 
 
@@ -249,44 +301,82 @@ def _ensure_worker() -> None:
     video is worth less than a container that stops when told to.
     """
     global _worker
-    if _worker is None or not _worker.is_alive():
-        _worker = threading.Thread(target=_loop, name="ytp-worker", daemon=True)
-        _worker.start()
+    with _worker_lock:
+        if _worker is None or not _worker.is_alive():
+            _worker = threading.Thread(target=_loop, name="ytp-worker", daemon=True)
+            _worker.start()
 
 
 def _enqueue(job: Job) -> Job:
-    _ensure_worker()
-    with _lock:
-        if sum(j.status == "queued" for j in _jobs.values()) >= MAX_QUEUED:
-            raise QueueFull
-        _jobs[job.id] = job
-        _order.append(job.id)
-    _queue.put(job.id)
-    return job
+    return _enqueue_many([job])[0]
+
+
+def _enqueue_many(batch: list[Job]) -> list[Job]:
+    with corpus_guard():
+        if _maintenance:
+            raise CorpusBusy
+        _prune()
+        with _ready:
+            if sum(j.status == "queued" for j in _jobs.values()) + len(batch) > MAX_QUEUED:
+                raise QueueFull
+            for job in batch:
+                _jobs[job.id] = job
+                _order.append(job.id)
+                _queue.append(job.id)
+            _ready.notify()
+        try:
+            _ensure_worker()
+        except BaseException:
+            with _ready:
+                for job in batch:
+                    _jobs.pop(job.id, None)
+                    _order.remove(job.id)
+                    try:
+                        _queue.remove(job.id)
+                    except ValueError:
+                        pass
+            raise
+    return batch
 
 
 def submit(text: str, subtitles: bool = False, options: dict[str, Any] | None = None,
            corpus: str | None = None) -> Job:
-    if corpus is None:
-        try:
-            from app.database import active
-            corpus = active()["slug"]
-        except Exception:
-            corpus = ""
-    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
-                        corpus=corpus, params=dict(options or {})))
+    with corpus_guard():
+        if corpus is None:
+            try:
+                from app.database import active
+                corpus = active()["slug"]
+            except Exception:
+                corpus = ""
+        return _enqueue(Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
+                            corpus=corpus, params=deepcopy(options or {})))
 
 
 def submit_ytpmv(params: dict[str, Any], label: str = "ytpmv",
                  corpus: str | None = None) -> Job:
-    if corpus is None:
+    with corpus_guard():
+        if corpus is None:
+            try:
+                from app.database import active
+                corpus = active()["slug"]
+            except Exception:
+                corpus = ""
+        return _enqueue(Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv",
+                            corpus=corpus, params=deepcopy(params)))
+
+
+def submit_batch(texts: list[str], subtitles: bool = False,
+                 options: dict[str, Any] | None = None) -> list[Job]:
+    """Reserve an entire batch before any of its jobs can start."""
+    with corpus_guard():
         try:
             from app.database import active
             corpus = active()["slug"]
         except Exception:
             corpus = ""
-    return _enqueue(Job(id=uuid.uuid4().hex[:12], text=label, kind="ytpmv",
-                        corpus=corpus, params=params))
+        batch = [Job(id=uuid.uuid4().hex[:12], text=text, subtitles=subtitles,
+                     corpus=corpus, params=deepcopy(options or {})) for text in texts]
+        return _enqueue_many(batch)
 
 
 def cancel(job_id: str) -> bool:
@@ -299,17 +389,26 @@ def cancel(job_id: str) -> bool:
             return False
         job.abort_event.set()
         if job.status == "queued":
+            # Removing a cancelled reservation keeps the physical backlog
+            # bounded too, while the single worker is busy with a long render.
+            try:
+                _queue.remove(job_id)
+            except ValueError:
+                pass                            # the worker already took it
             job.status = "cancelled"
             job.stage = "cancelled"
             job.error = "Job cancelled"
             job.error_kind = "cancelled"
             job.finished = time.time()
             job.ended.set()
-        return True
+    _prune()
+    return True
 
 
 def get(job_id: str) -> Job | None:
-    return _jobs.get(job_id)
+    _prune()
+    with _lock:
+        return _jobs.get(job_id)
 
 
 def position(job_id: str) -> int:

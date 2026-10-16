@@ -7,6 +7,7 @@ import subprocess
 import concurrent.futures
 import threading
 from functools import lru_cache
+from contextvars import copy_context
 from typing import Any
 
 from app.database import active, clean_word, get_db
@@ -194,6 +195,7 @@ _borrowing: str | None = None
 # was being read is used once and not kept.
 _epoch = 0
 _pools_lock = threading.Lock()               # the epoch check and the store, as one
+_voice_lock = threading.RLock()              # sentence/phrase resolution owns the installed pool
 _installed: dict[str, Any] = {}              # the pool the globals above belong to
 
 
@@ -210,6 +212,12 @@ def _ensure_cache() -> None:
 
 
 def _use_voice(slug: str | None) -> dict[str, Any]:
+    """Install a voice without interrupting another operation's phrase resolution."""
+    with _voice_lock:
+        return _use_voice_locked(slug)
+
+
+def _use_voice_locked(slug: str | None) -> dict[str, Any]:
     """Install *slug*'s clips -- the active corpus's when None or unknown.
 
     Which corpus the installed pool belongs to is checked rather than assumed.
@@ -827,7 +835,14 @@ def _expand_token(token: str) -> list[str]:
     # real recordings of the exact thing being asked for. Expansion is the
     # fallback for tokens nobody has said, not the first move.
     raw = clean_word(token)
-    if _known_word(raw):
+    # Ingest strips punctuation from labels, so a clip named "20" may say
+    # "twenty" or "two point zero". Likewise "50" says nothing about a dollar
+    # sign or a percent sign. Preserve those meanings by expanding structured
+    # numeric input before considering its punctuation-stripped lookup alias.
+    numeric_punctuation = (bool(re.search(r"\d", token))
+                           and (bool(re.search(r"\d\.\d", token))
+                                or any(symbol in token for symbol in (*_CURRENCY, "%"))))
+    if not numeric_punctuation and _known_word(raw):
         return [raw]
     # A rate: km/h, l/100km. Both halves are units and the slash is the word
     # "per", so it has to be read before the generic split, which would
@@ -1588,8 +1603,19 @@ def _build_video(segments: list[dict[str, Any]], out_path: str, progress=None,
     call may open. The second is the one that bounds memory -- see
     _MAX_INPUTS_PER_CALL.
     """
-    with _ENCODING:
+    while not _ENCODING.acquire(timeout=0.2):
+        if progress:
+            progress("encoding", 0, 1)
+    try:
         _build_video_now(segments, out_path, progress, subtitles, options)
+    except BaseException:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        raise
+    finally:
+        _ENCODING.release()
 
 
 def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
@@ -1617,28 +1643,42 @@ def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
     if len(chunks) == 1:
         _say("encoding", 0, 1)
         _encode_chunk(segments, out_path, final_tail=True, subtitles=subtitles,
-                      options=options)
+                      options=options,
+                      check_cancel=(lambda: _say("encoding", 0, 1)) if progress else None)
         _say("encoding", 1, 1)
         return
 
     # Encode each chunk (identical codec settings), then stream-copy concat.
     part_paths: list[str] = [f"{out_path}.part{ci}.mp4" for ci in range(len(chunks))]
+    list_path = out_path + ".concat.txt"
+    failed = threading.Event()
+    done_count = 0
+
+    def check_cancel():
+        if failed.is_set():
+            raise RuntimeError("Another encode chunk failed")
+        _say("encoding", done_count, len(chunks))
+
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=_encode_workers()) as pool:
             futures = {
-                pool.submit(_encode_chunk, chunk, part_paths[ci],
+                pool.submit(copy_context().run, _encode_chunk, chunk, part_paths[ci],
                             final_tail=(ci == len(chunks) - 1),
-                            subtitles=subtitles, options=options): ci
+                            subtitles=subtitles, options=options, check_cancel=check_cancel): ci
                 for ci, chunk in enumerate(chunks)
             }
-            done_count = 0
             for fut in concurrent.futures.as_completed(futures):
-                fut.result()  # propagate exceptions
+                try:
+                    fut.result()  # propagate exceptions
+                except BaseException:
+                    failed.set()
+                    for pending in futures:
+                        pending.cancel()
+                    raise
                 done_count += 1
                 _say("encoding", done_count, len(chunks))
         _say("joining", len(chunks), len(chunks))
 
-        list_path = out_path + ".concat.txt"
         with open(list_path, "w", encoding="utf-8") as f:
             for p in part_paths:
                 f.write(f"file '{os.path.abspath(p).replace(chr(92), '/')}'\n")
@@ -1654,7 +1694,9 @@ def _build_video_now(segments: list[dict[str, Any]], out_path: str, progress,
                *_encoder_settings(),
                "-pix_fmt", "yuv420p", "-fps_mode", "cfr", "-r", str(_FPS),
                "-c:a", "copy", "-movflags", "+faststart", out_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        from app.media_process import run
+        result = run(cmd, capture_output=True, text=True, timeout=300,
+                     check_cancel=(lambda: _say("joining", len(chunks), len(chunks))) if progress else None)
         if result.returncode != 0:
             if os.path.exists(out_path):
                 try:
@@ -1773,20 +1815,50 @@ def _has_filter(name: str) -> bool:
     return name in _filters()
 
 
+@lru_cache(maxsize=256)
+def _native_video_format(path: str, mtime_ns: int, size: int) -> bool:
+    """Probe each source version once before skipping normalization filters."""
+    import json
+    from fractions import Fraction
+
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height,r_frame_rate,avg_frame_rate:stream_side_data=rotation:stream_tags=rotate",
+             "-of", "json", path],
+            capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            return False
+        stream = json.loads(result.stdout)["streams"][0]
+        rotations = [stream.get("tags", {}).get("rotate", 0)]
+        rotations.extend(side.get("rotation", 0)
+                         for side in stream.get("side_data_list", []))
+        if any(float(rotation) % 360 != 0 for rotation in rotations):
+            return False
+        return (stream["width"] == 480 and stream["height"] == 270
+                and Fraction(stream["r_frame_rate"]) == _FPS
+                and Fraction(stream["avg_frame_rate"]) == _FPS)
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, IndexError,
+            TypeError, ZeroDivisionError):
+        return False
+
+
 def _is_corpus_native(seg: dict) -> bool:
-    """True if the segment's source file is a corpus-normalised video.
-    
-    Files inside the corpus downloads/ directory were normalised at ingest
-    to exactly 480x270 25fps, so scale and fps filters are redundant.
+    """True when the actual source is 480x270 at 25fps.
+
+    A corpus path also holds unnormalized imports and failed conversions. Its
+    location alone cannot justify omitting scale/fps from a concat operation.
     """
+    from app.database import resolve_path
+
     src = seg.get("source_file", "")
     if not src:
         return False
-    if not os.path.isabs(src):
-        return True  # relative paths are always corpus-local
-    corpus_dir = os.path.abspath(active().get("dir", ""))
     try:
-        return os.path.commonpath([os.path.abspath(src), corpus_dir]) == corpus_dir
+        path = src if os.path.isabs(src) else resolve_path(src)
+        path = os.path.normcase(os.path.realpath(path))
+        stat = os.stat(path)
+        return _native_video_format(path, stat.st_mtime_ns, stat.st_size)
     except (ValueError, OSError):
         return False
 
@@ -1919,13 +1991,12 @@ def timeline(segments: list[dict[str, Any]], options: dict[str, Any]) -> list[di
 
 def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
                   final_tail: bool, subtitles: bool = False,
-                  options: dict | None = None) -> None:
+                  options: dict | None = None, check_cancel=None) -> None:
     """
     One FFmpeg call for one chunk of segments.
 
-    All source clips are H.264 480×270 25fps AAC — same format, so we skip
-    scaling and only normalise framerate/SAR.  ultrafast + small frame size
-    keeps encode time well under a second for typical sentences.
+    Normalized sources skip scaling/fps after a cached format check. Original
+    imports are converted to 480×270 25fps before concatenation.
 
     The concat filter (not demuxer) is used so FFmpeg resets timestamps
     between segments internally — no A/V drift.  *final_tail* is True only for
@@ -1967,15 +2038,15 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         # Check pre-rendered clip cache for unmodified segments
         cached = None
         cid = seg.get("id")
+        read = duration + (_HOLD_LOOKAHEAD if seg.get("stretch")
+                           else _BUTT_LOOKAHEAD if seg.get("fade_out") == 0.0 else 0.0)
         if cid is not None and not _has_dynamic_modifiers(seg):
             try:
                 from app import clip_cache
-                cached = clip_cache.get_cached(cid, pad_end)
+                cached = clip_cache.get_cached(cid, pad_end, seg["source_file"], start, read)
             except Exception:
                 cached = None
 
-        read = duration + (_HOLD_LOOKAHEAD if seg.get("stretch")
-                           else _BUTT_LOOKAHEAD if seg.get("fade_out") == 0.0 else 0.0)
         if cached:
             cmd += ["-i", cached]
         else:
@@ -2020,7 +2091,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
         native = _is_corpus_native(seg)
         vfilters = []
         if not native:
-            vfilters.append("scale=480:270:force_original_aspect_ratio=disable")
+            vfilters += ["scale=480:270:force_original_aspect_ratio=decrease",
+                         "pad=480:270:(ow-iw)/2:(oh-ih)/2"]
         if stretch != 1.0:
             vfilters.append(f"setpts=PTS*{stretch:.5f}")
         if not native or stretch != 1.0:
@@ -2177,7 +2249,8 @@ def _encode_chunk(segments: list[dict[str, Any]], out_path: str,
     import time as _time
     t0 = _time.perf_counter()
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        from app.media_process import run
+        result = run(cmd, capture_output=True, text=True, timeout=300, check_cancel=check_cancel)
     except Exception:
         if os.path.exists(out_path):
             try:
@@ -2231,23 +2304,31 @@ def generate_video(text: str, progress=None,
     os.makedirs("output", exist_ok=True)
     final_path = os.path.join("output", f"{run_id}.mp4")
 
-    _build_video(segments, final_path, progress=progress, subtitles=subtitles,
-                 options=options)
-    spans = timeline(segments, options)
-    toks = tokenize_full(text)
-    # word{vocode}: that word alone on the synth, the rest left as said.
-    vocoded = [bool((t.get("fx") or {}).get("vocode")) for t in toks]
-    if options["sing"] or options["vocode"] or any(vocoded):
-        from app import sing
-        if progress:
-            progress("singing", 0, 1)
-        marks = [t["note"] for t in toks]
-        lined_up = len(toks) == len(report.get("tokens", []))
-        sing.sing(final_path, spans, options, marks if lined_up else None,
-                  seed=sum(map(ord, text)) & 0xFFFF,
-                  vocoded=vocoded if lined_up else None)
-    return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
-            "timeline": spans}
+    try:
+        _build_video(segments, final_path, progress=progress, subtitles=subtitles,
+                     options=options)
+        spans = timeline(segments, options)
+        toks = tokenize_full(text)
+        # word{vocode}: that word alone on the synth, the rest left as said.
+        vocoded = [bool((t.get("fx") or {}).get("vocode")) for t in toks]
+        if options["sing"] or options["vocode"] or any(vocoded):
+            from app import sing
+            if progress:
+                progress("singing", 0, 1)
+            marks = [t["note"] for t in toks]
+            lined_up = len(toks) == len(report.get("tokens", []))
+            sing.sing(final_path, spans, options, marks if lined_up else None,
+                      seed=sum(map(ord, text)) & 0xFFFF,
+                      vocoded=vocoded if lined_up else None,
+                      check_cancel=(lambda: progress("singing", 0, 1)) if progress else None)
+        return {**report, "video_url": f"/output/{run_id}.mp4", "options": options,
+                "timeline": spans}
+    except BaseException:
+        try:
+            os.remove(final_path)
+        except OSError:
+            pass
+        raise
 
 
 def _hold(seg: dict[str, Any], a: float, b: float, factor: float) -> list[dict[str, Any]]:
@@ -2415,10 +2496,11 @@ def resolve_text(text: str, progress=None,
     """See _resolve_text. Whatever voices it borrowed, the active corpus is
     back in place afterwards -- a failure halfway through a borrowed sentence
     included."""
-    try:
-        return _resolve_text(text, progress, options)
-    finally:
-        _use_voice(None)
+    with _voice_lock:
+        try:
+            return _resolve_text(text, progress, options)
+        finally:
+            _use_voice(None)
 
 
 def _resolve_text(text: str, progress=None,

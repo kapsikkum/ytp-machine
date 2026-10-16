@@ -20,13 +20,15 @@ import random
 import re
 import subprocess
 import threading
+import weakref
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
 
 import app.generate as g
-from app.database import active
+from app.database import active, list_corpora, using_corpus
 from app.ytpmv import drums
 from app.ytpmv.pitch import SR, Voice, decode_audio
 
@@ -41,7 +43,10 @@ _MAX_SAMPLE = 3.0      # a phrase longer than this is not an instrument, it is a
 _cache: "OrderedDict[tuple, Sample]" = OrderedDict()
 _CACHE_MAX = 48
 _lock = threading.Lock()
-_building: dict[str, threading.Lock] = {}
+_building: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+_frame_cache: OrderedDict[tuple, np.ndarray] = OrderedDict()
+_frame_bytes = 0
+_FRAME_CACHE_BYTES = 128 * 1024 * 1024
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +56,58 @@ def _build_lock(name: str) -> threading.Lock:
         return _building.setdefault(name, threading.Lock())
 
 
+def _store_frames(key: tuple, arr: np.ndarray) -> None:
+    global _frame_bytes
+    with _lock:
+        old = _frame_cache.pop(key, None)
+        if old is not None:
+            _frame_bytes -= old.nbytes
+        # A single full-size three-second sample can be almost 500 MB. The
+        # render owns its live frames; retaining them afterwards is optional.
+        if arr.nbytes > _FRAME_CACHE_BYTES:
+            return
+        while _frame_cache and _frame_bytes + arr.nbytes > _FRAME_CACHE_BYTES:
+            _, gone = _frame_cache.popitem(last=False)
+            _frame_bytes -= gone.nbytes
+        _frame_cache[key] = arr
+        _frame_bytes += arr.nbytes
+
+
+def _source_stamp(path: str) -> tuple:
+    if not os.path.isabs(path):
+        from app.database import resolve_path
+        path = resolve_path(path)
+    path = os.path.normcase(os.path.realpath(path))
+    try:
+        info = os.stat(path)
+        # Inode/creation metadata also distinguishes an imported replacement
+        # whose archive preserves the original modification time and size.
+        return (path, info.st_mtime_ns, info.st_size, info.st_ctime_ns, info.st_ino)
+    except OSError:
+        return (path, None, None, None, None)
+
+
 class SampleError(ValueError):
     """The voice cannot say what was asked."""
+
+
+@contextmanager
+def corpus_context(corpus: str | None = None):
+    """Use an installed voice for this operation, preserving the user's selection."""
+    if corpus is not None and (not isinstance(corpus, str) or not corpus.strip()):
+        raise SampleError("Choose an installed corpus for this voice.")
+    entry = (next((c for c in list_corpora() if c["slug"] == corpus), None)
+             if corpus is not None else active())
+    if entry is None:
+        raise SampleError(f"The corpus '{corpus}' is not installed. Choose another voice.")
+    with using_corpus(entry):
+        yield entry
+
+
+def corpus_pool() -> dict:
+    # A local reference never swaps the generator's process-global sentence
+    # voice. Parallel auditions can consequently use different corpora.
+    return g._pool(active())
 
 
 @dataclass
@@ -65,7 +120,8 @@ class Sample:
     offset: float                 # seconds of lead-in trimmed from the mp4
     voice: Voice
     source: str = ""
-    _frames: dict = field(default_factory=dict, repr=False)
+    corpus: str = ""
+    _sources: tuple = field(default_factory=tuple, repr=False)
 
     @property
     def url(self) -> str:
@@ -75,16 +131,22 @@ class Sample:
     def duration(self) -> float:
         return self.voice.duration
 
-    def frames(self, w: int, h: int) -> np.ndarray:
+    def frames(self, w: int, h: int, check_cancel=None) -> np.ndarray:
         """The picture at w x h, one frame per 1/FPS s from the trimmed start."""
-        got = self._frames.get((w, h))
-        if got is not None:
-            return got
+        if check_cancel:
+            check_cancel()
+        key = (self.mp4, self.offset, self.duration, w, h)
+        with _lock:
+            got = _frame_cache.get(key)
+            if got is not None:
+                _frame_cache.move_to_end(key)
+                return got
         cmd = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{self.offset:.3f}",
                "-i", self.mp4, "-t", f"{self.duration + 0.1:.3f}",
                "-vf", f"scale={w}:{h}:force_original_aspect_ratio=disable,fps={FPS}",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-        proc = subprocess.run(cmd, capture_output=True)
+        from app.media_process import run
+        proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)
         if proc.returncode != 0:
             raise RuntimeError("FFmpeg failed: " + proc.stderr.decode(errors="replace")[-400:])
         arr = np.frombuffer(proc.stdout, dtype=np.uint8)
@@ -93,11 +155,12 @@ class Sample:
             arr = np.zeros((1, h, w, 3), dtype=np.uint8)
         else:
             arr = arr[: n * w * h * 3].reshape(n, h, w, 3)
-        self._frames[(w, h)] = arr
+        _store_frames(key, arr)
         return arr
 
     def describe(self) -> dict:
         return {"text": self.text, "take": self.take, "takes": self.takes, "hit": self.hit,
+                "corpus": self.corpus,
                 "sample_url": self.url, "source": self.source,
                 **self.voice.info.as_dict()}
 
@@ -149,9 +212,9 @@ def units() -> dict[str, list[dict]]:
     got = _unit_cache.get(corpus)
     if got is not None:
         return got
-    g._ensure_cache()
+    pool = corpus_pool()
     found: dict[str, list[dict]] = {}
-    for rows in (g._clips_by_word_cache or {}).values():
+    for rows in pool["clips_by_word"].values():
         for clip in rows:
             phones = clip.get("phones")
             if not phones:
@@ -204,17 +267,17 @@ _NOISE = re.compile(r"^\*([a-z0-9-]+)\*$")
 
 def noises() -> dict[str, int]:
     """Every non-verbal noise the voice has, and how many recordings of each."""
-    g._ensure_cache()
-    found = {k: len(v) for k, v in (g._noise_by_word or {}).items() if v}
-    if len(g._all_noises or []) > 1 and len(found) > 1:
-        found["noise"] = len(g._all_noises)      # the "any noise" pool
+    pool = corpus_pool()
+    found = {k: len(v) for k, v in pool["noise_by_word"].items() if v}
+    if len(pool["all_noises"]) > 1 and len(found) > 1:
+        found["noise"] = len(pool["all_noises"])      # the "any noise" pool
     return dict(sorted(found.items(), key=lambda kv: -kv[1]))
 
 
 def noise_takes(kind: str) -> list[dict]:
     """Every recording of one noise, in a fixed order."""
-    g._ensure_cache()
-    rows = (g._all_noises if kind == "noise" else (g._noise_by_word or {}).get(kind)) or []
+    pool = corpus_pool()
+    rows = (pool["all_noises"] if kind == "noise" else pool["noise_by_word"].get(kind)) or []
     return sorted(rows, key=lambda r: (r.get("id") or 0, r["start_time"]))
 
 
@@ -234,8 +297,10 @@ def takes(word: str) -> list[dict]:
     The same band pick_clip uses -- a clip far shorter or longer than the
     word's median is a bad timestamp, not a take -- and the same vetoes.
     """
-    g._ensure_cache()
-    rows = [r for r in (g._clips_by_word_cache or {}).get(word, []) if not g._vetoed(word, r)]
+    pool = corpus_pool()
+    scores = pool["splice_scores"]
+    rows = [r for r in pool["clips_by_word"].get(word, [])
+            if r.get("id") is None or scores.get((word.lower(), int(r["id"])), 0) > g._VETO_SCORE]
     if len(rows) > 1:
         durs = sorted(r["end_time"] - r["start_time"] for r in rows)
         median = durs[len(durs) // 2]
@@ -262,7 +327,14 @@ def _trim(x: np.ndarray) -> tuple[int, int]:
     return a, max(b, a + hop)
 
 
-def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
+def build(text: str, take: int = 0, hit: str | None = None, check_cancel=None,
+          corpus: str | None = None) -> Sample:
+    """Build a playable word in an installed corpus, or the operation's voice."""
+    with corpus_context(corpus):
+        return _build(text, take, hit, check_cancel)
+
+
+def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) -> Sample:
     """The corpus saying *text* (take *take*, for a single word) as a Sample.
 
     *hit* names a drum (kick, snare, hats...) to cut the word down into, the
@@ -270,6 +342,9 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
 
     Raises SampleError when the voice cannot say it.
     """
+    if check_cancel:
+        check_cancel()
+    decode_options = {"check_cancel": check_cancel} if check_cancel else {}
     text = _norm(text)
     if not text:
         raise SampleError("Nothing to say.")
@@ -280,11 +355,11 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
     with _lock:
         cached = _cache.get(key)
         # The output sweep may have taken the mp4 since; then build it again.
-        if cached is not None and os.path.exists(cached.mp4):
+        if (cached is not None and os.path.exists(cached.mp4)
+                and cached._sources and all(_source_stamp(stamp[0]) == stamp for stamp in cached._sources)):
             _cache.move_to_end(key)
             return cached
 
-    g._ensure_cache()
     unit = _UNIT.match(text)
     noise = None if unit else _NOISE.match(text)
     if unit:
@@ -308,12 +383,13 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
         # A phrase, a splice or a marked-up word: the sentence machinery picks
         # at random, so seed it -- the same text and take must give the same
         # sample every time, or a preview would not be what gets rendered.
-        state = random.getstate()
-        random.seed(f"{corpus}|{text}|{take}")
-        try:
-            segments, _report = g.resolve_text(text)
-        finally:
-            random.setstate(state)
+        with g._voice_lock:
+            state = random.getstate()
+            random.seed(f"{corpus}|{text}|{take}")
+            try:
+                segments, _report = g.resolve_text(text)
+            finally:
+                random.setstate(state)
         source = "spliced" if segments and len(segments) > 1 else ""
     if not segments:
         raise SampleError(f"This voice can't say \"{text}\".")
@@ -323,8 +399,10 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
     # ranking changes -- so a file cached under (voice, text, take) alone came
     # back as the sound that used to be there. A phoneme unit made that
     # obvious: every one of them returned a 1.4s sample it no longer used.
-    ident = "|".join(str(clip.get(k)) for k in ("id", "start_time", "end_time")) if word_takes         else "|".join(f"{sg.get('id')}:{sg['start_time']:.3f}" for sg in segments)
-    digest = hashlib.sha1(f"{corpus}|{text}|{take}|{ident}".encode()).hexdigest()[:12]
+    source_stamps = tuple(_source_stamp(path) for path in dict.fromkeys(sg["source_file"] for sg in segments))
+    ident = tuple(tuple(sg.get(k) for k in ("id", "source_file", "start_time", "end_time",
+                                           "prev_end", "next_start", "edited")) for sg in segments)
+    digest = hashlib.sha1(repr((corpus, text, take, ident, source_stamps)).encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     mp4 = os.path.join("output", f"ytpmv_sample_{digest}.mp4")
     # One build per file at a time, written aside and moved into place. The
@@ -336,21 +414,26 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
         x = None
         if os.path.exists(mp4):
             try:
-                x = decode_audio(mp4)
+                x = decode_audio(mp4, **decode_options)
             except RuntimeError:
+                if check_cancel:
+                    check_cancel()
                 log.warning("ytpmv: %s would not decode; building it again", mp4)
                 x = None
         if x is None:
             tmp = f"{mp4[:-4]}.{os.getpid()}.{threading.get_ident()}.tmp.mp4"
             try:
-                g._build_video(segments, tmp)
+                g._build_video(segments, tmp,
+                               progress=(lambda *_: check_cancel()) if check_cancel else None)
                 os.replace(tmp, mp4)
             finally:
                 if os.path.exists(tmp):
                     os.remove(tmp)
             try:
-                x = decode_audio(mp4)
+                x = decode_audio(mp4, **decode_options)
             except RuntimeError as exc:
+                if check_cancel:
+                    check_cancel()
                 # Built fine and still no sound. For one clip that is the mp4
                 # cutting a 40-60ms consonant to no AAC frames at all; its
                 # picture is still good and its sound is read from the
@@ -369,14 +452,18 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
         # recommended a pitched vowel was handed one with no pitch at all.
         try:
             s, e = g.extract_window(clip)
-            src = decode_audio(clip["source_file"], s, e - s)
+            src = decode_audio(clip["source_file"], s, e - s, **decode_options)
             if len(src):
                 x = src
         except RuntimeError:
+            if check_cancel:
+                check_cancel()
             pass                              # the mp4's sound will do
         if x is None:
             os.remove(mp4)
             raise SampleError(f'"{text}" has no sound in its recording')
+    if check_cancel:
+        check_cancel()
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))
     audio = x[a:b]
@@ -384,7 +471,8 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
         audio, start = drums.shape(audio, hit)
         a += start
     sample = Sample(text=text, take=int(take) % n_takes, takes=n_takes, hit=hit, mp4=mp4,
-                    offset=a / SR, voice=Voice(audio), source=source)
+                    offset=a / SR, voice=Voice(audio), source=source, corpus=corpus,
+                    _sources=source_stamps)
     with _lock:
         _cache[key] = sample
         while len(_cache) > _CACHE_MAX:
@@ -393,6 +481,9 @@ def build(text: str, take: int = 0, hit: str | None = None) -> Sample:
 
 
 def clear_cache() -> None:
+    global _frame_bytes
     with _lock:
         _cache.clear()
+        _frame_cache.clear()
+        _frame_bytes = 0
     _unit_cache.clear()

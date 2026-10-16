@@ -10,6 +10,9 @@ env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository }}
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -18,6 +21,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Byte-compile every module
         # Cheap, and it catches the syntax and indentation mistakes that
         # otherwise only surface when a route is first hit in production.
@@ -49,11 +57,28 @@ jobs:
         run: |
           pip install zstandard
           python tests/test_bundle.py
+          python tests/test_corpus_export.py
+          python tests/test_corpus_install.py
 
       - name: Corpus selection
         # This decides where downloads and clip rows are written, so a mistake
         # does not fail -- it succeeds against the wrong corpus.
-        run: python tests/test_corpus_select.py
+        run: |
+          python tests/test_corpus_select.py
+          python tests/test_corpus_context.py
+          python tests/test_corpus_tools.py
+          python tests/test_realign_lifecycle.py
+
+      - name: Corpus ingestion and alignment
+        # Model-free regression fixtures: malformed transcripts, resumed
+        # channel budgets, CTC targets/boundaries, and alignment checkpoints.
+        run: |
+          python tests/test_ingest_pipeline.py
+          python tests/test_ingest_channel.py
+          python tests/test_refine_boundaries.py
+          python tests/test_align_pipeline.py
+          python tests/test_alignment_cache.py
+          python tests/test_numeric_alignment.py
 
       - name: Extraction window
         # What span of audio each clip is pulled from. It decides what every
@@ -79,6 +104,7 @@ jobs:
         run: |
           pip install --quiet fastapi pydantic
           python tests/test_splice_editor.py
+          python tests/test_corpus_metadata.py
 
       - name: Splice modes
         # Guessed pronunciations and phoneme substitutions only run outside
@@ -146,8 +172,15 @@ jobs:
         # Ends with a real render through ffmpeg.
         run: python tests/test_synth_mode.py
 
-      - name: ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Source formats and rendered clip cache
+        # Real mixed-size/rotated video and audio fixtures, plus cache
+        # identity across voices, source replacements and sub-word windows.
+        run: |
+          python tests/test_source_formats.py
+          python tests/test_clip_cache.py
+          python tests/test_media_resources.py
+          python tests/test_sample_pitch.py
+          python tests/test_hold.py
 
       - name: Glitches
         # The YTP effects: markup, the seeded chaos sprinkler, the boomerang,
@@ -172,11 +205,19 @@ jobs:
         run: |
           pip install --quiet httpx python-multipart
           python tests/test_hardening.py
+          python tests/test_security_api.py
+          python tests/test_job_resources.py
+          python tests/test_ytpmv_corpora.py
+          python tests/test_editor_audio.py
+          node tests/test_frontend.js
 
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.
-        run: python tests/test_matrix_commands.py
+        run: |
+          pip install --quiet matrix-nio
+          python tests/test_matrix_commands.py
+          python tests/test_matrix_media.py
 
   image:
     # Only publish from the default branch: a pull request should prove the

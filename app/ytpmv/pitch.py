@@ -23,6 +23,8 @@ from __future__ import annotations
 import functools
 import math
 import subprocess
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +42,7 @@ _PEAK_SPAN = 0.025      # the held grain's width is the median period this near 
 _FADE_IN = 0.002
 _FADE_OUT = 0.010
 _MIN_NOTE = 0.030
+_NOTE_CACHE_BYTES = 8 * 1024 * 1024
 
 _NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -59,7 +62,7 @@ def note_name(m: float) -> str:
 
 def decode_audio(path: str, start: float | None = None,
                  duration: float | None = None, sr: int = SR,
-                 pcm: str = "f32le") -> np.ndarray:
+                 pcm: str = "f32le", check_cancel=None) -> np.ndarray:
     """Mono float32 audio from anything ffmpeg can read.
 
     pcm="s16le" decodes through 16-bit, as a wav would: ffmpeg downmixes
@@ -72,7 +75,8 @@ def decode_audio(path: str, start: float | None = None,
     if duration is not None:
         cmd += ["-t", f"{duration:.4f}"]
     cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-f", pcm, "-"]
-    proc = subprocess.run(cmd, capture_output=True, timeout=30)
+    from app.media_process import run
+    proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)
     if proc.returncode != 0:
         raise RuntimeError("FFmpeg failed: " + proc.stderr.decode(errors="replace")[-400:])
     if pcm == "s16le":
@@ -431,7 +435,9 @@ class Voice:
         vt = self.track.times[self.track.voiced]
         self.v0 = float(vt[0]) if len(vt) else 0.0
         self.v1 = float(vt[-1]) if len(vt) else 0.0
-        self._cache: dict = {}
+        self._cache: OrderedDict = OrderedDict()
+        self._cache_bytes = 0
+        self._cache_lock = threading.Lock()
 
     @property
     def duration(self) -> float:
@@ -439,6 +445,10 @@ class Voice:
 
     def peak(self) -> tuple[float, float] | None:
         """(seconds, period in samples) of the loudest voiced pulse."""
+        return self._peak
+
+    @functools.cached_property
+    def _peak(self) -> tuple[float, float] | None:
         v = np.flatnonzero(self.mvoiced)
         if not len(v):
             return None
@@ -475,7 +485,10 @@ class Voice:
         n_out = int(round(dur * sr))
         key = (None if target_hz is None else round(target_hz, 3),
                n_out, mode, round(semitones, 3), stretch)
-        hit = self._cache.get(key)
+        with self._cache_lock:
+            hit = self._cache.get(key)
+            if hit is not None:
+                self._cache.move_to_end(key)
         if hit is not None:
             buf, warp = hit
             if len(buf) == n_out:
@@ -500,7 +513,18 @@ class Voice:
             y[:k] = z[:k]
             end = k
         y = _fade(y, sr, end)
-        self._cache[key] = (y, warp)
+        # Retained samples live across songs. Durations and pitches keep
+        # introducing new keys, so a count-free note cache grew indefinitely.
+        with self._cache_lock:
+            if y.nbytes <= _NOTE_CACHE_BYTES:
+                previous = self._cache.pop(key, None)
+                if previous is not None:
+                    self._cache_bytes -= previous[0].nbytes
+                while self._cache and self._cache_bytes + y.nbytes > _NOTE_CACHE_BYTES:
+                    _, (old, _) = self._cache.popitem(last=False)
+                    self._cache_bytes -= old.nbytes
+                self._cache[key] = (y, warp)
+                self._cache_bytes += y.nbytes
         return y, warp
 
     def _psola(self, target_hz: float, n_out: int, warp: Warp,

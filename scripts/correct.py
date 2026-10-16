@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database import init_db, get_db
+from app.database import active, artifact_filename, init_db, get_db
 
 _SIM_NONWORD = 0.5   # min similarity to fix a Whisper non-word (e.g. "heared")
 _SIM_CLOSE   = 0.8   # min similarity to fix a valid-word swap (e.g. "potatoes")
@@ -170,6 +170,7 @@ def plan_corrections(source_id: int, reference_text: str):
 
 
 def _apply(corrections: list[dict]) -> None:
+    changed = []
     with get_db() as conn:
         for c in corrections:
             # The phoneme times describe the sounds of the *old* word, so
@@ -177,6 +178,30 @@ def _apply(corrections: list[dict]) -> None:
             # there is nothing to move them to until the clip is realigned.
             conn.execute("UPDATE word_clips SET word=?, phones=NULL WHERE id=?",
                          (c["new"], c["id"]))
+            conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (c["id"],))
+            conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (c["id"],))
+            changed.append(c["id"])
+
+    if changed:
+        # Persistent metadata was removed with the label change. Clear the
+        # corresponding runtime/disk caches without discarding other clips'
+        # expensive alignments.
+        try:
+            from app.generate import invalidate_cache
+            invalidate_cache(alignments=False)
+        except Exception:
+            pass
+        for cid in changed:
+            try:
+                from app.forced_align import invalidate
+                invalidate(cid)
+            except Exception:
+                pass
+            try:
+                from app import clip_cache
+                clip_cache.invalidate(cid)
+            except Exception:
+                pass
 
 
 def _run_one(source_id: int, reference: str, apply: bool, verbose: bool = True) -> int:
@@ -199,11 +224,12 @@ def main() -> None:
     ap.add_argument("--ref-file", help="UTF-8 text file with the real poem (single mode)")
     ap.add_argument("--all", action="store_true",
                     help="batch: correct every source that has transcripts/<video_id>.txt")
-    ap.add_argument("--transcripts-dir", default="transcripts")
+    ap.add_argument("--transcripts-dir", help="reference directory (default: this corpus's transcripts/)")
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     args = ap.parse_args()
 
     init_db()
+    transcripts_dir = args.transcripts_dir or os.path.join(active()["dir"], "transcripts")
 
     total = 0
     if args.all:
@@ -212,7 +238,7 @@ def main() -> None:
                 "SELECT id, video_id, title FROM sources ORDER BY id").fetchall()]
         done = 0
         for s in sources:
-            path = os.path.join(args.transcripts_dir, f"{s['video_id']}.txt")
+            path = os.path.join(transcripts_dir, artifact_filename(s["video_id"], ".txt"))
             if not os.path.exists(path):
                 continue
             with open(path, encoding="utf-8") as f:
@@ -232,11 +258,6 @@ def main() -> None:
             print("  (no corrections)")
 
     if args.apply and total:
-        try:
-            from app.generate import invalidate_cache
-            invalidate_cache()
-        except Exception:
-            pass
         print("Done. Call POST /api/reload (or restart) so the server picks up changes.")
     elif not args.apply:
         print("DRY RUN — re-run with --apply to write.")

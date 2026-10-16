@@ -9,6 +9,7 @@ Usage:
     python scripts/ingest.py /path/to/video.mp4 --model medium
 """
 import argparse
+import math
 import os
 import re
 import subprocess
@@ -159,6 +160,21 @@ def normalise_video(path: str) -> str:
 # also saves the twenty-odd seconds it takes to load, per video.
 _model_cache: dict[tuple[str, str], object] = {}
 
+# Keep the CLI in step with the models supported by openai-whisper, including
+# the English-only variants and the distilled large-v3 model. Loading is lazy.
+MODEL_CHOICES = ("tiny", "tiny.en", "base", "base.en", "small", "small.en",
+                 "medium", "medium.en", "large", "large-v1", "large-v2",
+                 "large-v3", "large-v3-turbo", "turbo")
+
+
+def add_transcription_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--language", default=None, metavar="CODE",
+                        help="Speech language (e.g. en). Default: detect it. "
+                             "The word/phoneme aligners currently support English.")
+    parser.add_argument("--initial-prompt", default=None, metavar="TEXT",
+                        help="Short vocabulary hint for names and unusual words; "
+                             "not a replacement transcript.")
+
 
 def _load_transcriber(model_name: str, dev: str):
     import stable_whisper
@@ -181,7 +197,8 @@ def _load_transcriber(model_name: str, dev: str):
 
 
 def transcribe(video_path: str, model_name: str = "base",
-               device: str | None = None) -> list[dict]:
+               device: str | None = None, language: str | None = None,
+               initial_prompt: str | None = None) -> list[dict]:
     """
     Transcribe with stable-whisper for accurate word-level timestamps.
 
@@ -194,19 +211,36 @@ def transcribe(video_path: str, model_name: str = "base",
     model = _load_transcriber(model_name, dev)
 
     print(f"  Transcribing {os.path.basename(video_path)} …")
-    result = model.transcribe(video_path, word_timestamps=True)
+    options: dict = {"word_timestamps": True}
+    if language:
+        options["language"] = language
+    if initial_prompt:
+        options["initial_prompt"] = initial_prompt
+    result = model.transcribe(video_path, **options)
 
     words: list[dict] = []
+    rejected = 0
     for segment in result.segments:
         for wi in segment.words:
             clean = re.sub(r"[^\w]", "", wi.word).lower().strip()
             if clean:
+                try:
+                    start, end = float(wi.start), float(wi.end)
+                except (TypeError, ValueError):
+                    rejected += 1
+                    continue
+                if not (math.isfinite(start) and math.isfinite(end)
+                        and 0 <= start < end):
+                    rejected += 1
+                    continue
                 words.append({
                     "word":  clean,
-                    "start": float(wi.start),
-                    "end":   float(wi.end),
+                    "start": start,
+                    "end":   end,
                 })
 
+    if rejected:
+        print(f"  Skipped {rejected} word(s) with invalid timestamps")
     return words
 
 
@@ -244,16 +278,27 @@ def persist(
     words: list[dict],
 ) -> int:
     """Insert source + word clips into DB; return number of words stored."""
+    count, _source_id = _persist_source(video_id, source_file, title, url, words)
+    return count
+
+
+def _persist_source(video_id: str, source_file: str, title: str,
+                    url: str | None, words: list[dict]) -> tuple[int, int]:
+    """Return the inserted source's identity, including on an explicit re-ingest."""
+    if not words:
+        raise ValueError("No usable word timestamps; source was not added to the corpus")
     from app.database import relativize_path
+    original_file = os.path.abspath(source_file)
     source_file = relativize_path(source_file)   # store portable relative paths
     # relativize_path assumes the file is in the corpus's downloads/, because
     # that is where every path it is given is supposed to end up. Say so if it
     # is not: a corpus that cannot find its own video is worth hearing about
     # now, not on the first generation that tries to use it.
     from app.database import resolve_path
-    if not os.path.exists(resolve_path(source_file)):
-        print(f"  WARNING: stored as {source_file}, which does not exist. "
-              f"The corpus will not be able to cut clips from it.")
+    resolved = resolve_path(source_file)
+    if not os.path.exists(resolved) or not os.path.samefile(original_file, resolved):
+        raise ValueError("Source must be stored in the active corpus's downloads/ "
+                         "directory; --download-dir currently points elsewhere")
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO sources (video_id, source_file, title, url) VALUES (?, ?, ?, ?)",
@@ -270,7 +315,7 @@ def persist(
             ],
         )
 
-    return len(words)
+    return len(words), source_id
 
 
 # ── Main entry ────────────────────────────────────────────────────────────────
@@ -296,9 +341,15 @@ def ingest(
     max_height: int | None = None,
     normalise: bool = False,
     align: bool = True,
+    language: str | None = None,
+    initial_prompt: str | None = None,
 ) -> None:
     init_db()
     download_dir = download_dir or _default_download_dir()
+    if os.path.normcase(os.path.realpath(download_dir)) != os.path.normcase(
+            os.path.realpath(_default_download_dir())):
+        raise ValueError("--download-dir must be the active corpus's downloads/ "
+                         "directory; choose a different data root with MRS_DATA_DIR")
     os.makedirs(download_dir, exist_ok=True)
 
     is_url = input_path.startswith("http://") or input_path.startswith("https://")
@@ -331,6 +382,10 @@ def ingest(
         import shutil
         copy = os.path.join(download_dir, f"{video_id}.mp4")
         if os.path.abspath(copy) != source_file:
+            if os.path.exists(copy):
+                raise FileExistsError(f"Corpus recording already exists: {copy}. "
+                                      "It was not replaced. Rename the new input, "
+                                      "or use realign.py to retranscribe the stored recording.")
             shutil.copy2(source_file, copy)
         source_file = os.path.abspath(copy)
         if normalise:
@@ -338,10 +393,10 @@ def ingest(
 
     print(f"Source file : {source_file}")
 
-    words = transcribe(source_file, model_name, device)
+    words = transcribe(source_file, model_name, device, language, initial_prompt)
     print(f"  Found {len(words)} word timestamps")
 
-    count = persist(video_id, source_file, title, url, words)
+    count, source_id = _persist_source(video_id, source_file, title, url, words)
     try:
         from app.generate import invalidate_cache
         invalidate_cache()
@@ -362,12 +417,8 @@ def ingest(
     if align:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from align_phones import align_corpus
-        with get_db() as conn:
-            row = conn.execute("SELECT id FROM sources WHERE video_id=?",
-                               (video_id,)).fetchone()
-        if row:
-            print("  Placing phonemes …")
-            align_corpus(source_id=row["id"], device=device)
+        print("  Placing phonemes …")
+        align_corpus(source_id=source_id, device=device)
 
     unique = sorted({w["word"] for w in words})
     sample = ", ".join(unique[:25]) + ("…" if len(unique) > 25 else "")
@@ -390,7 +441,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="base",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=MODEL_CHOICES,
         help="Whisper model size (default: base)",
     )
     parser.add_argument(
@@ -420,10 +471,12 @@ def main() -> None:
     )
     from app.device import add_argument as _device_arg
     _device_arg(parser)
+    add_transcription_arguments(parser)
     args = parser.parse_args()
 
     ingest(args.input, args.download_dir, args.model, args.cookies_from_browser,
-           args.device, args.max_height, args.normalise, args.align)
+           args.device, args.max_height, args.normalise, args.align,
+           args.language, args.initial_prompt)
     print("Done.")
 
 

@@ -29,10 +29,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
 import urllib.request
+from urllib.parse import urlencode
+import tempfile
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,7 +46,7 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-from app.database import active, get_db, init_db
+from app.database import active, artifact_filename, get_db, init_db
 
 # How far apart two timings may be and still be considered the same word.
 # Caption timings are coarser than forced-aligned clip boundaries, and the two
@@ -64,7 +67,29 @@ def _cache_path(video_id: str) -> str:
     # bundle should not carry a copy of someone else's captions around.
     d = os.path.join(active()["dir"], "captions")
     os.makedirs(d, exist_ok=True)
-    return os.path.join(d, f"{video_id}.json")
+    return os.path.join(d, artifact_filename(video_id, ".json"))
+
+
+def _caption_words(data: dict) -> list[tuple[str, float]]:
+    """Keep words in multiword caption segments distinct, at their shared time."""
+    words: list[tuple[str, float]] = []
+    for event in data.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        for segment in event.get("segs") or []:
+            if not isinstance(segment, dict) or not isinstance(segment.get("utf8"), str):
+                continue
+            try:
+                time = (float(event.get("tStartMs", 0)) + float(segment.get("tOffsetMs", 0))) / 1000
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(time) or time < 0:
+                continue
+            for token in segment["utf8"].split():
+                word = re.sub(r"[^\w]", "", token).lower()
+                if word:
+                    words.append((word, time))
+    return sorted(words, key=lambda row: row[1])
 
 
 def fetch_captions(video_id: str, cookies_from_browser: str | None = None,
@@ -72,8 +97,17 @@ def fetch_captions(video_id: str, cookies_from_browser: str | None = None,
     """[(word, start_seconds)] from YouTube's captions, or None if there are none."""
     cache = _cache_path(video_id)
     if os.path.exists(cache) and not refresh:
-        with open(cache, encoding="utf-8") as f:
-            return [(w, t) for w, t in json.load(f)]
+        try:
+            with open(cache, encoding="utf-8") as f:
+                rows = json.load(f)
+            if not isinstance(rows, list):
+                raise ValueError("invalid caption cache")
+            words = [(w, float(t)) for w, t in rows]
+            if any(not isinstance(w, str) or not math.isfinite(t) or t < 0 for w, t in words):
+                raise ValueError("invalid caption cache")
+            return words
+        except (ValueError, TypeError, OSError):
+            pass                      # derived cache: refresh interrupted/bad data
 
     import yt_dlp
     opts: dict = {"quiet": True, "no_warnings": True, "skip_download": True}
@@ -82,9 +116,10 @@ def fetch_captions(video_id: str, cookies_from_browser: str | None = None,
     try:
         with yt_dlp.YoutubeDL(opts) as y:
             info = y.extract_info(
-                f"https://www.youtube.com/watch?v={video_id}", download=False)
+                "https://www.youtube.com/watch?" + urlencode({"v": video_id}), download=False)
     except Exception as exc:
-        print(f"    could not reach YouTube: {str(exc).splitlines()[-1][:90]}")
+        lines = str(exc).strip().splitlines()
+        print(f"    could not reach YouTube: {(lines[-1] if lines else type(exc).__name__)[:90]}")
         return None
     if not info:
         return None
@@ -103,23 +138,20 @@ def fetch_captions(video_id: str, cookies_from_browser: str | None = None,
         return None
 
     req = urllib.request.Request(fmt["url"], headers={"User-Agent": "Mozilla/5.0"})
-    raw = urllib.request.urlopen(req, timeout=30).read().decode("utf-8")
-
-    words: list[tuple[str, float]] = []
-    for event in json.loads(raw).get("events", []):
-        base = event.get("tStartMs", 0)
-        for seg in event.get("segs") or []:
-            # Exactly what scripts/ingest.transcribe does to Whisper's words.
-            # Without it "it's" and "its" are a disagreement, and apostrophes
-            # alone accounted for more reported conflicts than every real
-            # mishearing put together.
-            w = re.sub(r"[^\w]", "", seg.get("utf8", "")).lower()
-            if w:
-                words.append((w, (base + seg.get("tOffsetMs", 0)) / 1000.0))
-
-    words.sort(key=lambda x: x[1])
-    with open(cache, "w", encoding="utf-8") as f:
-        json.dump(words, f)
+    limit = 32 << 20
+    with urllib.request.urlopen(req, timeout=30) as response:
+        raw = response.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("caption response is too large")
+    words = _caption_words(json.loads(raw.decode("utf-8")))
+    fd, temporary = tempfile.mkstemp(prefix=".captions-", suffix=".json", dir=os.path.dirname(cache))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(words, f)
+        os.replace(temporary, cache)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return words
 
 

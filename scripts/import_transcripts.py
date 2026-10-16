@@ -20,16 +20,18 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database import init_db, get_db
+from app.database import active, artifact_filename, init_db, get_db
 
 _NUM = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5"}
 _STOP = {"the", "a", "poem", "kids", "poems", "stories", "with", "michael", "rosen"}
 
 
 def clean_markup(text: str) -> str:
+    text = re.sub(r"^=+.*?=+[ \t]*$", "", text, flags=re.M)  # subsection headings
     text = re.sub(r"\[\[[^\]|]*\|([^\]]*)\]\]", r"\1", text)  # [[a|b]] -> b
     text = re.sub(r"\[\[([^\]]*)\]\]", r"\1", text)            # [[a]]  -> a
     text = re.sub(r"\{\{[^}]*\}\}", " ", text)                  # {{tpl}}
@@ -40,6 +42,7 @@ def clean_markup(text: str) -> str:
 
 
 def norm_title(t: str) -> str:
+    t = t or ""
     t = t.split("|")[0]                       # drop "| POEM | ..."
     t = re.split(r"\s[-–]\s", t)[0]           # drop " - Kids' Poems ..."
     t = re.sub(r"\(.*?\)", " ", t.lower())    # drop parentheticals
@@ -51,7 +54,7 @@ def norm_title(t: str) -> str:
 
 def parse_wiki(wikitext: str) -> dict[str, str]:
     poems: dict[str, str] = {}
-    parts = re.split(r"^==\s*(.+?)\s*==\s*$", wikitext, flags=re.M)
+    parts = re.split(r"^==(?!=)[ \t]*(.+?)(?<![=])==[ \t]*$", wikitext, flags=re.M)
     # parts = [pre, title1, body1, title2, body2, ...]
     for i in range(1, len(parts), 2):
         title = parts[i].strip()
@@ -63,27 +66,51 @@ def parse_wiki(wikitext: str) -> dict[str, str]:
 
 def match(db_norm: str, wiki_norms: dict[str, str]) -> tuple[str, float] | None:
     """Return (wiki_title, score) for the best match, or None."""
+    if not db_norm:
+        return None
     best, best_score = None, 0.0
     for wt, wn in wiki_norms.items():
+        if not wn:
+            continue
         score = difflib.SequenceMatcher(None, db_norm, wn).ratio()
         # containment bonus (e.g. "harrybo" vs "harrybos grandad")
-        if wn and (wn in db_norm or db_norm in wn or db_norm.split()[:1] == wn.split()[:1] and abs(len(wn) - len(db_norm)) < 12):
+        if wn in db_norm or db_norm in wn:
             score = max(score, 0.9)
         if score > best_score:
             best, best_score = wt, score
     return (best, best_score) if best else None
 
 
+def _write_transcript(path: str, text: str) -> None:
+    """Replace a reference only after the new text has been fully written."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False,
+                                         dir=os.path.dirname(path) or ".",
+                                         prefix=".transcript-", suffix=".tmp") as stream:
+            temporary = stream.name
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", required=True, help="MediaWiki API json dump")
-    ap.add_argument("--out", default="transcripts")
+    ap.add_argument("--out", help="output directory (default: this corpus's transcripts/)")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--min-score", type=float, default=0.6)
     args = ap.parse_args()
 
     init_db()
-    data = json.load(open(args.json, encoding="utf-8"))
+    output_dir = args.out or os.path.join(active()["dir"], "transcripts")
+    with open(args.json, encoding="utf-8") as dump:
+        data = json.load(dump)
     poems = parse_wiki(data["parse"]["wikitext"])
     wiki_norms = {t: norm_title(t) for t in poems}
 
@@ -92,20 +119,19 @@ def main() -> None:
             "SELECT id, video_id, title FROM sources ORDER BY id").fetchall()]
 
     if args.write:
-        os.makedirs(args.out, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
 
     matched = unmatched = 0
     for s in sources:
         dn = norm_title(s["title"])
         m = match(dn, wiki_norms)
-        clean_title = s["title"].split("|")[0].strip().encode("ascii", "ignore").decode()
+        clean_title = (s["title"] or "").split("|")[0].strip().encode("ascii", "ignore").decode()
         if m and m[1] >= args.min_score:
             wt, score = m
             flag = "" if score >= 0.85 else "  <-- CHECK"
             print(f"  OK  {clean_title:32s} -> {wt!r} ({score:.2f}){flag}")
             if args.write:
-                with open(os.path.join(args.out, f"{s['video_id']}.txt"), "w", encoding="utf-8") as f:
-                    f.write(poems[wt])
+                _write_transcript(os.path.join(output_dir, artifact_filename(s["video_id"], ".txt")), poems[wt])
             matched += 1
         else:
             sc = f" best={m[1]:.2f} ({m[0]!r})" if m else ""

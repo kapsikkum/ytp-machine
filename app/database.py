@@ -1,7 +1,10 @@
 import os
+import hashlib
+import ntpath
 import re
 import sqlite3
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 SCHEMA_VERSION = 1
 
@@ -51,6 +54,8 @@ def list_corpora() -> list[dict]:
     found: list[dict] = []
     if os.path.isdir(CORPORA_DIR):
         for slug in sorted(os.listdir(CORPORA_DIR)):
+            if slug.startswith("."):
+                continue                    # staging and recoverable import backups
             directory = os.path.join(CORPORA_DIR, slug)
             db = _db_in(directory)
             if db:
@@ -68,6 +73,27 @@ def list_corpora() -> list[dict]:
 
 # The corpus every query and every clip path currently resolves against.
 _active: dict | None = None
+_operation_corpus: ContextVar[dict | None] = ContextVar("operation_corpus", default=None)
+
+
+@contextmanager
+def using_corpus(corpus: dict | str):
+    """Pin one operation to a corpus without changing the user's selection.
+
+    Contexts belong to the current thread/task. Background work must capture
+    and enter its own context, rather than consulting a changing global voice.
+    """
+    if isinstance(corpus, str):
+        entry = next((c for c in list_corpora() if c["slug"] == corpus), None)
+        if entry is None:
+            raise KeyError(corpus)
+    else:
+        entry = dict(corpus)
+    token = _operation_corpus.set(entry)
+    try:
+        yield entry
+    finally:
+        _operation_corpus.reset(token)
 
 
 def _corpus_entry(slug: str) -> dict:
@@ -86,6 +112,9 @@ def _corpus_entry(slug: str) -> dict:
 def active() -> dict:
     """The selected corpus, picking one on first use if nothing is set."""
     global _active
+    pinned = _operation_corpus.get()
+    if pinned is not None:
+        return pinned
     if _active is None:
         available = list_corpora()
         preferred = os.environ.get("MRS_CORPUS")
@@ -177,6 +206,19 @@ def resolve_path(p: str) -> str:
 def clean_word(w: str, apostrophe: bool = False) -> str:
     """A word as the corpus stores it: lower case, letters and digits only."""
     return re.sub(r"[^\w']" if apostrophe else r"[^\w]", "", w).lower()
+
+
+def artifact_filename(identifier: str, extension: str) -> str:
+    """Portable flat filenames for source ids from potentially imported data."""
+    value = str(identifier)
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}
+    if (not value or len(value) > 180 or value in (".", "..")
+            or any(c in value for c in '/\\:<>"|?*') or any(ord(c) < 32 for c in value)
+            or value.endswith((".", " ")) or ntpath.splitdrive(value)[0]
+            or value.split(".", 1)[0].upper() in reserved):
+        value = "id-" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return value + extension
 
 
 def relativize_path(p: str) -> str:

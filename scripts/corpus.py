@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Pack and unpack the corpus: the database and the source videos it points at.
 
-The corpus is deliberately not in git. It is 48 mp4 files and a SQLite
-database -- around 110 MB of binary that never delta-compresses, so committing
-it would put the whole lot in every clone's history forever and grow with each
-re-ingest. It is also not source: it is derived from YouTube by scripts/ingest,
-and it is the one part of this project that is expensive to rebuild but cheap
-to copy.
+The repository includes a demo corpus. Additional channel corpora can travel
+as bundles without committing their databases and recordings to git. Each
+bundle includes the database, source media, transcripts and pronunciations;
+these are expensive to rebuild but straightforward to copy consistently.
 
-So it travels as a single bundle instead. `pack` makes one, `unpack` restores
+`pack` makes a bundle, `unpack` restores
 it, and the container entrypoint unpacks it automatically the first time it
 finds an empty data directory. Attach a bundle to a GitHub release, drop it on
 a host, or keep one as a backup -- it is just a tarball with a checksum.
@@ -27,7 +25,10 @@ anywhere and the clip paths still resolve.
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
+import io
+import ntpath
 import os
 import shutil
 import sqlite3
@@ -35,7 +36,10 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+from urllib.parse import urlsplit
 from datetime import date
+from contextlib import closing
+from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:      # for app.database, when run as a script
@@ -187,19 +191,63 @@ def _open_read(path: str):
 
 
 def _checkpoint(db: str) -> None:
-    """Fold the WAL into the database file so the copy in the bundle is whole.
-
-    A live SQLite database with an unmerged WAL is not self-contained; tarring
-    it alone can capture a torn state that is missing recent writes.
-    """
+    """Require a complete checkpoint before an offline legacy migration."""
     if not os.path.exists(db):
         return
+    with closing(sqlite3.connect(db, timeout=1)) as conn:
+        busy, remaining, checkpointed = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if busy or (remaining >= 0 and remaining != checkpointed):
+            raise RuntimeError("database is busy; stop the app before migrating the corpus")
+
+
+def _snapshot_database(db: str, target: str) -> None:
+    """Copy a consistent committed SQLite view, including live WAL writes.
+
+    Checkpointing the source then copying its main file leaves a window where
+    another writer can change it. The backup API holds a consistent view and
+    makes a self-contained copy without checkpointing the live database.
+    """
+    source = sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True)
     try:
-        conn = sqlite3.connect(db)
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.close()
-    except sqlite3.Error as exc:
-        print(f"  warning: could not checkpoint the database: {exc}")
+        snapshot = sqlite3.connect(target)
+        try:
+            source.backup(snapshot)
+            # The copied header may carry WAL mode. Only the temporary copy
+            # changes: the archive must not need its own -wal or -shm files.
+            snapshot.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            snapshot.close()
+    finally:
+        source.close()
+
+
+def _effective_pronunciations(root: str) -> bytes | None:
+    """The global dictionary followed by this voice's overrides, as one CSV.
+
+    Retain comments, row order, quoting and line endings: later rows can name
+    earlier pronunciations, so a parsed/sorted dictionary changes its meaning.
+    Strip only a later file's BOM and separate files whose last row has no
+    newline. Neither source file is rewritten.
+    """
+    from app.database import DATA_DIR
+
+    paths: list[str] = []
+    chunks: list[bytes] = []
+    for path in (os.path.join(DATA_DIR, "pronunciations.csv"),
+                 os.path.join(root, "pronunciations.csv")):
+        if not os.path.isfile(path):
+            continue
+        if any(os.path.samefile(path, previous) for previous in paths):
+            continue                    # legacy corpus and global file coincide
+        paths.append(path)
+        with open(path, "rb") as fh:
+            body = fh.read()
+        if chunks:
+            body = body.removeprefix(codecs.BOM_UTF8)
+            if body and chunks[-1] and not chunks[-1].endswith((b"\n", b"\r")):
+                chunks.append(b"\n")
+        chunks.append(body)
+    return b"".join(chunks) if paths else None
 
 
 def _check_paths(db: str) -> None:
@@ -252,23 +300,21 @@ def pack_bundle(slug: str | None = None, out: str | None = None) -> str:
     )
     print(f"packing {root}")
 
-    present = [m for m in READABLE_MEMBERS if os.path.exists(os.path.join(root, m))]
+    db = _db_in(root)
+    pronunciations = _effective_pronunciations(root)
+    present = [m for m in MEMBERS
+               if m not in (DB_NAME, "pronunciations.csv")
+               and os.path.exists(os.path.join(root, m))]
+    if db:
+        present.insert(0, DB_NAME)
+    if pronunciations is not None:
+        present.append("pronunciations.csv")
     if not present:
         raise FileNotFoundError(
             f"nothing to pack: none of {MEMBERS} found under {root}")
     missing = [m for m in MEMBERS if m not in present]
     if missing:
         print(f"  note: not present, skipping: {', '.join(missing)}")
-
-    db = _db_in(root)
-    if db:
-        _checkpoint(db)
-        _check_paths(db)
-        try:
-            from app.database import get_schema_version
-            print(f"  schema version: {get_schema_version()}")
-        except Exception:
-            pass
 
     def _filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         base = os.path.basename(info.name)
@@ -280,22 +326,41 @@ def pack_bundle(slug: str | None = None, out: str | None = None) -> str:
         info.uname = info.gname = ""
         return info
 
-    tar, out, finish = _open_write(out)
     count = 0
-    try:
-        for m in present:
-            src = os.path.join(root, m)
-            for_added = 0
-            # A bundle always carries corpus.db, even when packed from a legacy
-            # install that still calls it something else, so what comes out is
-            # in the modern layout no matter what went in.
-            tar.add(src, arcname=(DB_NAME if m == LEGACY_DB_NAME else m),
-                    filter=_filter)
-            if os.path.isdir(src):
-                for_added = sum(len(f) for _, _, f in os.walk(src))
-            count += for_added or 1
-    finally:
-        finish()
+    with tempfile.TemporaryDirectory(prefix="mrs-pack-") as staging:
+        snapshot = os.path.join(staging, DB_NAME)
+        if db:
+            _snapshot_database(db, snapshot)
+            _check_paths(snapshot)
+            conn = sqlite3.connect(snapshot)
+            try:
+                try:
+                    row = conn.execute(
+                        "SELECT value FROM settings WHERE key='schema_version'").fetchone()
+                    print(f"  schema version: {row[0] if row else 0}")
+                except sqlite3.Error:
+                    pass
+            finally:
+                conn.close()
+
+        tar, out, finish = _open_write(out)
+        try:
+            for m in present:
+                if m == "pronunciations.csv":
+                    info = tarfile.TarInfo(m)
+                    info.size = len(pronunciations)
+                    info.mode = 0o644
+                    tar.addfile(info, io.BytesIO(pronunciations))
+                    count += 1
+                    continue
+                src = snapshot if m == DB_NAME else os.path.join(root, m)
+                # Legacy and modern databases both travel as one corpus.db.
+                tar.add(src, arcname=m, filter=_filter)
+                for_added = (sum(len(f) for _, _, f in os.walk(src))
+                             if os.path.isdir(src) else 0)
+                count += for_added or 1
+        finally:
+            finish()
 
     print(f"packed {count} files -> {out}")
     return out
@@ -313,11 +378,21 @@ def cmd_pack(args: argparse.Namespace) -> int:
 
 
 def _fetch(url: str) -> str:
-    fd, tmp = tempfile.mkstemp(suffix=".tar.zst")
-    os.close(fd)
+    path = urlsplit(url).path.lower()
+    suffix = ".tar.zst" if path.endswith(".zst") else ".tar.gz" if path.endswith((".gz", ".tgz")) else ".tar"
+    fd, tmp = tempfile.mkstemp(suffix=suffix)
     print(f"downloading {url}")
-    with urllib.request.urlopen(url) as resp, open(tmp, "wb") as fh:
-        shutil.copyfileobj(resp, fh)
+    try:
+        with os.fdopen(fd, "wb") as fh, urllib.request.urlopen(url, timeout=30) as resp:
+            size = 0
+            while chunk := resp.read(1 << 20):
+                size += len(chunk)
+                if size > MAX_UNPACKED_BYTES:
+                    raise ValueError("download exceeds the maximum corpus bundle size")
+                fh.write(chunk)
+    except BaseException:
+        os.unlink(tmp)
+        raise
     print(f"  {_human(os.path.getsize(tmp))}")
     return tmp
 
@@ -327,38 +402,89 @@ MAX_MEMBER_FILES = 100_000
 
 
 def _safe_extract(tar: tarfile.TarFile, root: str) -> None:
-    """Extract tar archive members safely with Zip Slip and Tar Bomb protection."""
+    """Extract portable regular corpus files, with bounded archive contents."""
     real_root = os.path.realpath(root)
     total_bytes = 0
     total_files = 0
+    seen: set[str] = set()
     for member in tar:
         total_files += 1
         if total_files > MAX_MEMBER_FILES:
             raise ValueError(f"Tar bomb protection: exceeded maximum member files limit ({MAX_MEMBER_FILES:,})")
 
-        target_path = os.path.realpath(os.path.join(real_root, member.name))
+        name = member.name.rstrip("/")
+        parts = name.split("/")
+        if (not name or "\\" in name or ntpath.splitdrive(name)[0]
+                or any(part in ("", ".", "..") or ":" in part
+                       or part.endswith((".", " ")) for part in parts)):
+            raise ValueError("bundle contains a nonportable or unsafe path")
+        if parts[0] not in READABLE_MEMBERS:
+            raise ValueError(f"unexpected bundle member: {parts[0]!r}")
+        if parts[0] not in ("downloads", "transcripts") and len(parts) != 1:
+            raise ValueError("bundle files must have the expected corpus layout")
+        reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                    *(f"LPT{i}" for i in range(1, 10))}
+        if any(part.split(".", 1)[0].upper() in reserved for part in parts):
+            raise ValueError("bundle contains a reserved device filename")
+        if not (member.isfile() or member.isdir()):
+            raise ValueError("bundle links and special files are not supported")
+        if parts[0] not in ("downloads", "transcripts") and not member.isfile():
+            raise ValueError("expected a regular corpus file")
+        # Check on every platform: an archive that is ambiguous on Windows
+        # should not quietly produce a different corpus when installed there.
+        key = name.casefold()
+        if key in seen:
+            raise ValueError("bundle contains a duplicate member path")
+        seen.add(key)
+        target_path = os.path.realpath(os.path.join(real_root, *parts))
         if os.path.commonpath([target_path, real_root]) != real_root:
             raise ValueError(f"Zip slip protection: member {member.name!r} resolves outside target directory")
 
         if member.isfile():
+            if member.size < 0:
+                raise ValueError("bundle member has a negative size")
             total_bytes += member.size
             if total_bytes > MAX_UNPACKED_BYTES:
                 raise ValueError(
                     f"Tar bomb protection: exceeded maximum uncompressed size ({MAX_UNPACKED_BYTES:,} bytes)"
                 )
 
-        if hasattr(tarfile, "data_filter"):
-            tar.extract(member, path=real_root, filter="data")
+        if member.isdir():
+            os.makedirs(target_path, exist_ok=True)
         else:
-            tar.extract(member, path=real_root)
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            source = tar.extractfile(member)
+            if source is None:
+                raise ValueError("bundle member could not be read")
+            # Never restore archive ownership, special permission bits or links.
+            with source, open(target_path, "xb") as output:
+                shutil.copyfileobj(source, output, length=1 << 20)
+
+
+def _validate_install(directory: str) -> None:
+    database = _db_in(directory)
+    if not database:
+        raise ValueError("bundle must contain a corpus database")
+    try:
+        with closing(sqlite3.connect(Path(database).resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                raise ValueError("bundle database failed its integrity check")
+            for table, required in (("sources", {"id", "video_id", "source_file"}),
+                                    ("word_clips", {"id", "source_id", "word", "start_time",
+                                                    "end_time", "source_file"})):
+                if conn.execute("SELECT type FROM sqlite_master WHERE name=?", (table,)).fetchone() != ("table",):
+                    raise ValueError(f"bundle database is missing required {table} table")
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if not required <= columns:
+                    raise ValueError(f"bundle database is missing required {table} columns")
+    except sqlite3.Error as exc:
+        raise ValueError("bundle does not contain a readable corpus database") from exc
 
 
 def cmd_unpack(args: argparse.Namespace) -> int:
     root = args.into or _data_root()
     src = args.bundle
     tmp = None
-    if src.startswith(("http://", "https://")):
-        tmp = src = _fetch(src)
 
     if _db_in(root) and not args.force:
         print(
@@ -368,19 +494,52 @@ def cmd_unpack(args: argparse.Namespace) -> int:
         )
         return 1
 
+    if src.startswith(("http://", "https://")):
+        tmp = src = _fetch(src)
+
     os.makedirs(root, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".unpack-", dir=root)
+    backup = None
+    moved_old: list[str] = []
+    moved_new: list[str] = []
     try:
         tar = _open_read(src)
         try:
             # Streaming tars cannot be rewound, so extract in one pass.
-            _safe_extract(tar, root)
+            _safe_extract(tar, staging)
         finally:
             tar.close()
+        _validate_install(staging)
+        existing = [m for m in READABLE_MEMBERS if os.path.lexists(os.path.join(root, m))]
+        if existing and not args.force:
+            raise FileExistsError("corpus files already exist; pass --force to replace them")
+        if existing:
+            backup_root = os.path.join(root, ".corpus-backups")
+            os.makedirs(backup_root, exist_ok=True)
+            backup = tempfile.mkdtemp(prefix="unpack-", dir=backup_root)
+        try:
+            for member in existing:
+                os.replace(os.path.join(root, member), os.path.join(backup, member))
+                moved_old.append(member)
+            for member in READABLE_MEMBERS:
+                source = os.path.join(staging, member)
+                if os.path.exists(source):
+                    os.replace(source, os.path.join(root, member))
+                    moved_new.append(member)
+        except BaseException:
+            for member in reversed(moved_new):
+                os.replace(os.path.join(root, member), os.path.join(staging, member))
+            for member in reversed(moved_old):
+                os.replace(os.path.join(backup, member), os.path.join(root, member))
+            raise
     finally:
+        shutil.rmtree(staging)
         if tmp:
             os.unlink(tmp)
 
     print(f"unpacked into {root}")
+    if backup:
+        print(f"  previous corpus kept in {backup}")
     for m in MEMBERS:
         p = os.path.join(root, m)
         if os.path.isdir(p):
@@ -388,6 +547,78 @@ def cmd_unpack(args: argparse.Namespace) -> int:
             print(f"  {m:18} {n} files")
         elif os.path.exists(p):
             print(f"  {m:18} {_human(os.path.getsize(p))}")
+    return 0
+
+
+def _activate_install(staging: str, target: str, force: bool = False) -> str | None:
+    """Swap a validated staging directory, restoring the old one on failure."""
+    backup = None
+    try:
+        if os.path.exists(target):
+            if os.listdir(target) and not force:
+                raise FileExistsError(target)
+            backup_root = os.path.join(os.path.dirname(target), ".backups")
+            os.makedirs(backup_root, exist_ok=True)
+            backup = tempfile.mkdtemp(prefix=os.path.basename(target) + "-", dir=backup_root)
+            os.rmdir(backup)
+            os.replace(target, backup)
+        os.replace(staging, target)
+    except BaseException:
+        if backup and not os.path.exists(target):
+            os.replace(backup, target)
+        raise
+    return backup
+
+
+def _install_manifest(target: str, backup: str | None = None) -> dict:
+    from app.database import forget_ready
+    forget_ready()
+    manifest: dict = {"target": target, "slug": os.path.basename(target), "members": {}}
+    if backup:
+        manifest["backup"] = backup
+    for member in MEMBERS:
+        path = os.path.join(target, member)
+        if os.path.isdir(path):
+            files = [os.path.join(dp, f) for dp, _, fs in os.walk(path) for f in fs]
+            manifest["members"][member] = {"files": len(files),
+                                          "bytes": sum(os.path.getsize(f) for f in files)}
+        elif os.path.exists(path):
+            manifest["members"][member] = {"bytes": os.path.getsize(path)}
+    return manifest
+
+
+def seed_directory(source: str, name: str) -> dict:
+    """Seed a mounted loose corpus with a WAL-safe snapshot and atomic install."""
+    from app.database import install_dir
+    source_db = _db_in(source)
+    if not source_db:
+        raise ValueError("source directory does not contain a corpus database")
+    target = install_dir(name)
+    if os.path.exists(target) and os.listdir(target):
+        raise FileExistsError(target)
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".install-", dir=parent)
+    try:
+        for member in ("downloads", "transcripts"):
+            path = os.path.join(source, member)
+            if os.path.isdir(path):
+                shutil.copytree(path, os.path.join(staging, member))
+        pronunciations = _effective_pronunciations(source)
+        if pronunciations is not None:
+            Path(staging, "pronunciations.csv").write_bytes(pronunciations)
+        _snapshot_database(source_db, os.path.join(staging, DB_NAME))
+        _validate_install(staging)
+        backup = _activate_install(staging, target)
+    finally:
+        if os.path.isdir(staging):
+            shutil.rmtree(staging)
+    return _install_manifest(target, backup)
+
+
+def cmd_seed_directory(args: argparse.Namespace) -> int:
+    manifest = seed_directory(args.source, args.name)
+    print(f"seeded {manifest['slug']} in {manifest['target']}")
     return 0
 
 
@@ -409,45 +640,25 @@ def install_bundle(bundle: str, name: str, force: bool = False) -> dict:
     if os.path.exists(target) and os.listdir(target) and not force:
         raise FileExistsError(target)
 
-    # Whether this call is the one that created the directory, so that a
-    # failure can undo exactly what it did and no more.
-    created = not os.path.isdir(target)
-    os.makedirs(target, exist_ok=True)
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix=".install-", dir=parent)
+    backup = None
     try:
         tar = _open_read(bundle)
         try:
-            _safe_extract(tar, target)
+            _safe_extract(tar, staging)
         finally:
             tar.close()
-    except BaseException:
-        # Leave nothing that looks like an install. An empty directory left by
-        # a failed unpack is worse than no directory at all: whatever decides
-        # what is already installed sees it, skips the bundle, and the failure
-        # becomes permanent instead of being retried on the next start.
-        # SystemExit included, which is how an unreadable bundle now reports.
-        if created:
-            shutil.rmtree(target, ignore_errors=True)
-        raise
+        _validate_install(staging)
+        # Verify again just before the swap, including a corpus created while
+        # extraction ran. Failed input never touches an existing installation.
+        backup = _activate_install(staging, target, force)
+    finally:
+        if os.path.isdir(staging):
+            shutil.rmtree(staging)
 
-    try:
-        from app.database import forget_ready, init_db
-        forget_ready()
-        init_db()
-    except Exception:
-        pass
-
-    manifest: dict = {"target": target, "slug": os.path.basename(target), "members": {}}
-    for m in MEMBERS:
-        pth = os.path.join(target, m)
-        if os.path.isdir(pth):
-            manifest["members"][m] = {
-                "files": sum(len(f) for _, _, f in os.walk(pth)),
-                "bytes": sum(os.path.getsize(os.path.join(dp, f))
-                             for dp, _, fs in os.walk(pth) for f in fs),
-            }
-        elif os.path.exists(pth):
-            manifest["members"][m] = {"bytes": os.path.getsize(pth)}
-    return manifest
+    return _install_manifest(target, backup)
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -508,6 +719,9 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         print("  (dry run: pass --apply to move anything)")
         return 0
 
+    # Abort before moving any media if a live reader prevents WAL recovery.
+    # This command runs while the app is stopped (including container startup).
+    _checkpoint(legacy)
     os.makedirs(target, exist_ok=True)
 
     # Directories first, database last. This whole operation is not atomic, and
@@ -532,7 +746,10 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     # a legacy one and re-running resumes. Renamed rather than copied: on one
     # filesystem that is atomic and instant, and it never needs room for two
     # copies of a corpus on a server that may not have it.
-    _checkpoint(legacy)
+    dictionary = os.path.join(root, "pronunciations.csv")
+    dictionary_target = os.path.join(target, "pronunciations.csv")
+    if os.path.isfile(dictionary) and not os.path.exists(dictionary_target):
+        shutil.copy2(dictionary, dictionary_target)
     for suffix in ("-wal", "-shm"):
         stray = legacy + suffix
         if os.path.exists(stray):
@@ -648,6 +865,11 @@ def main() -> int:
     p.add_argument("--name", required=True, help="what to call it, e.g. attenborough")
     p.add_argument("--force", action="store_true", help="overwrite an existing corpus")
     p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("seed-directory", help="snapshot a mounted corpus into a named install")
+    p.add_argument("source")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=cmd_seed_directory)
 
     p = sub.add_parser("list", help="list installed corpora")
     p.set_defaults(func=cmd_list)

@@ -210,13 +210,16 @@ let cuts = new Set();       // indices where one piece ends and the next starts
 let picks = {};             // group key -> {source, clip_id}
 let sources = {};           // group key -> candidate list, as fetched
 let word = '';
+const wordRequests = latestRequest();
+let wordContext = 0;
 
 const VOWELS = new Set(['AA','AE','AH','AO','AW','AY','EH','ER','EY','IH','IY',
                         'OW','OY','UH','UW']);
 const say = (msg, kind) => { const s = $('status'); s.textContent = msg; s.className = kind || ''; };
 
 async function api(path, opts) {
-  const r = await fetch('/api/edit' + path, { cache: 'no-store', ...(opts || {}) });
+  const r = await fetch('/api/edit' + path, { cache: 'no-store', ...(opts || {}), headers: {
+    ...(opts?.headers || {}), ...(corpusSlug ? {'X-Corpus': corpusSlug} : {}) } });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
   return body;
@@ -247,15 +250,18 @@ $('corpus').onchange = async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
     });
-    if (!r.ok) throw new Error('could not switch corpus');
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || 'could not switch corpus');
     corpusSlug = slug;
+    wordRequests.cancel(); ++wordContext;
     // Recipes and clips both belong to the corpus, so everything on the page
     // is now about the wrong one.
-    picks = {}; sources = {};
+    cancelPlayback(); picks = {}; sources = {}; trims = [];
+    $('groups').innerHTML = '';
     await loadSaved();
     if (word) await look();
     say(`editing ${slug}`, 'ok');
-  } catch (e) { say(String(e.message), 'err'); }
+  } catch (e) { $('corpus').value = corpusSlug; say(String(e.message), 'err'); }
   finally { $('corpus').disabled = false; }
 };
 
@@ -263,9 +269,12 @@ $('corpus').onchange = async () => {
 async function look() {
   const w = $('word').value.trim();
   if (!w) return;
+  const request = wordRequests.next(), corpus = corpusSlug;
   say('');
   try {
     const d = await api(`/splice/${encodeURIComponent(w)}?mode=${$('mode').value}`);
+    if (!wordRequests.current(request) || corpus !== corpusSlug) return;
+    ++wordContext;
     word = d.word;
     phones = d.phones || [];
     picks = {}; sources = {};
@@ -286,16 +295,16 @@ async function look() {
       cuts = new Set(phones.map((_p, i) => i).slice(1));
       await renderAll();
     }
-  } catch (e) { say(String(e.message), 'err'); }
+  } catch (e) { if (wordRequests.current(request) && corpus === corpusSlug) say(String(e.message), 'err'); }
 }
 
 function renderSummary(d) {
   const bits = [];
   if (!d.phones) {
-    bits.push(`<b>${d.word}</b> has no known pronunciation, so it cannot be `
+    bits.push(`<b>${esc(d.word)}</b> has no known pronunciation, so it cannot be `
             + `spliced at all. Give it one just below.`);
   } else {
-    bits.push(`<b>${d.word}</b> needs <b>${d.phones.length}</b> sounds.`);
+    bits.push(`<b>${esc(d.word)}</b> needs <b>${d.phones.length}</b> sounds.`);
     if (d.exact_total) {
       bits.push(`The corpus already has <b>${d.exact_total}</b> clip(s) of it `
               + `said outright, so nothing here will be used unless those are `
@@ -316,7 +325,7 @@ function renderCurrent(d) {
     return;
   }
   $('current').innerHTML = d.plan.map(u =>
-    `<div><b>${(u.phones || []).join('-')}</b> from <b>${u.from}</b>`
+    `<div><b>${esc((u.phones || []).join('-'))}</b> from <b>${esc(u.from)}</b>`
     + ` <span style="color:#666">${u.subword ? 'trimmed' : 'whole'},`
     + ` ${Math.round((u.end_time - u.start_time) * 1000)}ms</span></div>`).join('');
   $('use-plan').disabled = false;
@@ -363,19 +372,20 @@ function drawSounds(list, err) {
 
 $('pron-input').oninput = () => {
   clearTimeout(pronTimer);
+  const context = wordContext, target = word;
   const value = $('pron-input').value.trim();
   if (!value) return showCurrent();
   pronTimer = setTimeout(async () => {
     try {
-      const out = await api(`/pronunciation/${encodeURIComponent(word)}/try`, {
+      const out = await api(`/pronunciation/${encodeURIComponent(target)}/try`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
       });
-      if ($('pron-input').value.trim() !== value) return;
+      if (context !== wordContext || $('pron-input').value.trim() !== value) return;
       drawSounds(out.phones || [], false);
       if (out.guessed) $('pron-preview').insertAdjacentHTML('beforeend',
         '<span>guessed from the spelling; saved as these sounds</span>');
-    } catch (e) { drawSounds([], String(e.message)); }
+    } catch (e) { if (context === wordContext && $('pron-input').value.trim() === value) drawSounds([], String(e.message)); }
   }, 250);
 };
 $('pron-input').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('pron-save').click(); });
@@ -383,20 +393,24 @@ $('pron-input').addEventListener('keydown', ev => { if (ev.key === 'Enter') $('p
 $('pron-save').onclick = async () => {
   const value = $('pron-input').value.trim();
   if (!word || !value) return;
+  const target = word, context = wordContext;
   try {
-    const out = await api(`/pronunciation/${encodeURIComponent(word)}`, {
+    const out = await api(`/pronunciation/${encodeURIComponent(target)}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value, scope: $('pron-scope').value }),
     });
+    if (context !== wordContext) return;
     await look();
-    say(`“${word}” is said as ${out.stored} from now on`, 'ok');
+    say(`“${target}” is said as ${out.stored} from now on`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
 };
 
 $('pron-clear').onclick = async () => {
   if (!word || !pronFor || !pronFor.pron) return;
+  const target = word, context = wordContext;
   try {
-    await api(`/pronunciation/${encodeURIComponent(word)}?scope=${pronFor.pron.scope}`, { method: 'DELETE' });
+    await api(`/pronunciation/${encodeURIComponent(target)}?scope=${pronFor.pron.scope}`, { method: 'DELETE' });
+    if (context !== wordContext) return;
     await look();
     say(`“${word}” is back to the dictionary`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
@@ -465,7 +479,7 @@ async function renderAll() {
     const key = `${g.a}:${g.b}`;
     const card = document.createElement('div');
     card.className = 'group';
-    card.innerHTML = `<div class="g-phones">${g.phones.join('-')}</div>`
+    card.innerHTML = `<div class="g-phones">${esc(g.phones.join('-'))}</div>`
                    + `<div class="why meta">looking…</div>`;
     box.appendChild(card);
     // Fetched per group rather than all at once: a group's candidates depend
@@ -475,21 +489,25 @@ async function renderAll() {
 }
 
 async function fetchSources(key, g, card) {
+  const context = wordContext, corpus = corpusSlug;
+  const current = () => context === wordContext && corpus === corpusSlug && card.isConnected;
   try {
     if (!sources[key]) {
       const d = await api('/splice-sources?phones=' + encodeURIComponent(g.phones.join(',')));
+      if (!current()) return;
       sources[key] = d.sources;
     }
+    if (!current()) return;
     renderGroup(key, g, card);
   } catch (e) {
-    card.querySelector('.why').textContent = String(e.message);
+    if (current()) card.querySelector('.why').textContent = String(e.message);
   }
 }
 
 function renderGroup(key, g, card) {
   const list = sources[key] || [];
   card.className = 'group' + (list.length ? '' : ' bad');
-  card.innerHTML = `<div class="g-phones">${g.phones.join('-')}</div>`;
+  card.innerHTML = `<div class="g-phones">${esc(g.phones.join('-'))}</div>`;
   if (!list.length) {
     card.insertAdjacentHTML('beforeend',
       '<div class="why">Nothing in this corpus makes these sounds together. '
@@ -535,6 +553,8 @@ function renderGroup(key, g, card) {
   const rows = [{ id: null, duration: null }, ...(chosen ? chosen.clip_list : [])];
   for (const c of rows) {
     const el = document.createElement('div');
+    el.setAttribute('role', 'button'); el.tabIndex = 0;
+    el.setAttribute('aria-label', c.id === null ? 'Let the splicer choose a clip' : `Choose clip ${c.id}`);
     el.dataset.id = c.id ?? '';
     el.className = 'clip' + (pick.clip_id === c.id ? ' on' : '')
                  + (Object.values(c.ratings || {}).some(v => v < 0) ? ' down' : '');
@@ -547,6 +567,7 @@ function renderGroup(key, g, card) {
     const play = document.createElement('button');
     play.textContent = '▶';
     play.title = 'hear this clip cut to these sounds';
+    play.setAttribute('aria-label', c.id === null ? 'Hear the automatically chosen cut' : `Hear cut from clip ${c.id}`);
     play.onclick = async ev => {
       ev.stopPropagation();          // auditioning is not choosing
       try {
@@ -556,14 +577,17 @@ function renderGroup(key, g, card) {
     };
     el.append(id, dur, play);
     el.onclick = () => { pick.clip_id = c.id; pick.start = pick.end = undefined; renderGroup(key, g, card); };
+    el.onkeydown = ev => {
+      if (ev.target === el && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); el.click(); }
+    };
     clips.appendChild(el);
   }
   card.appendChild(clips);
 
   const s = chosen;
   card.insertAdjacentHTML('beforeend',
-    `<div class="why">${s.word} is <b>${s.phones.join('-')}</b>; this takes `
-    + `${s.cuts === 0 ? 'all of it' : 'the ' + g.phones.join('-') + ' out of it'}. `
+    `<div class="why">${esc(s.word)} is <b>${esc(s.phones.join('-'))}</b>; this takes `
+    + `${s.cuts === 0 ? 'all of it' : 'the ' + esc(g.phones.join('-')) + ' out of it'}. `
     + `${s.clips} clip${s.clips === 1 ? '' : 's'} to choose from, longest `
     + `${Math.round(s.longest * 1000)}ms.</div>`);
   drawTrim(key, g, card);
@@ -589,25 +613,6 @@ let stopTimer = null, pendingSeek = null, pendingArm = null, playUntil = null;
 const fmt = t => t.toFixed(3);
 const cutOf = tr => [tr.pick.start ?? tr.where.start, tr.pick.end ?? tr.where.end];
 
-let audioCtx = null, analyserNode = null, mediaSourceNode = null;
-
-function ensureWebAudio() {
-  if (audioCtx) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      audioCtx = new AC();
-      analyserNode = audioCtx.createAnalyser();
-      analyserNode.fftSize = 256;
-      mediaSourceNode = audioCtx.createMediaElementSource(src);
-      mediaSourceNode.connect(analyserNode);
-      analyserNode.connect(audioCtx.destination);
-    }
-  } catch (e) {
-    // MediaElementSource may already be attached or cross-origin
-  }
-}
-
 function spectrogramColor(v) {
   if (v <= 0.02) return '#090a10';
   const val = Math.min(1, Math.max(0, v));
@@ -628,28 +633,7 @@ function spectrogramColor(v) {
 
 function drawSpectrogram(ctx, tr, w, h, span, peak, gain, s, e, W) {
   const env = tr.env;
-  const nTime = env.values.length;
-  const nFreq = 48;
-  const colW = Math.max(1, w / nTime);
-  const rowH = h / nFreq;
-
-  for (let i = 0; i < nTime; i++) {
-    const rawE = (env.values[i] / peak) * gain;
-    const xPos = (i / nTime) * w;
-    for (let f = 0; f < nFreq; f++) {
-      const freqHz = (f / nFreq) * 8000;
-      const f1 = Math.exp(-Math.pow((freqHz - 600) / 350, 2));
-      const f2 = Math.exp(-Math.pow((freqHz - 1800) / 500, 2));
-      const f3 = Math.exp(-Math.pow((freqHz - 2800) / 600, 2));
-      const sib = (freqHz > 3500) ? Math.exp(-Math.pow((freqHz - 5500) / 1500, 2)) * 0.7 : 0;
-      const resp = (0.5 * f1 + 0.35 * f2 + 0.25 * f3 + sib) * 1.5 + 0.05;
-      const binE = Math.min(1, rawE * resp);
-
-      ctx.fillStyle = spectrogramColor(binE);
-      const yPos = h - (f + 1) * rowH;
-      ctx.fillRect(xPos, yPos, colW, Math.ceil(rowH));
-    }
-  }
+  drawMeasuredSpectrogram(ctx, env.spectrogram, w, h, gain, spectrogramColor);
 
   // Freq gridlines and labels
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
@@ -676,6 +660,7 @@ function whereIs(phones, pick, clipId) {
 }
 
 async function drawTrim(key, g, card) {
+  const corpus = corpusSlug, context = wordContext;
   const pick = picks[key];
   const box = document.createElement('div');
   box.className = 'trim';
@@ -688,13 +673,15 @@ async function drawTrim(key, g, card) {
   card._trim = tr;
   try {
     tr.where = await whereIs(g.phones, pick, pick.clip_id);
+    if (!box.isConnected || picks[key] !== pick || corpus !== corpusSlug || context !== wordContext) return;
     tr.env = await api(`/source/${tr.where.source_id}/envelope?start=${Math.max(0, tr.where.src_start - PAD)}`
-                       + `&end=${tr.where.src_end + PAD}&buckets=600`);
+                       + `&end=${tr.where.src_end + PAD}&buckets=600`
+                       + `&spectrogram=${$('spectrogram-toggle').checked}`);
   } catch (e) {
     box.querySelector('.t').textContent = String(e.message);
     return;
   }
-  if (!box.isConnected || picks[key] !== pick) return;   // redrawn meanwhile
+  if (!box.isConnected || picks[key] !== pick || corpus !== corpusSlug || context !== wordContext) return;
   trims.push(tr);
   wireTrim(tr);
   drawCut(tr);
@@ -955,8 +942,10 @@ $('clear').onclick = async () => {
 };
 
 async function loadSaved() {
+  const corpus = corpusSlug;
   try {
     const d = await api('/recipes');
+    if (corpus !== corpusSlug) return;
     const box = $('saved');
     if (!d.recipes.length) {
       box.textContent = 'None yet. Every word is searched for.';
@@ -983,12 +972,14 @@ async function loadSaved() {
 $('look').onclick = look;
 $('word').addEventListener('keydown', ev => { if (ev.key === 'Enter') look(); });
 async function loadDiagnostics() {
+  const corpus = corpusSlug;
   const sumEl = $('diag-summary'), detEl = $('diag-details');
   sumEl.innerHTML = '<div style="color:var(--muted)">Loading diagnostics…</div>'; detEl.innerHTML = '';
   try {
-    const res = await fetch('/api/corpus/diagnostics');
+    const res = await fetch('/api/corpus/diagnostics', {headers: {'X-Corpus': corpus}});
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (corpus !== corpusSlug) return;
     const s = data.summary;
     sumEl.innerHTML = `
       <div class="panel" style="background:var(--raised);padding:0.6rem;border-radius:6px;border:1px solid ${s.unindexed_downloads ? 'var(--amber)' : 'var(--line-2)'}">
@@ -1014,26 +1005,27 @@ async function loadDiagnostics() {
     `;
     let html = '';
     if (data.unindexed_downloads && data.unindexed_downloads.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Unindexed Downloads (${data.unindexed_downloads.length})</h4><ul style="margin:0;padding-left:1.2rem;color:var(--muted)">${data.unindexed_downloads.map(f => `<li>${f}</li>`).join('')}</ul></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Unindexed Downloads (${data.unindexed_downloads.length})</h4><ul style="margin:0;padding-left:1.2rem;color:var(--muted)">${data.unindexed_downloads.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
     }
     if (data.negative_margins && data.negative_margins.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Clips with Negative Margins (${data.negative_margins.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Start</th><th style="padding:2px 4px">End</th><th style="padding:2px 4px">Margin</th><th style="padding:2px 4px">Reason</th></tr>${data.negative_margins.map(m => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${m.id}</td><td style="padding:2px 4px;font-weight:600">${m.word}</td><td style="padding:2px 4px">${m.start_time}s</td><td style="padding:2px 4px">${m.end_time}s</td><td style="padding:2px 4px;color:var(--red)">${m.margin}s</td><td style="padding:2px 4px;color:var(--muted)">${m.reason}</td></tr>`).join('')}</table></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Clips with Negative Margins (${data.negative_margins.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Start</th><th style="padding:2px 4px">End</th><th style="padding:2px 4px">Margin</th><th style="padding:2px 4px">Reason</th></tr>${data.negative_margins.map(m => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${m.id}</td><td style="padding:2px 4px;font-weight:600">${esc(m.word)}</td><td style="padding:2px 4px">${m.start_time}s</td><td style="padding:2px 4px">${m.end_time}s</td><td style="padding:2px 4px;color:var(--red)">${m.margin}s</td><td style="padding:2px 4px;color:var(--muted)">${esc(m.reason)}</td></tr>`).join('')}</table></div>`;
     }
     if (data.low_confidence_clips && data.low_confidence_clips.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Low-Confidence Clips (${data.low_confidence_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Duration</th><th style="padding:2px 4px">Reason</th></tr>${data.low_confidence_clips.slice(0, 50).map(c => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${c.id}</td><td style="padding:2px 4px;font-weight:600">${c.word}</td><td style="padding:2px 4px">${(c.end_time - c.start_time).toFixed(3)}s</td><td style="padding:2px 4px;color:var(--amber)">${c.reason}</td></tr>`).join('')}</table>${data.low_confidence_clips.length > 50 ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:4px">… and ${data.low_confidence_clips.length - 50} more</div>` : ''}</div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Low-Confidence Clips (${data.low_confidence_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Duration</th><th style="padding:2px 4px">Reason</th></tr>${data.low_confidence_clips.slice(0, 50).map(c => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${c.id}</td><td style="padding:2px 4px;font-weight:600">${esc(c.word)}</td><td style="padding:2px 4px">${(c.end_time - c.start_time).toFixed(3)}s</td><td style="padding:2px 4px;color:var(--amber)">${esc(c.reason)}</td></tr>`).join('')}</table>${data.low_confidence_clips.length > 50 ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:4px">… and ${data.low_confidence_clips.length - 50} more</div>` : ''}</div>`;
     }
     if (data.words_missing_pronunciations && data.words_missing_pronunciations.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Words Missing Pronunciations (${data.words_missing_pronunciations.length})</h4><div style="display:flex;flex-wrap:wrap;gap:0.3rem">${data.words_missing_pronunciations.map(w => `<span class="w nopron" style="font-size:0.75rem">${w}</span>`).join('')}</div></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Words Missing Pronunciations (${data.words_missing_pronunciations.length})</h4><div style="display:flex;flex-wrap:wrap;gap:0.3rem">${data.words_missing_pronunciations.map(w => `<span class="w nopron" style="font-size:0.75rem">${esc(w)}</span>`).join('')}</div></div>`;
     }
     if (data.downvoted_clips && data.downvoted_clips.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Downvoted Clips (${data.downvoted_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">Clip ID</th><th style="padding:2px 4px">Clip Word</th><th style="padding:2px 4px">Target Word</th><th style="padding:2px 4px">Score</th></tr>${data.downvoted_clips.map(d => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${d.clip_id}</td><td style="padding:2px 4px">${d.clip_word || '-'}</td><td style="padding:2px 4px;font-weight:600">${d.target_word}</td><td style="padding:2px 4px;color:var(--red)">${d.score}</td></tr>`).join('')}</table></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Downvoted Clips (${data.downvoted_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">Clip ID</th><th style="padding:2px 4px">Clip Word</th><th style="padding:2px 4px">Target Word</th><th style="padding:2px 4px">Score</th></tr>${data.downvoted_clips.map(d => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${d.clip_id}</td><td style="padding:2px 4px">${esc(d.clip_word || '-')}</td><td style="padding:2px 4px;font-weight:600">${esc(d.target_word)}</td><td style="padding:2px 4px;color:var(--red)">${d.score}</td></tr>`).join('')}</table></div>`;
     }
     if (!html) {
       html = '<div style="color:var(--green);padding:0.75rem 0;">✓ All corpus diagnostics look healthy!</div>';
     }
     detEl.innerHTML = html;
   } catch (e) {
-    sumEl.innerHTML = `<span style="color:var(--red)">Failed to load diagnostics: ${e.message}</span>`;
+    if (corpus !== corpusSlug) return;
+    sumEl.innerHTML = `<span style="color:var(--red)">Failed to load diagnostics: ${esc(e.message)}</span>`;
   }
 }
 
@@ -1049,19 +1041,28 @@ $('diag-btn').onclick = () => {
 $('diag-close').onclick = () => { $('diag-panel').style.display = 'none'; };
 $('diag-refresh').onclick = () => { loadDiagnostics(); };
 
-$('spectrogram-toggle').onchange = () => {
-  ensureWebAudio();
-  trims.forEach(drawCut);
+$('spectrogram-toggle').onchange = async () => {
+  const enabled = $('spectrogram-toggle').checked;
+  await Promise.all(trims.map(async tr => {
+    if (enabled && !tr.env?.spectrogram) {
+      try {
+        const got = await api(`/source/${tr.where.source_id}/envelope?start=${tr.env.start}`
+                           + `&end=${tr.env.end}&buckets=600&spectrogram=true`);
+        if (tr.canvas.isConnected) tr.env = got;
+      } catch (e) { say(String(e.message), 'err'); }
+    }
+    drawCut(tr);
+  }));
 };
 
 $('mode').onchange = () => { if (word) look(); };
 
-loadCorpora();
-loadSaved();
-
 // ?word=x, from the generator: the word you just heard come out wrong.
 const wanted = new URLSearchParams(location.search).get('word');
-if (wanted) { $('word').value = wanted; look(); }
+loadCorpora().then(() => {
+  loadSaved();
+  if (wanted) { $('word').value = wanted; look(); }
+}).catch(e => say(String(e.message), 'err'));
 </script>
 </body>
 </html>

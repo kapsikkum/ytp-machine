@@ -75,3 +75,9 @@ _fa_*.wav
 /matrix/
 # YTPMV uploads and word measurements, same reason: runtime data.
 /ytpmv/
+
+# Recoverable overwrites and incomplete staged corpus restores.
+.corpus-backups/
+.install-*/
+.unpack-*/
+.audit-work/

@@ -199,7 +199,9 @@
     of that part on its own. <b>octave</b> moves a part up or down without changing the tune — the
     suggestion puts each part where the voice sounds natural. <b>instrument</b> picks what plays a
     part: <b>auto</b> follows the chip, anything else stays put whatever the chip is — another
-    machine's voice, or <b>voice</b> to keep the voice as recorded. When an OPL or the SNES plays a part,
+    machine's voice, or <b>voice</b> to keep the voice as recorded. A voice part's <b>corpus</b>
+    picks its performer from the installed voices; <b>follow page voice</b> uses the choice at the top.
+    When an OPL or the SNES plays a part,
     <b>patch</b> picks which instrument.
     </p>
   </details>
@@ -309,9 +311,16 @@
   let song = null;          // the analysis
   let parts = {};           // id -> settings being edited
   let info = {};            // id -> {sample describe}
+  const songRequests = latestRequest();
+  const previewRequests = latestRequest();
+  let sampleRequests = {};
+  let corpusRequests = {};
+  const pendingCorpora = new Set();
+  let rendering = false;
 
-  async function api(url, opts = {}) {
-    const r = await fetch(url, opts);
+  async function api(url, opts = {}, corpus = liveVoice) {
+    const r = await fetch(url, {...opts, headers: {...(opts.headers || {}),
+      ...(corpus ? {'X-Corpus': corpus} : {}) }});
     let body = null;
     try { body = await r.json(); } catch {}
     if (!r.ok) {
@@ -320,8 +329,8 @@
     }
     return body;
   }
-  const post = (url, data) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                         body: JSON.stringify(data) });
+  const post = (url, data, corpus = liveVoice) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify(data) }, corpus);
 
 
   // ── voice + vocabulary ───────────────────────────────────────────────────
@@ -330,26 +339,45 @@
   // so choosing it posts nothing and the sentences page keeps its voice.
   const NO_VOICE = '__none';
   let synthMode = store.get('ytpmv-synth') === true;
-  let liveVoice = null;           // the voice the app is actually using
+  let liveVoice = null;           // this page's default, never a global switch
+  let installedCorpora = [];
+  const corpusOf = s => s.corpus || liveVoice;
+  const corpusName = slug => installedCorpora.find(c => c.slug === slug)?.name || slug;
+  const vocabulary = new Map();
+  let vocabularyIndex = 0;
+
+  function vocabularyFor(corpus) {
+    if (vocabulary.has(corpus)) return vocabulary.get(corpus);
+    const dl = document.createElement('datalist');
+    dl.id = `vocab-${vocabularyIndex++}`;
+    vocabulary.set(corpus, dl.id);
+    document.body.appendChild(dl);
+    api('/api/words', {}, corpus).then(w => {
+      const words = Object.entries(w.words).sort((a, b) => b[1] - a[1]).slice(0, 3000);
+      dl.innerHTML = words.map(([word]) => `<option value="${esc(word)}">`).join('');
+    }).catch(() => { vocabulary.delete(corpus); dl.remove(); });
+    return dl.id;
+  }
 
   async function loadVoices() {
     try {
       const d = await api('/api/corpora');
-      liveVoice = d.active;
-      voiceSel.innerHTML = d.corpora.map(c =>
-        `<option value="${esc(c.slug)}"${c.slug === d.active && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}` +
+      installedCorpora = d.corpora;
+      const savedVoice = store.get('ytpmv-default-corpus');
+      liveVoice = installedCorpora.some(c => c.slug === savedVoice) ? savedVoice : d.active;
+      store.set('ytpmv-default-corpus', liveVoice);
+      voiceSel.innerHTML = installedCorpora.map(c =>
+        `<option value="${esc(c.slug)}"${c.slug === liveVoice && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}` +
         `${c.words ? ` (${c.words} words)` : ''}</option>`).join('') +
         `<option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
     } catch {
       voiceSel.innerHTML = `<option>unavailable</option><option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
     }
   }
-  loadVoices();
+  const voicesReady = loadVoices();
 
-  // Switching the voice switches it for the whole app -- the sentences page
-  // and the Matrix bot included -- so it is worth saying so out loud. Every
-  // part is then re-suggested, because the words one voice has are not the
-  // words another has.
+  // Only parts following the page voice change. Explicit cast choices and
+  // mixer settings survive, and other users keep their own default voice.
   voiceSel.addEventListener('change', async () => {
     const slug = voiceSel.value;
     if (slug === NO_VOICE || synthMode) {
@@ -360,27 +388,27 @@
       }
     }
     voiceSel.disabled = true;
-    $('voice-note').textContent = 'switching…';
+    liveVoice = slug;
+    store.set('ytpmv-default-corpus', slug);
+    $('voice-note').textContent = '(this page only)';
     try {
-      await post('/api/corpus', { slug });
-      liveVoice = slug;
-      $('voice-note').textContent = '(changed for everyone)';
       if (song) {
-        const data = await api(`/api/ytpmv/midi/${song.midi_id}`);
-        load(data, null);          // new voice, new suggestions
+        const analysis = song;
+        const inherited = song.parts.filter(p => !parts[p.id].corpus);
+        if (inherited.length) {
+          const recommendations = api(`/api/ytpmv/midi/${song.midi_id}`);
+          await Promise.all(inherited.map(p => selectCorpus(p.id, '', false, recommendations.then(d => ({
+            ...d.parts.find(part => part.id === p.id), corpus: d.corpus, noises: d.noises, units: d.units,
+          })))));
+        }
+        if (song === analysis) for (const p of song.parts) drawInstrument(p);
       }
     } catch (e) {
       $('voice-note').textContent = e.message;
+      voiceSel.value = synthMode ? NO_VOICE : liveVoice;
     }
     voiceSel.disabled = false;
   });
-  api('/api/words').then(w => {
-    const dl = document.createElement('datalist');
-    dl.id = 'vocab';
-    const words = Object.entries(w.words).sort((a, b) => b[1] - a[1]).slice(0, 3000);
-    dl.innerHTML = words.map(([word]) => `<option value="${esc(word)}">`).join('');
-    document.body.appendChild(dl);
-  }).catch(() => {});
 
   for (let s = -12; s <= 12; s++) {
     const o = document.createElement('option');
@@ -402,26 +430,35 @@
   file.addEventListener('change', () => { if (file.files[0]) upload(file.files[0]); });
 
   async function upload(f) {
+    const request = songRequests.next();
     $('upload-status').textContent = `reading ${f.name} and picking sounds… (the first song on a voice takes a few seconds longer)`;
     const fd = new FormData();
     fd.append('midi', f);
     try {
+      await voicesReady;
       const data = await api('/api/ytpmv/midi', { method: 'POST', body: fd });
+      if (!songRequests.current(request)) return;
       $('upload-status').textContent = '';
       load(data, null);
       loadLibrary();
     } catch (e) {
+      if (!songRequests.current(request)) return;
       $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(e.message)}</span>`;
     }
   }
 
   function load(data, saved) {
+    Object.values(typing).forEach(clearTimeout); typing = {}; sampleRequests = {}; corpusRequests = {};
+    pendingCorpora.clear();
+    $('render-btn').disabled = rendering;
     song = data;
     parts = {};
     info = {};
     for (const p of song.parts) {
+      p.recommendationCorpus = data.corpus || liveVoice;
+      p.settings = {...p.settings, corpus: ''};
       parts[p.id] = Object.assign({}, p.settings, (saved && saved[p.id]) || {});
-      if (p.recommended && p.recommended.pitch) info[p.id] = { pitch: p.recommended.pitch };
+      if (!parts[p.id].corpus && p.recommended && p.recommended.pitch) info[p.id] = { pitch: p.recommended.pitch };
     }
     store.set('ytpmv', { midi_id: song.midi_id, parts });
     $('song-title').textContent = song.title || 'untitled';
@@ -431,6 +468,16 @@
       ['length', `${Math.floor(song.duration / 60)}:${String(Math.round(song.duration % 60)).padStart(2, '0')}`],
       ['parts', song.parts.length],
     ].map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
+    drawVoiceHelp();
+    ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
+    drawParts();
+    if (!synthMode) for (const p of song.parts) {
+      if (parts[p.id].corpus) selectCorpus(p.id, parts[p.id].corpus, true);
+      else if (parts[p.id].text) refreshSample(p.id);
+    }
+  }
+
+  function drawVoiceHelp() {
     const kinds = Object.entries(song.noises || {});
     const sounds = Object.keys(song.units || {});
     const vowels = sounds.filter(u => VOWEL.has(u)).slice(0, 8);
@@ -448,9 +495,6 @@
     }
     lines.push('Type any of them into a part, or pick one from the suggestions.');
     $('song-noises').innerHTML = lines.join('<br>');
-    ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
-    drawParts();
-    if (!synthMode) for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
   }
 
   // ── no voice ─────────────────────────────────────────────────────────────
@@ -508,7 +552,7 @@
         </div>
         <div class="sound">
           <div class="row">
-            <input type="text" list="vocab" value="${esc(s.text || '')}" placeholder="a word or phrase" data-k="text">
+            <input type="text" list="${esc(vocabularyFor(corpusOf(s)))}" value="${esc(s.text || '')}" placeholder="a word or phrase" data-k="text" aria-label="Sample for ${esc(p.instrument)}">
             <button data-act="prev" title="previous take">◀</button>
             <span class="take" data-el="take">take ${s.take + 1}</span>
             <button data-act="next" title="next take">▶</button>
@@ -518,7 +562,7 @@
             <button data-act="clip" title="see and hear the clip it is cut from">clip</button>
             <span data-el="badge"></span>
           </div>
-          ${alts ? `<div class="row alts"><span class="or">or:</span>${alts}</div>` : ''}
+          <div class="row alts" data-el="alts">${alts ? `<span class="or">or:</span>${alts}` : ''}</div>
           <div class="err" data-el="err"></div>
         </div>
         <div class="knobs">
@@ -526,6 +570,10 @@
             <div class="kvrow" title="What plays this part. auto is whatever the chip picks; anything else is kept whatever the chip is">
               <span class="k">instrument</span>
               <div class="v"><select data-k="instrument" data-el="inst" autocomplete="off"></select></div>
+            </div>
+            <div class="kvrow voice-only" data-el="corpus-wrap" title="The installed corpus this part sings with. Follow page voice uses the voice selected at the top.">
+              <span class="k">corpus</span>
+              <div class="v"><select data-k="corpus" aria-label="Corpus for ${esc(p.instrument)}"></select></div>
             </div>
             ${p.is_drums ? '' : `<div class="kvrow" data-el="patch-wrap" title="The General MIDI instrument: the patch an OPL plays, and the sample a SNES does" hidden>
               <span class="k">patch</span>
@@ -564,7 +612,7 @@
         </div>
       </div>`;
     }).join('');
-    for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); }
+    for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); drawCorpusBusy(p.id); }
     drawChip();
   }
 
@@ -610,6 +658,16 @@
     if (oct) oct.textContent = fmtOct(octaveOf(p, s));
     // How a clip is put on the note means nothing to a chip, which never plays one.
     r.querySelector('[data-el=mode-wrap]').hidden = onChip(p, s);
+    const corpusWrap = r.querySelector('[data-el=corpus-wrap]');
+    corpusWrap.hidden = onChip(p, s);
+    const corpusSelect = corpusWrap.querySelector('select');
+    corpusSelect.innerHTML = `<option value="">follow page voice (${esc(corpusName(liveVoice) || 'unavailable')})</option>` +
+      installedCorpora.map(c => `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}${c.words ? ` (${c.words} words)` : ''}</option>`).join('');
+    if (s.corpus && !installedCorpora.some(c => c.slug === s.corpus)) {
+      corpusSelect.add(new Option(`${s.corpus} (not installed)`, s.corpus));
+    }
+    corpusSelect.value = s.corpus || '';
+    r.querySelector('input[data-k=text]').setAttribute('list', vocabularyFor(corpusOf(s)));
 
     const wrap = r.querySelector('[data-el=patch-wrap]');
     if (!wrap) return;
@@ -645,6 +703,8 @@
   function sendable(p) {
     const s = Object.assign({}, parts[p.id]);
     const synth = song.instruments.synth.includes(toneOf(p, s, chipNow()));
+    if (synth) delete s.corpus;
+    else s.corpus = corpusOf(s);
     delete s.tone;
     if (s.instrument) s.tone = s.instrument;
     delete s.instrument;
@@ -680,23 +740,103 @@
 
   async function refreshSample(id) {
     const s = parts[id];
+    if (!s) return;
+    const analysis = song, voice = corpusOf(s), text = s.text, take = s.take, hitMode = s.hit;
+    const sequence = (sampleRequests[id] || 0) + 1;
+    sampleRequests[id] = sequence;
+    const current = () => song === analysis && voice === corpusOf(s) && parts[id] === s && sampleRequests[id] === sequence
+      && s.text === text && s.take === take && s.hit === hitMode;
     const r = row(id);
     const err = r && r.querySelector('[data-el=err]');
     if (err) err.textContent = '';
-    if (!s.text) return;
+    if (!s.text) { info[id] = null; drawBadge(id); return; }
     try {
       const part = song.parts.find(p => p.id === id);
       const hit = part.is_drums && s.hit !== false ? part.role.split(':')[1] : null;
-      const d = await post('/api/ytpmv/sample', { text: s.text, take: s.take, hit });
+      const d = await post('/api/ytpmv/sample', { text: s.text, take: s.take, hit, corpus: voice }, voice);
+      if (!current()) return;
       info[id] = { pitch: d, takes: d.takes, url: d.sample_url };
       if (d.take !== s.take) s.take = d.take;
       const t = r && r.querySelector('[data-el=take]');
       if (t) t.textContent = `take ${d.take + 1}/${d.takes}`;
       drawBadge(id);
     } catch (e) {
+      if (!current()) return;
       info[id] = null;
       if (err) err.textContent = e.message;
       drawBadge(id);
+    }
+  }
+
+  function drawCorpusBusy(id) {
+    const r = row(id); if (!r) return;
+    const busy = pendingCorpora.has(id);
+    r.setAttribute('aria-busy', String(busy));
+    r.querySelectorAll('.sound input, .sound button, [data-act=preview]').forEach(el => { el.disabled = busy; });
+    $('render-btn').disabled = rendering || pendingCorpora.size > 0;
+  }
+
+  async function selectCorpus(id, choice, restore = false, recommendation = null) {
+    const s = parts[id], analysis = song;
+    if (!s) return;
+    const p = song.parts.find(p => p.id === id);
+    const voice = choice || liveVoice;
+    const sequence = (corpusRequests[id] || 0) + 1;
+    corpusRequests[id] = sequence;
+    s.corpus = choice;
+    sampleRequests[id] = (sampleRequests[id] || 0) + 1;
+    clearTimeout(typing[id]);
+    pendingCorpora.add(id);
+    const current = () => song === analysis && parts[id] === s && corpusRequests[id] === sequence && corpusOf(s) === voice;
+    const message = text => row(id)?.querySelectorAll('[data-el=err]').forEach(el => { el.textContent = text; });
+    message(`finding sounds in ${corpusName(voice)}…`);
+    drawCorpusBusy(id);
+    drawInstrument(p);
+    try {
+      const d = await (recommendation || api(`/api/ytpmv/midi/${song.midi_id}/part/${encodeURIComponent(id)}?corpus=${encodeURIComponent(voice)}`, {}, voice));
+      if (!current()) return;
+      const oldDefaults = p.settings;
+      p.recommended = d.recommended;
+      p.recommendationCorpus = d.corpus;
+      p.settings = {...d.settings, corpus: choice};
+      if (!choice && liveVoice === d.corpus) {
+        song.noises = d.noises; song.units = d.units;
+        drawVoiceHelp();
+      }
+      if (!restore) {
+        for (const key of ['text', 'take', 'takes', 'pool']) {
+          if (key in d.settings) s[key] = d.settings[key];
+          else delete s[key];
+        }
+        if (!s.octaveSet) s.octave = d.settings.octave;
+        if (s.mode === oldDefaults.mode) s.mode = d.settings.mode;
+      }
+      info[id] = null;
+      const r = row(id);
+      if (r) {
+        r.querySelector('input[data-k=text]').value = s.text || '';
+        r.querySelector('[data-k=mode]').value = s.mode;
+        const alternatives = d.recommended?.alternatives || [];
+        r.querySelector('[data-el=alts]').innerHTML = alternatives.length ? '<span class="or">or:</span>' + alternatives.map(a =>
+          `<button data-alt="${esc(a.text)}" data-take="${a.take}">${esc(a.text)}</button>`).join('') : '';
+        r.querySelector('[data-el=take]').textContent = `take ${s.take + 1}`;
+      }
+      message('');
+      changed(id);
+      drawInstrument(p);
+      drawBadge(id);
+      if (!synthMode) await refreshSample(id);
+    } catch (e) {
+      if (!current()) return;
+      if (!restore) s.corpus = p.settings.corpus || (p.recommendationCorpus === liveVoice ? '' : p.recommendationCorpus);
+      drawInstrument(p);
+      message(e.message);
+      changed(id);
+    } finally {
+      if (song === analysis && corpusRequests[id] === sequence) {
+        pendingCorpora.delete(id);
+        drawCorpusBusy(id);
+      }
     }
   }
 
@@ -709,6 +849,7 @@
     const r = e.target.closest('.part'); if (!r) return;
     const id = r.dataset.id, k = e.target.dataset.k, s = parts[id];
     if (!k) return;
+    if (k === 'corpus') { selectCorpus(id, e.target.value); return; }
     if (k === 'text') {
       s.text = e.target.value.trim(); s.take = 0;
       clearTimeout(typing[id]);
@@ -745,18 +886,26 @@
     } else if (act === 'clip') {
       if (info[id] && info[id].url) window.open(info[id].url, '_blank');
     } else if (act === 'preview') {
+      if (pendingCorpora.has(id)) return;
+      const request = previewRequests.next(), analysis = song, chip = chipNow(), synth = synthMode;
+      const part = sendable(song.parts.find(p => p.id === id)), snapshot = JSON.stringify(part);
       b.disabled = true; const old = b.textContent; b.textContent = '…';
       try {
-        const d = await post('/api/ytpmv/preview', { midi_id: song.midi_id, seconds: 6,
-          part: sendable(song.parts.find(p => p.id === id)), chip: chipNow() || null,
-          synth: synthMode });
-        const pl = $('player'); pl.src = d.audio_url; pl.play();
-      } catch (err) { r.querySelectorAll('[data-el=err]').forEach(el => { el.textContent = err.message; }); }
-      b.disabled = false; b.textContent = old;
+        const d = await post('/api/ytpmv/preview', { midi_id: analysis.midi_id, seconds: 6,
+          part, chip: chip || null, synth });
+        if (!previewRequests.current(request) || song !== analysis || parts[id] !== s || chipNow() !== chip || synthMode !== synth
+            || JSON.stringify(sendable(song.parts.find(p => p.id === id))) !== snapshot) return;
+        const pl = $('player'); pl.src = d.audio_url; await pl.play();
+      } catch (err) {
+        if (err.name !== 'AbortError' && previewRequests.current(request)) {
+          r.querySelectorAll('[data-el=err]').forEach(el => { el.textContent = err.message; });
+        }
+      } finally { b.disabled = false; b.textContent = old; }
     }
   });
 
   $('reset-btn').addEventListener('click', () => {
+    corpusRequests = {}; pendingCorpora.clear();
     for (const p of song.parts) parts[p.id] = Object.assign({}, p.settings);
     changed(); drawParts();
     for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
@@ -771,7 +920,9 @@
   }
 
   $('render-btn').addEventListener('click', async () => {
+    if (pendingCorpora.size || rendering) return;
     const btn = $('render-btn');
+    rendering = true;
     btn.disabled = true;
     $('result').innerHTML = '';
     const len = parseInt($('opt-len').value);
@@ -802,7 +953,8 @@
       const result = await poll(job.id);
       if (result) show(result);
     } catch (e) { status(e.message, true); progress(null); }
-    btn.disabled = false;
+    rendering = false;
+    btn.disabled = pendingCorpora.size > 0;
   });
 
   // Each stage gets its own slice of the bar, so it never runs backwards.
@@ -814,6 +966,7 @@
       await new Promise(r => setTimeout(r, delay));
       delay = Math.min(delay * 1.3, 1500);
       const j = await api(`/api/jobs/${id}`);
+      if (j.status === 'cancelled') { progress(null); status('Job cancelled.', true); return null; }
       if (j.status === 'error') { progress(null); status(j.error, true); return null; }
       if (j.status === 'done') { progress(null); status(''); return j.result; }
       if (j.status === 'queued') { status(`queued${j.position ? ` — ${j.position} ahead` : ''}`); progress(0); continue; }
@@ -881,12 +1034,17 @@
   $('lib-sort').addEventListener('change', drawLibrary);
   $('lib-list').addEventListener('click', async (e) => {
     const row = e.target.closest('.lib-row'); if (!row) return;
+    const request = songRequests.next();
     $('upload-status').textContent = 'loading it and picking sounds…';
     try {
-      load(await api(`/api/ytpmv/midi/${row.dataset.mid}`), null);
+        await voicesReady;
+        const data = await api(`/api/ytpmv/midi/${row.dataset.mid}`);
+      if (!songRequests.current(request)) return;
+      load(data, null);
       $('upload-status').textContent = '';
       drawLibrary();
     } catch (err) {
+      if (!songRequests.current(request)) return;
       $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(err.message)}</span>`;
     }
   });
@@ -896,7 +1054,10 @@
   if (synthMode) setSynth(true);
   const saved = store.get('ytpmv');
   if (saved && saved.midi_id) {
-    api(`/api/ytpmv/midi/${saved.midi_id}`).then(d => load(d, saved.parts)).catch(() => {});
+    const request = songRequests.next();
+    voicesReady.then(() => api(`/api/ytpmv/midi/${saved.midi_id}`)).then(d => {
+      if (songRequests.current(request)) load(d, saved.parts);
+    }).catch(() => {});
   }
 })();
 </script>

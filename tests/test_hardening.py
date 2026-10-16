@@ -167,7 +167,14 @@ if TestClient:
     db.init_db()
     g._pool(g._corpus_for("b"))
     with open(bundle, "rb") as fh:
-        r = web.post("/api/corpus/import", files={"bundle": ("b.tar.gz", fh.read())},
+        bundle_data = fh.read()
+    r = web.post("/api/corpus/import", files={"bundle": ("b.tar.gz", bundle_data)},
+                 data={"name": "b", "force": "true"})
+    check("a forced import while videos are queued is refused", r.status_code, 409)
+    check("a refused import keeps the installed voice cached", "b" in g._POOLS, True)
+    for job_id in list(jobs._jobs):
+        jobs.cancel(job_id)
+    r = web.post("/api/corpus/import", files={"bundle": ("b.tar.gz", bundle_data)},
                      data={"name": "b", "force": "true"})
     check("a forced import is accepted", r.status_code, 200)
     check("and nothing cached from before it survives", (len(db._ready), "b" in g._POOLS), (0, False))

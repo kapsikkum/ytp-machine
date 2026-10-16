@@ -54,6 +54,7 @@ _PAD = 0.06
 
 
 _SR = 16000
+_WRITE_BATCH = 50
 
 
 def _decode(path: str):
@@ -122,55 +123,85 @@ def align_corpus(source_id: int | None = None, limit: int | None = None,
 
     print(f"aligning {len(rows)} clip(s) — loading the model…", flush=True)
     started = time.time()
-    done = skipped = failed = 0
+    done = skipped = failed = changed = 0
     loaded_from: str | None = None
     samples = None
+    pending: list[tuple[str, int, str, float, float, str]] = []
 
-    for i, clip in enumerate(rows, start=1):
-        phones = word_to_phonemes(clip["word"])
-        if not phones:
-            skipped += 1
-            continue
-        # The rows come out ordered by source, so each video is decoded once
-        # and then sliced, and only one is held at a time.
-        if clip["source_file"] != loaded_from:
-            samples = _decode(resolve_path(clip["source_file"]))
-            loaded_from = clip["source_file"]
-        if samples is None:
-            failed += 1
-            continue
-        pad = min(_PAD, clip["start_time"])
-        wav = _slice(samples, clip["start_time"] - pad,
-                     (clip["end_time"] - clip["start_time"]) + pad + _PAD)
-        if wav is None:
-            failed += 1
-            continue
-        got = phone_align.align(wav, phones, device)
-        if not got:
-            failed += 1
-            continue
-        # Back into the clip's own frame of reference.
-        body = json.dumps([[p, round(a - pad, 4), round(b - pad, 4)]
-                           for p, a, b in got])
+    def flush() -> None:
+        nonlocal done, changed
+        if not pending:
+            return
+        # Commit a bounded checkpoint rather than opening SQLite and syncing
+        # its transaction for every clip. No write lock is held while the
+        # model runs, and completed clips still survive an interrupted run.
         with get_db() as conn:
-            conn.execute("UPDATE word_clips SET phones=? WHERE id=?",
-                         (body, clip["id"]))
-        done += 1
-
-        if i % 50 == 0 or i == len(rows):
-            rate = i / max(1e-6, time.time() - started)
-            print(f"  {i}/{len(rows)}  {rate:.1f} clips/s  "
-                  f"~{(len(rows) - i) / rate / 60:.0f} min left", flush=True)
+            updated = conn.executemany(
+                "UPDATE word_clips SET phones=? WHERE id=? AND word=? "
+                "AND start_time=? AND end_time=? AND source_file=?", pending).rowcount
+        # The editor can rename/retime a clip while inference is running. Its
+        # new state must not receive phones measured for the previous window.
+        done += updated
+        changed += len(pending) - updated
+        pending.clear()
 
     try:
-        from app.generate import invalidate_cache
-        invalidate_cache()
-    except Exception:
-        pass
+        for i, clip in enumerate(rows, start=1):
+            phones = word_to_phonemes(clip["word"])
+            if not phones:
+                skipped += 1
+                continue
+            # The rows come out ordered by source, so each video is decoded once
+            # and then sliced, and only one is held at a time.
+            if clip["source_file"] != loaded_from:
+                samples = _decode(resolve_path(clip["source_file"]))
+                loaded_from = clip["source_file"]
+            if samples is None:
+                failed += 1
+                continue
+            pad = min(_PAD, clip["start_time"])
+            wav = _slice(samples, clip["start_time"] - pad,
+                         (clip["end_time"] - clip["start_time"]) + pad + _PAD)
+            if wav is None:
+                failed += 1
+                continue
+            got = phone_align.align(wav, phones, device)
+            if not got:
+                failed += 1
+                continue
+            # Back into the clip's own frame of reference.
+            body = json.dumps([[p, round(a - pad, 4), round(b - pad, 4)]
+                               for p, a, b in got])
+            pending.append((body, clip["id"], clip["word"], clip["start_time"],
+                            clip["end_time"], clip["source_file"]))
+            if len(pending) >= _WRITE_BATCH:
+                flush()
 
-    print(f"  aligned {done}, no pronunciation {skipped}, could not align "
-          f"{failed}  in {(time.time() - started) / 60:.1f} min")
-    return (done, skipped, failed)
+            if i % 50 == 0 or i == len(rows):
+                rate = i / max(1e-6, time.time() - started)
+                print(f"  {i}/{len(rows)}  {rate:.1f} clips/s  "
+                      f"~{(len(rows) - i) / rate / 60:.0f} min left", flush=True)
+    except BaseException:
+        try:
+            flush()
+        except BaseException as exc:
+            # Saving the partial checkpoint is best effort on an error path:
+            # a second failure must not conceal the model/decode interruption.
+            print(f"  could not save pending alignments: {exc}", file=sys.stderr)
+        raise
+    else:
+        flush()
+    finally:
+        if done:
+            try:
+                from app.generate import invalidate_cache
+                invalidate_cache(alignments=False)
+            except Exception:
+                pass
+
+    print(f"  aligned {done}, no pronunciation {skipped}, changed during alignment {changed}, "
+          f"could not align {failed}  in {(time.time() - started) / 60:.1f} min")
+    return (done, skipped + changed, failed)
 
 
 def main() -> int:

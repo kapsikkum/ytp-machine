@@ -27,6 +27,7 @@ import tempfile
 import uuid
 import wave
 from dataclasses import dataclass
+from contextlib import ExitStack
 
 import numpy as np
 
@@ -183,7 +184,7 @@ def library() -> list[dict]:
 def analyse(midi_id: str, progress=None) -> dict:
     """The song in plain words, plus a suggested sound for every part."""
     song = load_song(midi_id)
-    recs = recommend.recommend(song, progress=progress)
+    recs = recommend.recommend(song, progress=progress, pool=samples.corpus_pool())
     out = song.summary()
     out["midi_id"] = midi_id
     # What this voice has besides words. A spew or a click is already a
@@ -193,6 +194,7 @@ def analyse(midi_id: str, progress=None) -> dict:
     out["units"] = {k: len(v) for k, v in sorted(samples.units().items(),
                                                  key=lambda kv: -len(kv[1]))}
     out["voice"] = active()["name"]
+    out["corpus"] = active()["slug"]
     # What each part can be played by, and what every chip would pick for it
     # if left alone, so the page can say so before anything is rendered.
     out["instruments"] = {**tones.catalogue(), "programs": music.GM_PROGRAMS, "chips": CHIPS}
@@ -207,6 +209,36 @@ def analyse(midi_id: str, progress=None) -> dict:
         p["chip_tones_synth"] = {c: chip_tone(part, c, as_bass=(part.id == low), voice_drums=False)
                                  for c in CHIPS}
     return out
+
+
+def recommend_part(midi_id: str, part_id: str, corpus: str | None = None) -> dict:
+    """The sound choices for one part in one installed voice."""
+    song = load_song(midi_id)
+    part = song.part(part_id)
+    if part is None:
+        raise YtpmvError("No such part.")
+    with samples.corpus_context(corpus) as voice:
+        one = music.Song([part], song.duration, song.bpm, song.time_signature,
+                         song.key, song.key_confidence)
+        rec = recommend.recommend(one, pool=samples.corpus_pool()).get(part_id, {})
+        return {"id": part_id, "corpus": voice["slug"], "voice": voice["name"],
+                "recommended": rec, "settings": _default_settings_for(part, rec),
+                "noises": samples.noises(),
+                "units": {k: len(v) for k, v in samples.units().items()}}
+
+
+def prepare_parts(parts: list[dict], synth: bool = False) -> list[dict]:
+    """Validate voice choices before queueing, and pin omitted choices now."""
+    result = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        chosen = dict(part)
+        if not synth:
+            with samples.corpus_context(chosen.get("corpus")) as corpus:
+                chosen["corpus"] = corpus["slug"]
+        result.append(chosen)
+    return result
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -369,6 +401,7 @@ def octaves_to_fit(notes: list, floor: float, shift: int) -> int:
 def _default_settings_for(part: music.Part, rec: dict) -> dict:
     return {
         "id": part.id,
+        "corpus": active()["slug"],
         "text": rec.get("text"),
         "take": rec.get("take", 0),
         # The best few takes of this word, for the variety modes to rotate
@@ -414,6 +447,8 @@ def _merge(defaults: dict, given: dict | None) -> dict:
     s = dict(defaults)
     if not given:
         return s
+    if "corpus" in given:
+        s["corpus"] = given["corpus"]
     if isinstance(given.get("text"), str) and given["text"].strip():
         s["text"] = given["text"].strip()[:60]
         if given["text"].strip().lower() != (defaults.get("text") or "") and "take" not in given:
@@ -561,7 +596,18 @@ def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | Non
         s_["octave"] += octaves_to_fit(p.notes, floor, shift)
 
 
+def _close_stem(stem) -> None:
+    mapping = getattr(stem, "_mmap", None)
+    if mapping is not None and not mapping.closed:
+        mapping.close()
+
+
 def render_ytpmv(params: dict, progress=None) -> dict:
+    with ExitStack() as resources:
+        return _render_ytpmv(params, progress, resources)
+
+
+def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
     """Render a song. *params* is what POST /api/ytpmv/render was given:
 
         midi_id   from save_midi
@@ -613,12 +659,21 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         chip = synth_chip(chip)
     screen = screen_for(chip)
 
-    given = {p.get("id"): p for p in (params.get("parts") or []) if isinstance(p, dict)}
+    given = {p.get("id"): p for p in prepare_parts(params.get("parts") or [], synth)}
     # Recommendations only for parts the request did not choose a sound for,
     # and none at all when nothing is going to be said.
     need = [] if synth else [p for p in song.parts if not (given.get(p.id) or {}).get("text")]
-    recs = recommend.recommend(music.Song(need, song.duration, song.bpm, song.time_signature,
-                                          song.key, song.key_confidence)) if need else {}
+    recs = {}
+    groups = {}
+    for part in need:
+        slug = (given.get(part.id) or {}).get("corpus", active()["slug"])
+        groups.setdefault(slug, []).append(part)
+    for slug, parts in groups.items():
+        with samples.corpus_context(slug):
+            recs.update(recommend.recommend(
+                music.Song(parts, song.duration, song.bpm, song.time_signature,
+                           song.key, song.key_confidence), progress=progress,
+                pool=samples.corpus_pool()))
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
     _through_chip(song, settings, given, chip, g_transpose, synth)
@@ -657,7 +712,9 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         got, failed = [], None
         for text, take in dict.fromkeys(want):  # in order, no repeats
             try:
-                got.append(samples.build(text, take, _hit(part, s)))
+                got.append(samples.build(text, take, _hit(part, s),
+                                         corpus=s["corpus"],
+                                         check_cancel=lambda: say("samples", i, len(wanted))))
             except samples.SampleError as exc:
                 failed = exc
         if got:
@@ -708,7 +765,8 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # back when it is mixed. A three minute song of thirty parts is about half
     # a gigabyte of these, gone as soon as the mix is made.
     stems: list[dict] = []
-    stemdir = tempfile.mkdtemp(prefix="ytpmv_stems_") if balance else None
+    stem_temp = tempfile.TemporaryDirectory(prefix="ytpmv_stems_") if balance else None
+    stemdir = resources.enter_context(stem_temp) if stem_temp else None
     chunk = 60 * SR
     # Where the last part wrote into scratch. Everything outside it is still
     # zero, so only that much needs clearing, and only a part's own stretch
@@ -717,6 +775,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
     # up silence.
     span = [0, 0]
     for part in wanted.values():
+        say("notes", done[0], total)
         if part.id not in sample_of:
             continue
         into = mix if part.id in playing_ids else None
@@ -741,6 +800,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             gl, gr = math.cos(pan), math.sin(pan)
             stem = np.lib.format.open_memmap(os.path.join(stemdir, f"{len(stems)}.npy"),
                                              mode="w+", dtype=np.float16, shape=(N,))
+            resources.callback(_close_stem, stem)
             denom = gl + gr if abs(gl + gr) > 1e-6 else 1.0
             for i in range(lo, hi, chunk):        # a new stem is zeros already
                 j = min(hi, i + chunk)
@@ -767,11 +827,13 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                 mix[i:j] += mono[:, None] * pair
             levels[st["id"]] = {"lufs": round(was, 1) if math.isfinite(was) else None,
                                 "gain_db": round(20.0 * math.log10(max(gain, 1e-6)), 1)}
+        for st in stems:
+            _close_stem(st["stem"])
         stems.clear()
-        shutil.rmtree(stemdir, ignore_errors=True)
+        stem_temp.cleanup()
     say("notes", total, total)
 
-    tmpdir = tempfile.mkdtemp(prefix="ytpmv_")
+    tmpdir = resources.enter_context(tempfile.TemporaryDirectory(prefix="ytpmv_"))
     wav = os.path.join(tmpdir, "mix.wav")
     _write_wav(wav, _finish_mix(mix))
     del mix
@@ -783,13 +845,25 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         W, H = cols * tw, rows * th
     tile_w = sw if (is_retro or draft) else tw
     tile_h = sh if (is_retro or draft) else th
-    frames_of = {} if synth else {p.id: [smp.frames(tile_w, tile_h) for smp in sample_of[p.id]]
+    frames_of = {} if synth else {p.id: [smp.frames(tile_w, tile_h,
+                                                 check_cancel=lambda: say("frames", 0, n_frames))
+                                       for smp in sample_of[p.id]]
                                   for p in tiles}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
     run_id = uuid.uuid4().hex[:10]
     os.makedirs("output", exist_ok=True)
     out_path = os.path.join("output", f"ytpmv_{run_id}.mp4")
+    completed = [False]
+
+    def discard_partial():
+        if not completed[0]:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+
+    resources.callback(discard_partial)
     vf = ["format=yuv420p"]
     src_w, src_h = (screens.SIZES[screen] if is_retro else (W // 2, H // 2) if draft else (W, H))
     if synth or is_retro or draft:
@@ -821,13 +895,19 @@ def render_ytpmv(params: dict, progress=None) -> dict:
            "-crf", "16" if is_retro else "23",
            "-c:a", "aac", "-b:a", "192k", "-ar", str(SR), "-ac", "2",
            "-shortest", "-movflags", "+faststart", out_path]
-    errlog = open(os.path.join(tmpdir, "ffmpeg.log"), "w+b")
+    errlog = resources.enter_context(open(os.path.join(tmpdir, "ffmpeg.log"), "w+b"))
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errlog)
+    from app.media_process import cancellation_watch, stop, wait
+    resources.callback(stop, proc)
+    stage = ["frames", 0, n_frames]
+    watchers = resources.enter_context(ExitStack())
+    watchers.enter_context(cancellation_watch(proc, (lambda: say(*stage)) if progress else None))
     canvas = np.zeros((src_h, src_w, 3) if (synth or is_retro or draft) else (H, W, 3), dtype=np.uint8)
     drawn: dict[int, tuple] = {}              # tile -> the state last drawn into canvas
     last_frame = None                         # the last retro frame, while nothing moves
     try:
         for f in range(n_frames):
+            stage[1] = f
             if f % 25 == 0:
                 say("frames", f, n_frames)
             t = f / FPS
@@ -858,26 +938,18 @@ def render_ytpmv(params: dict, progress=None) -> dict:
             except (BrokenPipeError, OSError):
                 break
         proc.stdin.close()
+        stage[:] = ["encoding", 0, 1]
         say("encoding", 0, 1)
-        rc = proc.wait()
+        rc = wait(proc, check_cancel=lambda: say("encoding", 0, 1))
         if rc != 0:
             errlog.seek(0)
             raise RuntimeError("FFmpeg failed: " + errlog.read().decode(errors="replace")[-500:])
         say("encoding", 1, 1)
     finally:
-        if proc.poll() is None:
-            proc.kill()
-        errlog.close()
-        for name in os.listdir(tmpdir):
-            try:
-                os.remove(os.path.join(tmpdir, name))
-            except OSError:
-                pass
-        try:
-            os.rmdir(tmpdir)
-        except OSError:
-            pass
+        stop(proc)
 
+    watchers.close()
+    completed[0] = True
     log.info("YTPMV %s  %d parts  %.1fs  %dx%d", out_path, len(tiles), T, W, H)
     return {
         "video_url": f"/output/{os.path.basename(out_path)}",
@@ -889,7 +961,7 @@ def render_ytpmv(params: dict, progress=None) -> dict:
                     "screen": screen, "synth": synth, "chip": chip,
                     "transpose": g_transpose, "max_seconds": max_s},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
-                   **{k: settings[p.id][k] for k in ("text", "take", "octave", "transpose", "mode",
+                   **{k: settings[p.id][k] for k in ("corpus", "text", "take", "octave", "transpose", "mode",
                                                    "tone", "program", "mute", "visible", "pan", "haas")},
                    "polyphony": p.polyphony()[0],
                    "typical_polyphony": round(p.polyphony()[1], 2),
@@ -1056,7 +1128,7 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
         if not s["text"]:
             raise YtpmvError("Give the part a word first.")
         try:
-            sample = samples.build(s["text"], s["take"], _hit(part, s))
+            sample = samples.build(s["text"], s["take"], _hit(part, s), corpus=s["corpus"])
         except samples.SampleError as exc:
             raise YtpmvError(str(exc)) from None
     s["volume"], s["pan"] = 1.0, 0.0
@@ -1064,7 +1136,8 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
     T = min(t_from + seconds, song.duration + _TAIL)
     mix = np.zeros((int((T - t_from) * SR), 2), dtype=np.float32)
     _play(part, s, [sample] if sample else [], mix, t_from, T, 1.0, 0, False)
-    name = hashlib.sha1(repr((midi_id, sorted(s.items()))).encode()).hexdigest()[:12]
+    name = hashlib.sha1(repr((midi_id, sorted(s.items()), seconds,
+                              sample.mp4 if sample else None)).encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     path = os.path.join("output", f"ytpmv_sample_{name}.wav")
     _write_wav(path, _finish_mix(mix))

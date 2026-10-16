@@ -15,7 +15,9 @@ Usage:
     python scripts/refine_boundaries.py --all --apply --start-from-id 1 --end-at-id 16
 """
 import argparse
+import math
 import os
+import re
 import subprocess
 import tempfile
 import sys
@@ -73,7 +75,7 @@ def _load_model(device: str | None = None):
 
     bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
     _device = get_device(device)
-    _model = bundle.get_model().to(_device)
+    _model = bundle.get_model().eval().to(_device)
     _labels = bundle.get_labels()
     _DICT = {c: i for i, c in enumerate(_labels)}
     print(f"  aligner on {describe(_device)}")
@@ -82,22 +84,126 @@ def _load_model(device: str | None = None):
 def _load_wav(path):
     import numpy as np
     import torch
-    w = wave.open(path, "rb")
-    d = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype("float32") / 32768.0
-    w.close()
+    with wave.open(path, "rb") as w:
+        d = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype("float32") / 32768.0
     return torch.from_numpy(d).unsqueeze(0)
 
 
-def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
-    """Re-align one source. Returns (updated, total, median_shift_ms)."""
+def _alignment_text(word: str) -> str | None:
+    """English target text without guessing a partial alphanumeric word.
+
+    Numbers can occupy one stored clip even when spoken as several words.
+    Leading zeroes and mixed letters/digits have several possible readings,
+    so retain their original timestamps instead of aligning a guessed prefix.
+    """
+    match = re.fullmatch(r"([0-9]+)(st|nd|rd|th)?", word.lower())
+    if match:
+        digits, suffix = match.groups()
+        if len(digits) > 1 and digits.startswith("0"):
+            return None
+        try:
+            from num2words import num2words
+            spoken = num2words(int(digits), to="ordinal" if suffix else "cardinal")
+        except (ImportError, ValueError, OverflowError, NotImplementedError):
+            return None
+        return "|".join(spoken.upper().replace(",", "").replace("-", " ").split())
+    if any(ch.isdigit() for ch in word):
+        return None
+    return word.upper()
+
+
+def _ctc_targets(words: list[dict]) -> tuple[list[int], list[tuple[int, int] | None]]:
+    """Encode whole words, retaining the model's trained word separator.
+
+    Without the separator, "a nice" and "an ice" are the same target string;
+    the aligner has no evidence of which boundary the transcript intended.
+    Ranges exclude separators so word bounds come from letters alone.
+    """
+    chars: list[int] = []
+    ranges: list[tuple[int, int] | None] = []
+    for word in words:
+        text = _alignment_text(word["word"])
+        if not text or any(c not in _DICT for c in text):
+            ranges.append(None)
+            continue
+        cw = [_DICT[c] for c in text]
+        if chars:
+            chars.append(_DICT["|"])
+        start = len(chars)
+        chars.extend(cw)
+        ranges.append((start, len(chars)))
+    return chars, ranges
+
+
+def _align_window(segment, words: list[dict]) -> list[tuple[float, float] | None]:
+    """Align one audio window; return window-relative word cores."""
     import torch
     import torchaudio
     from torchaudio.functional import merge_tokens
 
+    chars, ranges = _ctc_targets(words)
+    empty = [None] * len(words)
+    if not chars:
+        return empty
+    with torch.inference_mode():
+        emission, _ = _model(segment)
+        # forced_align expects log probabilities, rather than unnormalised
+        # logits. Its returned scores then share the model's probability scale.
+        logp = emission.log_softmax(dim=-1)
+    # Repeated characters need an intervening blank in the CTC path.
+    required = len(chars) + sum(a == b for a, b in zip(chars, chars[1:]))
+    if emission.size(1) < required:
+        return empty
+
+    targets = torch.tensor([chars], dtype=torch.int32, device=emission.device)
+    aligned, scores = torchaudio.functional.forced_align(logp, targets, blank=0)
+    spans = merge_tokens(aligned[0].cpu(), scores[0].cpu())
+    if len(spans) != len(chars):
+        return empty
+    ratio = segment.size(1) / emission.size(1) / _SR
+    return [(spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio)
+            if rng is not None else None for rng in ranges]
+
+
+def _boundary_updates(words: list[dict], fa: list[tuple[float, float] | None],
+                      duration: float) -> tuple[list[tuple[float, float, int]], list[float]]:
+    """Pad aligned cores within the source and the immediate next word.
+
+    Hand-edited clips still supply transcript context, but their boundaries
+    are final and also constrain the automatic clip immediately before them.
+    """
+    updates: list[tuple[float, float, int]] = []
+    shifts: list[float] = []
+    for i, (word, aligned) in enumerate(zip(words, fa)):
+        if aligned is None or word.get("edited"):
+            continue
+        onset, core_end = aligned
+        if not all(math.isfinite(t) for t in (onset, core_end)) or core_end <= onset:
+            continue
+        nxt = None
+        if i + 1 < len(words):
+            successor = words[i + 1]
+            nxt = (fa[i + 1][0] if fa[i + 1] is not None and not successor.get("edited")
+                   else successor["start_time"])
+        new_start = max(0.0, onset)
+        # Preserve the core where there is less than 20ms between words, but
+        # never let a minimum tail override the next word's onset or EOF.
+        new_end = min(core_end + 0.30, duration)
+        if nxt is not None:
+            new_end = min(new_end, max(core_end, nxt - 0.02), nxt)
+        if new_end - new_start < 0.04:
+            continue
+        shifts.append(new_start - word["start_time"])
+        updates.append((round(new_start, 4), round(new_end, 4), word["id"]))
+    return updates, shifts
+
+
+def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
+    """Re-align one source. Returns (updated, total, median_shift_ms)."""
     with get_db() as conn:
         src = conn.execute("SELECT source_file FROM sources WHERE id=?", (sid,)).fetchone()
         words = [dict(r) for r in conn.execute(
-            "SELECT id, word, start_time, end_time FROM word_clips "
+            "SELECT id, word, start_time, end_time, edited FROM word_clips "
             "WHERE source_id=? ORDER BY start_time", (sid,)).fetchall()]
     if not src or not words:
         return (0, 0, 0.0)
@@ -109,11 +215,15 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
     # OneDrive and one `git add -A` away from the history. The temp directory is
     # also the right place for something this size -- it is cleaned up by the
     # system if a process dies before its own cleanup runs.
-    tmp = os.path.join(tempfile.gettempdir(), f"_rb_{os.getpid()}.wav")
-    subprocess.run(["ffmpeg", "-y", "-i", resolve_path(src["source_file"]), "-ac", "1", "-ar", str(_SR), tmp],
-                   capture_output=True)
-    wav = _load_wav(tmp)
+    with tempfile.NamedTemporaryFile(prefix="mrs-refine-", suffix=".wav", delete=False) as scratch:
+        tmp = scratch.name
     try:
+        decoded = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", resolve_path(src["source_file"]),
+             "-ac", "1", "-ar", str(_SR), tmp], capture_output=True, text=True)
+        if decoded.returncode != 0:
+            raise RuntimeError(f"Could not decode source {sid}: {(decoded.stderr or '').strip()[-500:]}")
+        wav = _load_wav(tmp)
         # Aligned a window at a time, not a source at a time.
         #
         # This used to push the entire source through Wav2Vec2 in one forward
@@ -141,60 +251,16 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                 continue
             segment = wav[:, s0:s1].to(_device)
 
-            # Flatten this window's characters; remember each word's range.
-            chars: list[int] = []
-            ranges: list[tuple[int, int] | None] = []
-            for idx in group:
-                cw = [_DICT[c] for c in words[idx]["word"].upper() if c in _DICT]
-                if not cw:
-                    ranges.append(None)
-                    continue
-                s = len(chars)
-                chars.extend(cw)
-                ranges.append((s, len(chars)))
-            if not chars:
-                continue
-
-            with torch.inference_mode():
-                emission, _ = _model(segment)
-            if emission.size(1) <= len(chars):
-                continue                   # too short to align safely
-
-            targets = torch.tensor([chars], dtype=torch.int32, device=emission.device)
-            aligned, scores = torchaudio.functional.forced_align(emission, targets, blank=0)
-            spans = merge_tokens(aligned[0].cpu(), scores[0].cpu())
-            if len(spans) != len(chars):
-                continue                   # index mismatch — skip this window
-
-            ratio = segment.size(1) / emission.size(1) / _SR
             # Window-relative back to source-relative.
-            for idx, rng in zip(group, ranges):
-                if rng is None:
+            for idx, aligned in zip(group, _align_window(segment, [words[i] for i in group])):
+                if aligned is None:
                     continue
-                fa[idx] = (w_start + spans[rng[0]].start * ratio,
-                           w_start + spans[rng[1] - 1].end * ratio)
+                fa[idx] = (s0 / _SR + aligned[0], s0 / _SR + aligned[1])
 
         if not any(f is not None for f in fa):
             return (0, len(words), 0.0)
 
-        updates = []
-        shifts = []
-        for i, (w, f) in enumerate(zip(words, fa)):
-            if f is None:
-                continue
-            onset, core_end = f
-            # next aligned word's onset (same source order)
-            nxt = next((fa[j][0] for j in range(i + 1, len(fa)) if fa[j] is not None), None)
-            # Span from the true onset to just before the next word, but cap the
-            # tail so a long pause after the word isn't swallowed.
-            cap = core_end + 0.30
-            new_end = min(cap, nxt - 0.02) if nxt is not None else cap
-            new_end = max(new_end, core_end + 0.05)
-            new_start = onset
-            if new_end - new_start < 0.04:
-                continue
-            shifts.append(new_start - w["start_time"])
-            updates.append((round(new_start, 4), round(new_end, 4), w["id"]))
+        updates, shifts = _boundary_updates(words, fa, total_samples / _SR)
 
         if apply and updates:
             with get_db() as conn:
@@ -206,16 +272,20 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                 # aligned corpus without this and every sub-word cut is out by
                 # however far the boundary moved -- silently, because the
                 # times are still there and still look reasonable.
-                from app.phone_align import shift_stored
+                from app.phone_align import outside, shift_stored
                 for (new_start, _e, cid), moved in zip(updates, shifts):
-                    if abs(moved) < 1e-9:
-                        continue
                     row = conn.execute(
                         "SELECT phones FROM word_clips WHERE id=?", (cid,)).fetchone()
                     if row and row["phones"]:
+                        shifted = shift_stored(row["phones"], -moved)
+                        if outside(shifted, _e - new_start):
+                            shifted = None
                         conn.execute(
                             "UPDATE word_clips SET phones=? WHERE id=?",
-                            (shift_stored(row["phones"], -moved), cid))
+                            (shifted, cid))
+                    # Character times use the same relative origin, but this
+                    # table has no shifting helper. Recompute after a change.
+                    conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (cid,))
 
         import statistics
         med = statistics.median(shifts) * 1000 if shifts else 0.0

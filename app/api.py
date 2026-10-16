@@ -1,15 +1,16 @@
-import json
 import logging
 import os
 import tempfile
 import threading
 import time
-import urllib.request
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from app import jobs
 from app.database import (max_units as _max_units_setting,
@@ -26,12 +27,34 @@ MAX_TEXT = 4000
 
 # Largest corpus bundle accepted. The shipped corpus packs to ~110 MB.
 MAX_BUNDLE_BYTES = 4 << 30
+_webhook_slots = threading.BoundedSemaphore(32)
+_active_mutations = 0
+_request_mutation = ContextVar("request_mutation", default=False)
+
+
+@contextmanager
+def request_mutation():
+    """Reserve admitted writes until they finish, including asynchronous I/O."""
+    global _active_mutations
+    with jobs.corpus_guard():
+        if jobs.maintenance_in_progress():
+            raise HTTPException(status_code=409, detail="a corpus import or export is in progress")
+        _active_mutations += 1
+    token = _request_mutation.set(True)
+    try:
+        yield
+    finally:
+        _request_mutation.reset(token)
+        with jobs.corpus_guard():
+            _active_mutations -= 1
 
 
 def _queued(submit):
     """Put a job in the queue, or say plainly that the queue is full."""
     try:
         return submit()
+    except jobs.CorpusBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except jobs.QueueFull:
         raise HTTPException(status_code=503, detail={
             "message": f"{jobs.MAX_QUEUED} videos are already waiting. Try again in a few minutes."})
@@ -54,8 +77,8 @@ class GenerateRequest(BaseModel):
 
 
 class BatchGenerateRequest(BaseModel):
-    sentences: list[str] = Field(default_factory=list)
-    texts: list[str] = Field(default_factory=list)
+    sentences: list[str] = Field(default_factory=list, max_length=jobs.MAX_QUEUED)
+    texts: list[str] = Field(default_factory=list, max_length=jobs.MAX_QUEUED)
     subtitles: bool = False
     options: dict = {}
     webhook_url: str | None = None
@@ -133,6 +156,8 @@ def generate(req: GenerateRequest, wait: bool = False):
         # second video beside the worker's -- the one-at-a-time rule the queue
         # exists for, and the seed and voice both being process-wide.
         job.ended.wait()
+        if job.status == "cancelled":
+            raise HTTPException(status_code=409, detail={"message": "that job was cancelled"})
         if job.status == "error":
             raise HTTPException(status_code=503 if job.error_kind == "crowded" else 500,
                                 detail={"message": job.error})
@@ -165,44 +190,53 @@ def generate_batch(req: BatchGenerateRequest):
             raise HTTPException(status_code=400, detail=f"Sentence exceeds maximum length of {MAX_TEXT:,} characters")
         cleaned.append(t)
 
-    if req.webhook_url and not (req.webhook_url.startswith("http://") or req.webhook_url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="webhook_url must be an http or https URL")
+    webhook_host = None
+    if req.webhook_url:
+        from app import webhooks
+        try:
+            webhook_host = webhooks.validate(req.webhook_url).host
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not _webhook_slots.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail="too many webhook notifications are waiting")
 
     queued_jobs = []
     try:
-        for text in cleaned:
-            job = jobs.submit(text, subtitles=req.subtitles, options=req.options)
-            queued_jobs.append(job)
+        queued_jobs = jobs.submit_batch(cleaned, subtitles=req.subtitles, options=req.options)
+    except jobs.CorpusBusy as exc:
+        if req.webhook_url:
+            _webhook_slots.release()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except jobs.QueueFull:
-        for j in queued_jobs:
-            jobs.cancel(j.id)
+        if req.webhook_url:
+            _webhook_slots.release()
         raise HTTPException(status_code=503, detail={"message": f"{jobs.MAX_QUEUED} videos are already waiting. Try again in a few minutes."})
+    except BaseException:
+        if req.webhook_url:
+            _webhook_slots.release()
+        raise
 
     if req.webhook_url:
         def _notify_webhook(url: str, batch: list[jobs.Job]):
-            for j in batch:
-                j.ended.wait()
-            payload = {
-                "event": "batch_completed",
-                "count": len(batch),
-                "jobs": [j.as_dict() for j in batch],
-            }
             try:
-                data = json.dumps(payload).encode("utf-8")
-                req_obj = urllib.request.Request(
-                    url,
-                    data=data,
-                    headers={"Content-Type": "application/json", "User-Agent": "YTP-Machine-Webhook/1.0"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req_obj, timeout=15):
-                    pass
-                log.info("WEBHOOK delivered to %s for %d jobs", url, len(batch))
-            except Exception as exc:
-                log.error("WEBHOOK delivery failed to %s: %s", url, exc)
+                for j in batch:
+                    j.ended.wait()
+                webhooks.deliver(url, {"event": "batch_completed", "count": len(batch),
+                                      "jobs": [j.as_dict() for j in batch]})
+                log.info("WEBHOOK delivered to %s for %d jobs", webhook_host, len(batch))
+            except Exception:
+                # Callback query strings can contain credentials. Keep them
+                # and caller-controlled exception text out of the log.
+                log.warning("WEBHOOK delivery failed to %s", webhook_host)
+            finally:
+                _webhook_slots.release()
 
         t = threading.Thread(target=_notify_webhook, args=(req.webhook_url, list(queued_jobs)), daemon=True)
-        t.start()
+        try:
+            t.start()
+        except BaseException:
+            _webhook_slots.release()
+            raise
 
     return JSONResponse(status_code=202, content={
         "status": "queued",
@@ -387,6 +421,34 @@ def _corpus_pack():
     return corpus_pack
 
 
+def _remove_files(*paths):
+    for path in paths:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+
+def _require_corpus_idle():
+    """Called under jobs.corpus_guard, shared with job/alignment reservation."""
+    from app.editor import alignment_running
+    if jobs.has_live_jobs() or alignment_running():
+        raise HTTPException(status_code=409,
+                            detail="wait for generation and alignment to finish before changing a corpus")
+
+
+def _begin_maintenance(require_idle=False):
+    with jobs.corpus_guard():
+        if _active_mutations > int(_request_mutation.get()):
+            raise HTTPException(status_code=409, detail="wait for other corpus changes to finish")
+        if require_idle:
+            _require_corpus_idle()
+        try:
+            jobs.begin_corpus_maintenance()
+        except jobs.CorpusBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/corpus/export")
 def export_corpus(slug: str | None = None):
     """Download a bundle of a corpus: database, videos, transcripts,
@@ -401,22 +463,27 @@ def export_corpus(slug: str | None = None):
     fd, tmp = tempfile.mkstemp(suffix=".tar.zst", prefix="export-")
     os.close(fd)
     os.remove(tmp)          # pack_bundle writes the file itself; this only reserved a name
+    _begin_maintenance()
     try:
         out = _corpus_pack().pack_bundle(target, tmp)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        _remove_files(tmp, tmp.removesuffix(".tar.zst") + ".tar.gz")
+        raise HTTPException(status_code=404, detail="that corpus is no longer available") from exc
     except (Exception, SystemExit) as exc:                      # noqa: BLE001
         # SystemExit too: _corpus_root() raises it for a corpus that vanished
         # between the check above and here, and that must not kill the worker.
         log.exception("EXPORT  %s failed", target)
+        _remove_files(tmp, tmp.removesuffix(".tar.zst") + ".tar.gz")
         raise HTTPException(status_code=500, detail="could not pack that corpus") from exc
+    finally:
+        jobs.end_corpus_maintenance()
 
     log.info("EXPORT  %s -> %s (%s)", target, out,
              f"{os.path.getsize(out) / 1e6:.1f} MB")
     ext = ".tar.zst" if out.endswith(".zst") else ".tar.gz"
     return FileResponse(out, filename=f"{target}-{time.strftime('%Y-%m-%d')}{ext}",
                         media_type="application/octet-stream",
-                        background=BackgroundTask(os.remove, out))
+                        background=BackgroundTask(_remove_files, out))
 
 
 @router.post("/corpus/import")
@@ -429,47 +496,60 @@ async def import_corpus(name: str = Form(...), bundle: UploadFile = File(...),
     """
     slug_name = name.strip()
     if not slug_name:
+        await bundle.close()
         raise HTTPException(status_code=400, detail="name must not be empty")
 
     fname = bundle.filename or ""
     suffix = ".tar.zst" if fname.endswith(".zst") else \
              ".tar.gz" if fname.endswith((".gz", ".tgz")) else ".tar"
     fd, tmp = tempfile.mkstemp(suffix=suffix, prefix="import-")
-    size = 0
-    try:
+    def install_upload():
+        size = 0
         with os.fdopen(fd, "wb") as fh:
-            while chunk := await bundle.read(1 << 20):
-                fh.write(chunk)
+            while chunk := bundle.file.read(1 << 20):
                 size += len(chunk)
                 if size > MAX_BUNDLE_BYTES:
                     raise HTTPException(status_code=413, detail=(
                         f"that bundle is over {MAX_BUNDLE_BYTES >> 30} GB"))
+                fh.write(chunk)
 
         try:
-            manifest = _corpus_pack().install_bundle(tmp, slug_name, force)
+            _begin_maintenance(require_idle=force)
+            try:
+                manifest = _corpus_pack().install_bundle(tmp, slug_name, force)
+                # Reserve maintenance until old-file caches have been dropped.
+                from app.database import forget_ready
+                from app.generate import invalidate_cache
+                forget_ready()
+                invalidate_cache()
+                _sample_words_cache.clear()
+            finally:
+                jobs.end_corpus_maintenance()
+            return manifest, size
         except FileExistsError as exc:
             raise HTTPException(
                 status_code=409,
-                detail=f"a corpus already lives at {exc} (tick overwrite to replace it)"
+                detail="a corpus with that name already exists (tick overwrite to replace it)"
             ) from exc
-        except Exception as exc:                                # noqa: BLE001
+        except HTTPException:
+            raise
+        except (Exception, SystemExit) as exc:                  # noqa: BLE001
             # Anything else here means the upload wasn't a readable bundle --
             # not a tarfile, not zstd/gzip, or missing what pack always writes.
-            raise HTTPException(
-                status_code=400, detail=f"could not read that bundle: {exc}") from exc
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+            log.warning("IMPORT could not read bundle (%s)", type(exc).__name__)
+            raise HTTPException(status_code=400, detail="could not read that bundle") from exc
 
-    # Imported over a corpus already in use, or already lent as a voice: what
-    # was cached from the old files is wrong now.
-    from app.database import forget_ready
-    from app.generate import invalidate_cache
-    forget_ready()
-    invalidate_cache()
+    try:
+        # Multipart parsing already spooled the upload. Disk copies, extraction
+        # and validation can take seconds; keep the event loop free to respond.
+        manifest, size = await run_in_threadpool(install_upload)
+    finally:
+        _remove_files(tmp)
+        await bundle.close()
     log.info("IMPORT  %s -> %s (%s uploaded)", fname, manifest["slug"],
              f"{size / 1e6:.1f} MB")
-    return {"status": "ok", **manifest}
+    return {"status": "ok", **{k: v for k, v in manifest.items() if k not in ("target", "backup")},
+            "backup_saved": bool(manifest.get("backup"))}
 
 
 @router.get("/splice-mode")
@@ -527,21 +607,24 @@ def put_max_units(req: MaxUnitsRequest):
 @router.post("/corpus")
 def switch_corpus(req: CorpusRequest):
     """Select a corpus. Everything cached from the old one is dropped."""
-    try:
-        chosen = set_active(req.slug)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"No corpus called {req.slug!r}")
+    with jobs.corpus_guard():
+        if jobs.maintenance_in_progress():
+            raise HTTPException(status_code=409, detail="a corpus import or export is in progress")
+        _require_corpus_idle()
+        try:
+            chosen = set_active(req.slug)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"No corpus called {req.slug!r}")
 
-    # The clip cache, the word positions and the splice scores are all built
-    # from the previous database. Left in place they would splice the new
-    # corpus's words out of the old corpus's video files.
-    from app.generate import invalidate_cache
-    invalidate_cache()
-    _sample_words_cache.clear()
-    init_db()
-
-    log.info("CORPUS  switched to %s", chosen["slug"])
-    return {"status": "ok", "active": chosen["slug"], "name": chosen["name"], **_corpus_totals()}
+        from app.database import using_corpus
+        from app.generate import invalidate_cache
+        with using_corpus(chosen):
+            invalidate_cache()
+            _sample_words_cache.clear()
+            init_db()
+            totals = _corpus_totals()
+        log.info("CORPUS  switched to %s", chosen["slug"])
+        return {"status": "ok", "active": chosen["slug"], "name": chosen["name"], **totals}
 
 
 _sample_words_cache: dict[str, list[str]] = {}
@@ -616,6 +699,7 @@ class YtpmvSampleRequest(BaseModel):
     text: str
     take: int = 0
     hit: str | None = None      # a drum to cut it into: kick, snare, hats...
+    corpus: str | None = None   # installed voice for this sample; omitted uses the active voice
 
 
 class YtpmvPreviewRequest(BaseModel):
@@ -674,7 +758,15 @@ def ytpmv_describe(midi_id: str):
 def ytpmv_sample(req: YtpmvSampleRequest):
     """What a word sounds like as an instrument: the clip, and the note it is on."""
     from app.ytpmv import samples
-    return _ytpmv_call(lambda: samples.build(req.text, req.take, req.hit or None).describe())
+    return _ytpmv_call(lambda: samples.build(req.text, req.take, req.hit or None,
+                                           corpus=req.corpus).describe())
+
+
+@router.get("/ytpmv/midi/{midi_id}/part/{part_id}")
+def ytpmv_part_voice(midi_id: str, part_id: str, corpus: str | None = None):
+    """Refresh one part's recommendations and sounds for the chosen voice."""
+    from app.ytpmv import render
+    return _ytpmv_call(render.recommend_part, midi_id, part_id, corpus)
 
 
 @router.post("/ytpmv/preview")
@@ -690,7 +782,8 @@ def ytpmv_render(req: YtpmvRenderRequest):
     """Queue a render; poll /api/jobs/{id} as for a sentence."""
     from app.ytpmv import render
     song = _ytpmv_call(render.load_song, req.midi_id)
-    job = _queued(lambda: jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": req.parts,
+    parts = _ytpmv_call(render.prepare_parts, req.parts, bool(req.options.get("synth", False)))
+    job = _queued(lambda: jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": parts,
                              "options": req.options},
                             label=song.title or f"midi {req.midi_id}"))
     log.info("QUEUE  %s  ytpmv %s", job.id, req.midi_id)

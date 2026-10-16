@@ -62,10 +62,10 @@ check("named, NOT installed yet", resolve(used, "james-channel")["slug"], "james
 # and it must point *inside* the named corpus, not merely report the name: the
 # name was right all along, the paths were not.
 entry = resolve(used, "james-channel")
-if "james-channel" not in entry["dir"] or "michael-rosen" in entry["dir"]:
-    failures.append(f"  a new corpus resolved to another corpus's files: {entry['dir']}")
-if "james-channel" not in entry["db"]:
-    failures.append(f"  new corpus database in the wrong place: {entry['db']}")
+expected = os.path.realpath(os.path.join(used, "corpora", "james-channel"))
+check("new corpus directory is exactly the requested corpus", os.path.realpath(entry["dir"]), expected)
+check("new corpus database is inside that directory", os.path.realpath(entry["db"]),
+      os.path.join(expected, "corpus.db"))
 
 # Nothing asked for: alphabetical, which is the long-standing behaviour.
 check("nothing asked for", resolve(used, None)["slug"], "michael-rosen")

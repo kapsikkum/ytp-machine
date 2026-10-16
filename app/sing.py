@@ -257,7 +257,7 @@ def _blend(y: np.ndarray, other: np.ndarray, spans: list[tuple[int, int]], sr: i
 
 
 def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
-         seed: int = 0, vocoded: list | None = None) -> None:
+         seed: int = 0, vocoded: list | None = None, check_cancel=None) -> None:
     """Re-sing the video at *path* in place.
 
     *spans* is generate.timeline(); *options* is generation_options(); *marks*
@@ -269,13 +269,17 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
     if not spans:
         return
     sr = pitch.SR
-    x = pitch.decode_audio(path, sr=sr)
+    x = pitch.decode_audio(path, sr=sr, check_cancel=check_cancel)
     cuts = []
     for s in spans:
         a, b = int(s["start"] * sr), min(int(s["end"] * sr), len(x))
         if b - a > sr // 50:
             cuts.append((s["i"], a, b))
-    voices = [pitch.Voice(x[a:b], sr, aperiodic=_APERIODIC) for _, a, b in cuts]
+    voices = []
+    for _, a, b in cuts:
+        if check_cancel:
+            check_cancel()
+        voices.append(pitch.Voice(x[a:b], sr, aperiodic=_APERIODIC))
     f0s = [v.info.f0 for v in voices if v.info.f0]
     vocoding = bool(options.get("vocode"))
     if not f0s and not vocoding and not any(vocoded or ()):
@@ -301,6 +305,8 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
     hz = np.full(len(x), np.nan)             # the synth's note, sample by sample
     on_synth: list[tuple[int, int]] = []
     for (i, a, b), v, m in zip(cuts, voices, tune):
+        if check_cancel:
+            check_cancel()
         mark = marks[i] if marks and i < len(marks) else None
         if mark:
             m = mark[1] if mark[0] == "abs" else m + mark[1]
@@ -337,10 +343,11 @@ def sing(path: str, spans: list[dict], options: dict, marks: list | None = None,
             w.setsampwidth(2)
             w.setframerate(sr)
             w.writeframes((np.clip(y, -1, 1) * 32767).astype("<i2").tobytes())
-        r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-i", wav,
+        from app.media_process import run
+        r = run(["ffmpeg", "-y", "-v", "error", "-i", path, "-i", wav,
                             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
                             "-b:a", "192k", "-ac", "2", "-movflags", "+faststart", mp4],
-                           capture_output=True, text=True, timeout=300)
+                capture_output=True, text=True, timeout=300, check_cancel=check_cancel)
         if r.returncode != 0:
             raise RuntimeError(f"FFmpeg failed putting the singing back:\n{r.stderr[-1000:]}")
         os.replace(mp4, path)

@@ -422,14 +422,18 @@
 
   // Every response through here, so a proxy's HTML error page is reported as
   // what it is rather than as a JSON parse error.
+  let corpusSlug = '';
   async function fetchJson(url, opts) {
     let r;
-    try { r = await fetch(url, opts); } catch (e) { return { error: `could not reach the server (${e.message})` }; }
+    try { r = await fetch(url, {...(opts || {}), headers: {
+      ...(corpusSlug && url !== '/api/corpus' ? {'X-Corpus': corpusSlug} : {}), ...(opts?.headers || {}) }}); }
+    catch (e) { return { error: `could not reach the server (${e.message})` }; }
     const raw = await r.text();
     try { return { ok: r.ok, status: r.status, data: JSON.parse(raw) }; }
     catch { return { error: `the server replied ${r.status} with something that isn't JSON` + (raw.trim() ? ` — ${raw.trim().slice(0, 120)}` : '') }; }
   }
-  const postJson = (url, body) => fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const postJson = (url, body, corpus) => fetchJson(url, { method: 'POST', headers: {
+    'Content-Type': 'application/json', ...(corpus ? {'X-Corpus': corpus} : {}) }, body: JSON.stringify(body) });
 
   // ── Settings ──────────────────────────────────────────────────────────────
   // What app/generate.py's OPTIONS accepts. Kept in this browser, sent with
@@ -599,6 +603,7 @@
   async function loadCorpora() {
     const r = await fetchJson('/api/corpora');
     if (!r.ok || !r.data.corpora) return;
+    corpusSlug = r.data.active || r.data.corpora.find(c => c.active)?.slug || '';
     voices = r.data.corpora.filter(c => !c.error).sort((a, b) => b.active - a.active);
     drawView();                       // the folded text names voices by name, not slug
     if (r.data.corpora.length < 2) return;
@@ -629,11 +634,14 @@
   $('btn-save-server-settings').addEventListener('click', async () => {
     const btn = $('btn-save-server-settings');
     btn.textContent = 'Saving…';
-    await postJson('/api/settings/server', {
+    btn.disabled = true;
+    const result = await postJson('/api/settings/server', {
       encoder: $('server-encoder').value,
       encode_workers: parseInt($('server-workers').value, 10) || 1,
     });
     btn.textContent = 'Save';
+    btn.disabled = false;
+    if (!result.ok) return setStatus(result.error || result.data?.detail || 'could not save server settings', true);
     sModal.style.display = 'none';
   });
   async function loadSpliceMode() {
@@ -668,8 +676,10 @@
   $('corpus-select').addEventListener('change', async () => {
     const el = $('corpus-select'); el.disabled = true;
     const r = await postJson('/api/corpus', { slug: el.value });
-    if (!r.ok) await loadCorpora();
-    else { await Promise.all([loadStats(), loadWords(), loadNoises(), loadSpliceMode(), loadMaxUnits()]); }
+    if (!r.ok) { setStatus(r.error || r.data?.detail || 'could not switch voice', true); await loadCorpora(); }
+    else { corpusSlug = el.value; clipCache = {}; closeSuggest();
+      if (current) drawWords(current);
+      await Promise.all([loadStats(), loadWords(), loadNoises(), loadSpliceMode(), loadMaxUnits()]); }
     el.disabled = false;
   });
 
@@ -890,7 +900,7 @@
   const EMPH = [['none', null], ['reduced', 'reduced'], ['moderate', 'moderate'], ['strong', 'strong']];
   // Which recording a word uses. Fetched once a word, and played in the menu
   // from the source video itself, from the clip's start to its end.
-  const clipCache = {};
+  let clipCache = {};
   const mmss = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
   // A word's recordings are its voice's: the same word in another corpus is
   // other clips entirely, with ids that mean something else here.
@@ -899,9 +909,11 @@
     return [t.fx.v || '', t.base.replace(/[~*]/g, '').replace(/[^\w']/g, '').toLowerCase()];
   };
   async function drawClips(el, ti) {
+    const corpus = corpusSlug;
     const [voice, word] = clipKey(ti), key = `${voice}:${word}`;
     const box = el.querySelector('.clips'); if (!box || !word) return;
     const got = clipCache[key] || (clipCache[key] = await fetchJson(`/api/clips/${encodeURIComponent(word)}?voice=${encodeURIComponent(voice)}`));
+    if (!box.isConnected || corpus !== corpusSlug || clipKey(ti).join(':') !== key) return;
     if (!got.ok || !got.data.clips.length) {
       box.innerHTML = `<div class="hint">${got.ok ? 'No recording of this word — it is built from pieces of others.' : esc(got.error || 'could not load the clips')}</div>`;
       return;
@@ -1132,7 +1144,7 @@
     const partial = (before.match(/[^\s]*$/) || [''])[0];
     return { context: before.slice(0, before.length - partial.length), partial, start: pos - partial.length, pos };
   }
-  function closeSuggest() { suggestBox.classList.remove('open'); items = []; active = -1; }
+  function closeSuggest() { ++fetchSeq; clearTimeout(suggestTimer); suggestBox.classList.remove('open'); items = []; active = -1; }
   function drawSuggest() {
     if (!items.length) return closeSuggest();
     suggestBox.innerHTML = items.map((it, i) =>
@@ -1152,7 +1164,7 @@
     closeSuggest();
     textInput.dispatchEvent(new Event('input'));
   }
-  function queueSuggest() { clearTimeout(suggestTimer); suggestTimer = setTimeout(fetchSuggest, 140); }
+  function queueSuggest() { ++fetchSeq; clearTimeout(suggestTimer); suggestTimer = setTimeout(fetchSuggest, 140); }
   async function fetchSuggest() {
     if (document.activeElement !== textInput) return;
     const { context, partial } = caretParts();
@@ -1160,7 +1172,7 @@
     if (!prefix && !context.trim()) return closeSuggest();
     const seq = ++fetchSeq;
     const r = await fetchJson('/api/suggest?' + new URLSearchParams({ context: context.trim(), prefix, limit: 8 }));
-    if (!r.ok || seq !== fetchSeq) return;
+    if (!r.ok || seq !== fetchSeq || document.activeElement !== textInput) return;
     items = [
       ...(r.data.continuations || []).map(c => ({ word: c.word, kind: 'phrase', meta: `said next ×${c.sources}` })),
       ...(r.data.words || []).map(w => ({ word: w.word, kind: 'vocab', meta: `${w.clips} clip${w.clips > 1 ? 's' : ''}` })),
@@ -1200,6 +1212,7 @@
   // seed: the one the video it repeats was made with; left out, a new one.
   async function submit(text = textInput.value.trim(), seed = '') {
     if (!text || busy) return;
+    const corpus = corpusSlug;
     busy = true; lastText = text;
     submitBtn.disabled = true; $('again-btn').disabled = true;
     closeSuggest();
@@ -1215,7 +1228,7 @@
       if (!result) return;
       if (!result.video_url) return setStatus('Nothing in that could be said with this voice.', true);
       const entry = { text, url: result.video_url, tokens: result.tokens || [], timeline: result.timeline || [],
-                      seed: (result.options || {}).seed || '', at: Date.now() };
+                      corpus, seed: (result.options || {}).seed || '', at: Date.now() };
       show(entry, true);
       remember(entry);
       loadStats();
@@ -1237,10 +1250,14 @@
     $('cancel-job-btn').disabled = true;
     $('cancel-job-btn').textContent = 'Cancelling…';
     try {
-      await fetch(`/api/jobs/${idToCancel}`, { method: 'DELETE' });
-      setStatus('Job cancelled.', true);
+      const result = await fetchJson(`/api/jobs/${idToCancel}`, { method: 'DELETE' });
+      if (!result.ok) throw new Error(result.error || result.data?.detail || 'could not cancel the job');
+      if (activeJobId === idToCancel) setStatus('Cancellation requested…');
     } catch (e) {
-      console.error(e);
+      if (activeJobId === idToCancel) {
+        setStatus(String(e.message), true);
+        $('cancel-job-btn').disabled = false; $('cancel-job-btn').textContent = 'Cancel';
+      }
     }
   };
 
@@ -1325,7 +1342,7 @@
       label.textContent = t.stretched || t.shown || t.word;
       w.appendChild(label);
       if (t.voice) w.title += ` · said by ${voiceName(t.voice)}`;
-      if (cls !== 'missing' && !t.voice) {
+      if (cls !== 'missing' && !t.voice && entry.corpus && entry.corpus === corpusSlug) {
         const acts = document.createElement('span');
         acts.className = 'acts';
         const first = Array.isArray(t.clips) ? t.clips[0] : null;
@@ -1339,9 +1356,9 @@
           acts.appendChild(open);
         }
         if (Array.isArray(t.clips) && t.clips.length) {
-          acts.appendChild(voteButton(t, w, +1, '▲', 'use these clips more for this word'));
-          acts.appendChild(voteButton(t, w, -1, '▼', 'use these clips less for this word'));
-          acts.appendChild(reportButton(t));
+          acts.appendChild(voteButton(t, w, +1, '▲', 'use these clips more for this word', entry.corpus));
+          acts.appendChild(voteButton(t, w, -1, '▼', 'use these clips less for this word', entry.corpus));
+          acts.appendChild(reportButton(t, entry.corpus));
         }
         w.appendChild(acts);
       }
@@ -1373,7 +1390,7 @@
                     ['starts early', 'it begins with a bit of the word before'],
                     ['ends early', 'the end of the word is cut off'],
                     ['ends late', 'it runs on into the next word']];
-  function reportButton(token) {
+  function reportButton(token, corpus) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = '✂'; b.title = 'this word is cut in the wrong place';
     b.setAttribute('aria-label', `Report where ${token.word} is cut`);
@@ -1383,25 +1400,25 @@
         `<button type="button" data-kind="${k}" title="${esc(why)}">${esc(k)} <span class="hint">— ${esc(why)}</span></button>`).join('')}</div>`,
         (el) => { el.onclick = async (ev) => {
           const k = ev.target.closest('button[data-kind]'); if (!k) return;
-          const r = await postJson('/api/boundary', { clips: token.clips, kind: k.dataset.kind });
+          const r = await postJson('/api/boundary', { clips: token.clips, kind: k.dataset.kind }, corpus);
           el.innerHTML = r.ok ? `<div class="ph">Thanks — <b>${esc(token.word)}</b> reported as ${esc(k.dataset.kind)}. That clip will be used less, and it is flagged in the corpus editor.</div>`
                               : `<div class="ph err">${esc(r.error || 'could not report it')}</div>`;
-          b.classList.add('on');
+          if (r.ok) b.classList.add('on');
           setTimeout(() => { pop.hidden = true; }, 1800);
         }; });
     });
     return b;
   }
 
-  function voteButton(token, tag, dir, glyph, title) {
+  function voteButton(token, tag, dir, glyph, title, corpus) {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = glyph; b.title = title;
     b.setAttribute('aria-label', `${dir > 0 ? 'Upvote' : 'Downvote'} ${token.word}`);
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
       const now = Number(tag.dataset.vote || 0), rating = now === dir ? 0 : dir;
-      const r = await postJson('/api/rate', { word: token.word, clips: token.clips, rating });
-      if (!r.ok) return;
+      const r = await postJson('/api/rate', { word: token.word, clips: token.clips, rating }, corpus);
+      if (!r.ok) return setStatus(r.error || r.data?.detail || 'could not save feedback', true);
       tag.dataset.vote = String(rating);
       tag.classList.toggle('voted-down', rating < 0);
       tag.querySelectorAll('.acts button').forEach(x => x.classList.toggle('on', rating !== 0 && x === b));

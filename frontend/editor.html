@@ -275,6 +275,8 @@ let envSeq = 0, envLoading = false;
 // corpus's first video. The slug goes on the URL to make them different
 // requests; the JSON is fetched no-store for the same reason.
 let corpusSlug = '';
+const sourceRequests = latestRequest();
+const sourceLists = latestRequest();
 let follow = null;         // playhead time the view is scrolling to keep up with
 let watching = false;      // one animation loop, however playback was started
 const _LEAD = 30;          // ms shaved off, to land before the next word
@@ -284,7 +286,8 @@ function say(msg, kind) { const s = $('status'); s.textContent = msg; s.classNam
 
 async function api(path, opts) {
   const r = await fetch('/api/edit' + path,
-                        { cache: 'no-store', ...(opts || {}) });
+                        { cache: 'no-store', ...(opts || {}), headers: {
+                          ...(opts?.headers || {}), ...(corpusSlug ? {'X-Corpus': corpusSlug} : {}) } });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || ('HTTP ' + r.status));
   return body;
@@ -312,17 +315,22 @@ async function loadCorpora(current) {
 
 $('corpus').onchange = async () => {
   const slug = $('corpus').value;
+  if (!mayLeave()) { $('corpus').value = corpusSlug; return; }
   $('corpus').disabled = true;
   try {
     const r = await fetch('/api/corpus', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
     });
-    if (!r.ok) throw new Error('could not switch corpus');
-    sel = null; env = null; clips = [];
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || 'could not switch corpus');
+    corpusSlug = slug;
+    cancelPlayback(); sel = null; sourceId = null; env = null; clips = [];
+    vid.removeAttribute('src'); vid.load();
     await loadSources();
     say(`editing ${slug}`, 'ok');
   } catch (e) {
+    $('corpus').value = corpusSlug;
     say(String(e.message), 'err');
   } finally {
     $('corpus').disabled = false;
@@ -331,10 +339,14 @@ $('corpus').onchange = async () => {
 
 // ── sources ────────────────────────────────────────────────────────────────
 async function loadSources() {
+  const request = sourceLists.next();
+  sourceRequests.cancel(); ++envSeq;
   const d = await api('/sources');
+  if (!sourceLists.current(request)) return;
   corpusSlug = d.corpus;
   updatePackExport();
   await loadCorpora(d.corpus);
+  if (!sourceLists.current(request)) return;
   $('source').innerHTML = '';
   for (const s of d.sources) {
     const o = document.createElement('option');
@@ -361,16 +373,33 @@ async function loadSources() {
       return selectSource(at.source_id, { id: at.id, kind: at.kind });
     } catch (e) { say(`clip ${want}: ${e.message}`, 'err'); }
   }
-  if (d.sources.length) selectSource(d.sources[0].id);
+  if (d.sources.length) await selectSource(d.sources[0].id);
+  else {
+    cancelPlayback(); sourceId = null; clips = []; sel = null; env = null;
+    vid.removeAttribute('src'); vid.load();
+    $('editor').style.display = 'none'; $('nosel').style.display = '';
+    $('counts').textContent = 'no sources'; renderWords(); drawWave();
+    refreshAlign();
+  }
 }
 
 async function selectSource(id, focusClip) {
+  const request = sourceRequests.next(), corpus = corpusSlug;
   cancelPlayback();
-  sourceId = id; sel = null; env = null;
-  const d = await api('/source/' + id);
+  clearTimeout(alignTimer); ++envSeq; envLoading = false;
+  sourceId = id; sel = null; env = null; clips = []; newSpan = null;
+  vid.src = `/api/edit/source/${id}/video?c=${encodeURIComponent(corpus)}`;
+  $('editor').style.display = 'none'; $('nosel').style.display = '';
+  $('counts').textContent = 'loading clips…'; renderWords(); drawWave();
+  let d;
+  try { d = await api('/source/' + id); }
+  catch (e) {
+    if (sourceRequests.current(request) && corpus === corpusSlug) say(String(e.message), 'err');
+    return;
+  }
+  if (!sourceRequests.current(request) || corpus !== corpusSlug) return;
   clips = d.clips;
   $('counts').textContent = `${clips.length} clips`;
-  vid.src = `/api/edit/source/${id}/video?c=${encodeURIComponent(corpusSlug)}`;
   renderWords();
   $('editor').style.display = 'none';
   $('nosel').style.display = '';
@@ -410,9 +439,11 @@ let alignTimer = null;
 async function refreshAlign() {
   const btn = $('align');
   if (!sourceId) { btn.style.display = 'none'; return; }
+  const id = sourceId, corpus = corpusSlug;
   let st;
-  try { st = await api(`/source/${sourceId}/align`); }
-  catch { btn.style.display = 'none'; return; }
+  try { st = await api(`/source/${id}/align`); }
+  catch { if (id === sourceId && corpus === corpusSlug) btn.style.display = 'none'; return; }
+  if (id !== sourceId || corpus !== corpusSlug) return;
 
   btn.style.display = '';
   btn.classList.toggle('busy', !!st.running);
@@ -549,17 +580,19 @@ function renderRatings() {
 
 async function setRating(word, score) {
   if (!sel) return;
+  const target = sel, source = sourceId, corpus = corpusSlug;
   try {
-    const out = await api(`/clip/${sel.id}/rating`, {
+    const out = await api(`/clip/${target.id}/rating`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word: word || sel.word, score }),
+      body: JSON.stringify({ word: word || target.word, score }),
     });
-    sel.ratings = out.ratings;
-    sel.flags = sel.flags.filter(f => f !== 'downvoted');
-    if (Object.values(out.ratings).some(v => v < 0)) sel.flags.push('downvoted');
-    renderRatings();
+    if (source !== sourceId || corpus !== corpusSlug) return;
+    target.ratings = out.ratings;
+    target.flags = target.flags.filter(f => f !== 'downvoted');
+    if (Object.values(out.ratings).some(v => v < 0)) target.flags.push('downvoted');
+    if (sel === target) renderRatings();
     renderWords();
-    say(`${word || sel.word}: ${score === 0 ? 'rating cleared' : score}`, 'ok');
+    say(`${word || target.word}: ${score === 0 ? 'rating cleared' : score}`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
 }
 
@@ -569,8 +602,10 @@ $('r-set').onclick = () => setRating($('r-word').value.trim(),
 function renderWords() {
   const box = $('words');
   box.innerHTML = '';
+  wordNodes = new Map();
   for (const c of clips) {
     const b = document.createElement('span');
+    b.setAttribute('role', 'button'); b.tabIndex = 0;
     b.className = 'w' + (c.kind === 'noise' ? ' noise' : '')
                 + (c.flags.includes('not aligned') ? ' unaligned' : '')
                 + (c.flags.includes('no pronunciation') ? ' nopron' : '')
@@ -581,6 +616,10 @@ function renderWords() {
     b.title = `${fmt(c.start_time)}–${fmt(c.end_time)} (${Math.round((c.end_time - c.start_time) * 1000)}ms)`
             + (c.flags.length ? '\n' + c.flags.join(', ') : '');
     b.onclick = () => select(c);
+    b.onkeydown = ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(c); }
+    };
+    wordNodes.set(c, b);
     box.appendChild(b);
   }
 }
@@ -588,6 +627,7 @@ function renderWords() {
 function select(c) {
   if (sel && c !== sel && !mayLeave()) return;
   cancelPlayback();
+  const previous = sel;
   sel = c;
   $('editor').style.display = '';
   $('nosel').style.display = 'none';
@@ -604,7 +644,8 @@ function select(c) {
   markDirty();
   $('r-word').value = '';
   renderRatings();
-  renderWords();
+  wordNodes.get(previous)?.classList.remove('sel');
+  wordNodes.get(c)?.classList.add('sel');
   vid.currentTime = c.start_time;
   loadEnvelope();
 }
@@ -639,7 +680,8 @@ async function loadWindow(a, b) {
   envLoading = true;
   drawWave();
   try {
-    const got = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`);
+    const got = await api(`/source/${sourceId}/envelope?start=${a}&end=${b}`
+                          + `&spectrogram=${$('spectrogram-toggle').checked}`);
     if (seq !== envSeq) return;            // a newer request is on its way
     env = got;
   } catch (e) {
@@ -651,25 +693,6 @@ async function loadWindow(a, b) {
 }
 
 let hoverFreq = null;
-let audioCtx = null, analyserNode = null, mediaSourceNode = null;
-
-function ensureWebAudio() {
-  if (audioCtx) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      audioCtx = new AC();
-      analyserNode = audioCtx.createAnalyser();
-      analyserNode.fftSize = 256;
-      mediaSourceNode = audioCtx.createMediaElementSource(vid);
-      mediaSourceNode.connect(analyserNode);
-      analyserNode.connect(audioCtx.destination);
-    }
-  } catch (e) {
-    // MediaElementSource may already be attached or cross-origin
-  }
-}
-
 function spectrogramColor(v) {
   if (v <= 0.02) return '#090a10';
   const val = Math.min(1, Math.max(0, v));
@@ -689,28 +712,7 @@ function spectrogramColor(v) {
 }
 
 function drawSpectrogram(w, h, span, peak, gain) {
-  const nTime = env.values.length;
-  const nFreq = 48;
-  const colW = Math.max(1, w / nTime);
-  const rowH = h / nFreq;
-
-  for (let i = 0; i < nTime; i++) {
-    const rawE = (env.values[i] / peak) * gain;
-    const xPos = (i / nTime) * w;
-    for (let f = 0; f < nFreq; f++) {
-      const freqHz = (f / nFreq) * 8000;
-      const f1 = Math.exp(-Math.pow((freqHz - 600) / 350, 2));
-      const f2 = Math.exp(-Math.pow((freqHz - 1800) / 500, 2));
-      const f3 = Math.exp(-Math.pow((freqHz - 2800) / 600, 2));
-      const sib = (freqHz > 3500) ? Math.exp(-Math.pow((freqHz - 5500) / 1500, 2)) * 0.7 : 0;
-      const resp = (0.5 * f1 + 0.35 * f2 + 0.25 * f3 + sib) * 1.5 + 0.05;
-      const binE = Math.min(1, rawE * resp);
-
-      ctx.fillStyle = spectrogramColor(binE);
-      const yPos = h - (f + 1) * rowH;
-      ctx.fillRect(xPos, yPos, colW, Math.ceil(rowH));
-    }
-  }
+  drawMeasuredSpectrogram(ctx, env.spectrogram, w, h, gain, spectrogramColor);
 
   // Freq gridlines and labels
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
@@ -1072,45 +1074,58 @@ function watchPlayhead() {
 $('play').onclick = playSelection;
 
 $('save').onclick = async () => {
-  if (!sel) return;
+  if (!sel || $('save').disabled) return;
+  const target = sel, source = sourceId, corpus = corpusSlug;
+  const draft = ['w-word', 'w-start', 'w-end'].map(id => $(id).value);
+  $('save').disabled = $('save2').disabled = true;
   try {
-    const out = await api(`/clip/${sel.id}?kind=${sel.kind || 'word'}`, {
+    const out = await api(`/clip/${target.id}?kind=${target.kind || 'word'}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word: $('w-word').value,
-                             start_time: parseFloat($('w-start').value),
-                             end_time: parseFloat($('w-end').value) }),
+      body: JSON.stringify({ word: draft[0], start_time: parseFloat(draft[1]), end_time: parseFloat(draft[2]) }),
     });
-    Object.assign(sel, out);
+    if (source !== sourceId || corpus !== corpusSlug) return;
+    Object.assign(target, out);
     clips.sort((a, b) => a.start_time - b.start_time);
-    renderWords(); select(sel);
+    renderWords();
+    if (sel === target) {
+      if (['w-word', 'w-start', 'w-end'].every((id, i) => $(id).value === draft[i])) select(target);
+      else { markDirty(); drawWave(); }
+    }
     say(`saved “${out.word}”`, 'ok');
   } catch (e) { say(String(e.message), 'err'); }
+  finally { $('save').disabled = $('save2').disabled = false; }
 };
 
 $('del').onclick = async () => {
   if (!sel || !confirm(`Delete the clip for “${sel.word}”?`)) return;
+  const target = sel, source = sourceId, corpus = corpusSlug;
   try {
-    await api(`/clip/${sel.id}?kind=${sel.kind || 'word'}`, { method: 'DELETE' });
-    clips = clips.filter(c => !(c.id === sel.id && c.kind === sel.kind));
-    sel = null;
-    markDirty();
-    $('editor').style.display = 'none'; $('nosel').style.display = '';
+    await api(`/clip/${target.id}?kind=${target.kind || 'word'}`, { method: 'DELETE' });
+    if (source !== sourceId || corpus !== corpusSlug) return;
+    clips = clips.filter(c => !(c.id === target.id && c.kind === target.kind));
+    if (sel === target) {
+      sel = null; markDirty();
+      $('editor').style.display = 'none'; $('nosel').style.display = '';
+    }
     renderWords(); drawWave();
     say('deleted', 'ok');
   } catch (e) { say(String(e.message), 'err'); }
 };
 
 async function addClip(kind) {
+  const source = sourceId, corpus = corpusSlug;
+  if (!source) return say('select a source first', 'err');
   const word = $('a-word').value.trim();
   if (!word) { say('type the word first', 'err'); return; }
   // The dragged span if there is one, otherwise a guess at the playhead.
   const a = newSpan ? newSpan.a : vid.currentTime;
   const b = newSpan ? newSpan.b : vid.currentTime + 0.4;
   try {
-    const out = await api(`/source/${sourceId}/clip?kind=${kind}`, {
+    const out = await api(`/source/${source}/clip?kind=${kind}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ word, start_time: a, end_time: b }),
     });
+    if (source !== sourceId || corpus !== corpusSlug) return;
     newSpan = null;
     $('a-span').textContent = 'drag on the waveform';
     clips.push({ ...out, flags: [], gap_after: null, ratings: {} });
@@ -1162,12 +1177,14 @@ document.addEventListener('keydown', ev => {
 window.addEventListener('resize', drawWave);
 
 async function loadDiagnostics() {
+  const corpus = corpusSlug;
   const sumEl = $('diag-summary'), detEl = $('diag-details');
   sumEl.innerHTML = '<div style="color:var(--muted)">Loading diagnostics…</div>'; detEl.innerHTML = '';
   try {
-    const res = await fetch('/api/corpus/diagnostics');
+    const res = await fetch('/api/corpus/diagnostics', {headers: {'X-Corpus': corpus}});
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
+    if (corpus !== corpusSlug) return;
     const s = data.summary;
     sumEl.innerHTML = `
       <div class="panel" style="background:var(--raised);padding:0.6rem;border-radius:6px;border:1px solid var(--line-2)">
@@ -1205,26 +1222,27 @@ async function loadDiagnostics() {
     `;
     let html = '';
     if (data.unindexed_downloads && data.unindexed_downloads.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Unindexed Downloads (${data.unindexed_downloads.length})</h4><ul style="margin:0;padding-left:1.2rem;color:var(--muted)">${data.unindexed_downloads.map(f => `<li>${f}</li>`).join('')}</ul></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Unindexed Downloads (${data.unindexed_downloads.length})</h4><ul style="margin:0;padding-left:1.2rem;color:var(--muted)">${data.unindexed_downloads.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
     }
     if (data.negative_margins && data.negative_margins.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Clips with Negative Margins (${data.negative_margins.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Start</th><th style="padding:2px 4px">End</th><th style="padding:2px 4px">Margin</th><th style="padding:2px 4px">Reason</th></tr>${data.negative_margins.map(m => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${m.id}</td><td style="padding:2px 4px;font-weight:600">${m.word}</td><td style="padding:2px 4px">${m.start_time}s</td><td style="padding:2px 4px">${m.end_time}s</td><td style="padding:2px 4px;color:var(--red)">${m.margin}s</td><td style="padding:2px 4px;color:var(--muted)">${m.reason}</td></tr>`).join('')}</table></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Clips with Negative Margins (${data.negative_margins.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Start</th><th style="padding:2px 4px">End</th><th style="padding:2px 4px">Margin</th><th style="padding:2px 4px">Reason</th></tr>${data.negative_margins.map(m => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${m.id}</td><td style="padding:2px 4px;font-weight:600">${esc(m.word)}</td><td style="padding:2px 4px">${m.start_time}s</td><td style="padding:2px 4px">${m.end_time}s</td><td style="padding:2px 4px;color:var(--red)">${m.margin}s</td><td style="padding:2px 4px;color:var(--muted)">${esc(m.reason)}</td></tr>`).join('')}</table></div>`;
     }
     if (data.low_confidence_clips && data.low_confidence_clips.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Low-Confidence Clips (${data.low_confidence_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Duration</th><th style="padding:2px 4px">Reason</th></tr>${data.low_confidence_clips.slice(0, 50).map(c => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${c.id}</td><td style="padding:2px 4px;font-weight:600">${c.word}</td><td style="padding:2px 4px">${(c.end_time - c.start_time).toFixed(3)}s</td><td style="padding:2px 4px;color:var(--amber)">${c.reason}</td></tr>`).join('')}</table>${data.low_confidence_clips.length > 50 ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:4px">… and ${data.low_confidence_clips.length - 50} more</div>` : ''}</div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Low-Confidence Clips (${data.low_confidence_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">ID</th><th style="padding:2px 4px">Word</th><th style="padding:2px 4px">Duration</th><th style="padding:2px 4px">Reason</th></tr>${data.low_confidence_clips.slice(0, 50).map(c => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${c.id}</td><td style="padding:2px 4px;font-weight:600">${esc(c.word)}</td><td style="padding:2px 4px">${(c.end_time - c.start_time).toFixed(3)}s</td><td style="padding:2px 4px;color:var(--amber)">${esc(c.reason)}</td></tr>`).join('')}</table>${data.low_confidence_clips.length > 50 ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:4px">… and ${data.low_confidence_clips.length - 50} more</div>` : ''}</div>`;
     }
     if (data.words_missing_pronunciations && data.words_missing_pronunciations.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Words Missing Pronunciations (${data.words_missing_pronunciations.length})</h4><div style="display:flex;flex-wrap:wrap;gap:0.3rem">${data.words_missing_pronunciations.map(w => `<span class="w nopron" style="font-size:0.75rem">${w}</span>`).join('')}</div></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--amber);margin:0 0 0.3rem">Words Missing Pronunciations (${data.words_missing_pronunciations.length})</h4><div style="display:flex;flex-wrap:wrap;gap:0.3rem">${data.words_missing_pronunciations.map(w => `<span class="w nopron" style="font-size:0.75rem">${esc(w)}</span>`).join('')}</div></div>`;
     }
     if (data.downvoted_clips && data.downvoted_clips.length) {
-      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Downvoted Clips (${data.downvoted_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">Clip ID</th><th style="padding:2px 4px">Clip Word</th><th style="padding:2px 4px">Target Word</th><th style="padding:2px 4px">Score</th></tr>${data.downvoted_clips.map(d => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${d.clip_id}</td><td style="padding:2px 4px">${d.clip_word || '-'}</td><td style="padding:2px 4px;font-weight:600">${d.target_word}</td><td style="padding:2px 4px;color:var(--red)">${d.score}</td></tr>`).join('')}</table></div>`;
+      html += `<div style="margin-bottom:0.8rem"><h4 style="color:var(--red);margin:0 0 0.3rem">Downvoted Clips (${data.downvoted_clips.length})</h4><table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tr style="color:var(--muted);text-align:left"><th style="padding:2px 4px">Clip ID</th><th style="padding:2px 4px">Clip Word</th><th style="padding:2px 4px">Target Word</th><th style="padding:2px 4px">Score</th></tr>${data.downvoted_clips.map(d => `<tr style="border-top:1px solid var(--line)"><td style="padding:2px 4px">#${d.clip_id}</td><td style="padding:2px 4px">${esc(d.clip_word || '-')}</td><td style="padding:2px 4px;font-weight:600">${esc(d.target_word)}</td><td style="padding:2px 4px;color:var(--red)">${d.score}</td></tr>`).join('')}</table></div>`;
     }
     if (!html) {
       html = '<div style="color:var(--green);padding:0.75rem 0;">✓ All corpus diagnostics look healthy!</div>';
     }
     detEl.innerHTML = html;
   } catch (e) {
-    sumEl.innerHTML = `<span style="color:var(--red)">Failed to load diagnostics: ${e.message}</span>`;
+    if (corpus !== corpusSlug) return;
+    sumEl.innerHTML = `<span style="color:var(--red)">Failed to load diagnostics: ${esc(e.message)}</span>`;
   }
 }
 
@@ -1241,7 +1259,7 @@ $('diag-close').onclick = () => { $('diag-panel').style.display = 'none'; };
 $('diag-refresh').onclick = () => { loadDiagnostics(); };
 
 $('spectrogram-toggle').onchange = () => {
-  ensureWebAudio();
+  if (env) loadWindow(env.start, env.end);
   drawWave();
 };
 

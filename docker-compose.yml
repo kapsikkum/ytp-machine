@@ -16,7 +16,9 @@ services:
       # next to the host's.
       TZ: ${TZ:-Australia/Sydney}
     ports:
-      - "8765:8765"
+      # The API includes corpus editing/import and has no built-in login.
+      # Opt into remote binding explicitly, behind an authenticated proxy.
+      - "${MRS_BIND_ADDRESS:-127.0.0.1}:8765:8765"
     volumes:
       - ytp-data:/app/data
       # Seeds an empty volume and is ignored once a corpus exists, so it is

@@ -37,6 +37,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scripts.ingest import MODEL_CHOICES, add_transcription_arguments
+
 # A redirected stdout on Windows encodes as the locale codepage, and both the
 # rules printed below and any channel's video titles leave Latin-1 immediately.
 for _stream in (sys.stdout, sys.stderr):
@@ -66,6 +68,10 @@ def _video_id(raw: str) -> str | None:
     m = _VIDEO_RE.search(raw)
     if m:
         return m.group(1)
+    from urllib.parse import parse_qs, urlsplit
+    query_id = parse_qs(urlsplit(raw).query).get("v", [""])[0]
+    if re.fullmatch(_VIDEO_ID, query_id):
+        return query_id
     # A bare id, pasted on its own. Without this it becomes https://<id>/videos.
     if "/" not in raw and re.fullmatch(_VIDEO_ID, raw):
         return raw
@@ -75,18 +81,22 @@ def _video_id(raw: str) -> str | None:
 def _channel_url(raw: str) -> str:
     """Accept @handle, a bare channel URL, or a full one, and aim it at /videos."""
     url = raw.strip()
-    if _video_id(url):
+    video_id = _video_id(url)
+    if video_id:
         # Already points at one video; adding a tab to it would ask YouTube for
         # a channel that does not exist.
-        return url if url.startswith("http") else f"https://www.youtube.com/watch?v={url}"
+        return url if url.startswith("http") else f"https://www.youtube.com/watch?v={video_id}"
     if url.startswith("@"):
         url = f"https://www.youtube.com/{url}"
     elif not url.startswith("http"):
         url = f"https://{url}"
-    if "list=" in url:
+    from urllib.parse import parse_qs, urlsplit, urlunsplit
+    parsed = urlsplit(url)
+    if "list" in parse_qs(parsed.query):
         return url                      # a playlist has no tabs to choose from
-    tail = url.rstrip("/").rsplit("/", 1)[-1].split("?")[0]
-    return url if tail in _TABS else url.rstrip("/") + "/videos"
+    tail = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    path = parsed.path if tail in _TABS else parsed.path.rstrip("/") + "/videos"
+    return urlunsplit(parsed._replace(path=path))
 
 
 def _slug_from(url: str) -> str | None:
@@ -102,7 +112,8 @@ def _slug_from(url: str) -> str | None:
     return re.sub(r"[^A-Za-z0-9]+", "-", handle).strip("-").lower() or None
 
 
-def _preflight(device: str | None) -> None:
+def _preflight(device: str | None, *, ingest: bool = True, refine: bool = True,
+               align: bool = True, pack: bool = True, verify: bool = True) -> None:
     """Fail in the first ten seconds rather than the third hour.
 
     Every one of these has actually bitten: a missing zstandard turned a
@@ -112,20 +123,38 @@ def _preflight(device: str | None) -> None:
     """
     import importlib.util
 
-    missing = [m for m in ("yt_dlp", "whisper", "stable_whisper", "torch",
-                           "torchaudio", "num2words", "nltk", "zstandard")
+    modules: set[str] = set()
+    if ingest:
+        modules.update(("yt_dlp", "whisper", "stable_whisper", "torch"))
+    if refine or align:
+        modules.update(("torch", "torchaudio"))
+    if align:
+        modules.update(("transformers", "huggingface_hub", "num2words", "nltk"))
+    if verify:
+        modules.update(("num2words", "nltk"))
+    if pack:
+        modules.add("zstandard")
+    missing = [m for m in sorted(modules)
                if importlib.util.find_spec(m) is None]
     if missing:
         sys.exit("Missing Python packages: " + ", ".join(missing) +
                  "\n  pip install -r requirements.txt"
                  "\n  (zstandard is what packs the bundle at the very end.)")
 
-    for tool in ("ffmpeg", "ffprobe"):
+    for tool in (("ffmpeg", "ffprobe") if ingest or refine or align else ()):
         if not shutil.which(tool):
             sys.exit(f"{tool} is not on PATH. Every clip is cut with it.")
 
-    from app.device import describe, resolve
-    print(f"  device:  {describe(resolve(device))}")
+    if refine or align:
+        import torchaudio.functional as functional
+        if not all(callable(getattr(functional, name, None))
+                   for name in ("forced_align", "merge_tokens")):
+            sys.exit("This TorchAudio installation lacks the CTC alignment APIs. "
+                     "Install a matching torch/torchaudio build that provides "
+                     "forced_align and merge_tokens before building the corpus.")
+    if ingest or refine or align:
+        from app.device import describe, resolve
+        print(f"  device:  {describe(resolve(device))}")
 
 
 def _run(stage: str, argv: list[str], env: dict) -> None:
@@ -161,6 +190,24 @@ def _summarise(db_path: str) -> None:
               "raise --limit for more material)")
 
 
+def _known_video_ids(db_path: str) -> set[str]:
+    """Inspect an existing build without initializing or changing its database."""
+    import sqlite3
+    from pathlib import Path
+
+    if not os.path.exists(db_path):
+        return set()
+    conn = sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True)
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT DISTINCT s.video_id FROM sources s WHERE EXISTS ("
+            "SELECT 1 FROM word_clips w WHERE w.source_id=s.id "
+            "AND w.start_time >= 0 AND w.end_time > w.start_time "
+            "AND w.end_time < ?)", (float("inf"),))}
+    finally:
+        conn.close()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Channel link in, packed corpus out.",
@@ -172,11 +219,11 @@ def main() -> int:
     ap.add_argument("--name", metavar="SLUG",
                     help="What to call the corpus (default: from the channel handle)")
     ap.add_argument("--limit", type=int, default=40, metavar="N",
-                    help="Maximum videos to ingest (default 40, 0 for the whole "
+                    help="Target total videos in the corpus (default 40, 0 for the whole "
                          "channel). Vocabulary saturates long before a big "
                          "channel runs out, and every video costs disk forever.")
     ap.add_argument("--model", default="medium",
-                    choices=["tiny", "base", "small", "medium", "large"],
+                    choices=MODEL_CHOICES,
                     help="Whisper model (default medium). Every later stage "
                          "inherits these labels, so it is the setting worth "
                          "spending time on.")
@@ -207,7 +254,10 @@ def main() -> int:
     ap.add_argument("--skip-pack", action="store_true", help="Stop before the bundle")
     from app.device import add_argument as _device_arg
     _device_arg(ap)
+    add_transcription_arguments(ap)
     args = ap.parse_args()
+    if args.limit < 0:
+        ap.error("--limit must be zero (all videos) or positive")
 
     channel = _channel_url(args.channel)
     one_video = _video_id(channel)
@@ -231,7 +281,12 @@ def main() -> int:
     print(f"model:   {args.model}"
           + ("" if one_video else f"   limit: {args.limit or 'all'}")
           + f"   normalise: {'yes' if args.normalise else 'no'}")
-    _preflight(args.device)
+    known = _known_video_ids(db_path) if not args.skip_ingest else set()
+    remaining = max(0, args.limit - len(known)) if args.limit else None
+    already_done = one_video in known if one_video else remaining == 0
+    _preflight(args.device, ingest=not args.skip_ingest and not already_done,
+               refine=not args.skip_refine, align=not args.skip_align,
+               pack=not args.skip_pack, verify=not args.skip_ingest or not args.skip_refine)
 
     env = dict(os.environ)
     env["MRS_DATA_DIR"] = data_dir
@@ -245,7 +300,9 @@ def main() -> int:
 
     started = time.time()
 
-    if not args.skip_ingest:
+    if not args.skip_ingest and already_done:
+        print("\nIngestion target already present; continuing with later stages.")
+    if not args.skip_ingest and not already_done:
         if one_video:
             # ingest.py takes the URL directly. Going through ingest_channel
             # for one video would ask YouTube for a channel listing that does
@@ -254,8 +311,8 @@ def main() -> int:
         else:
             argv = ["scripts/ingest_channel.py", channel,
                     "--model", args.model, "--skip-errors"]
-            if args.limit:
-                argv += ["--limit", str(args.limit)]
+            if remaining is not None:
+                argv += ["--limit", str(remaining)]
             if args.year:
                 argv += ["--year", str(args.year)]
         if args.max_height:
@@ -266,6 +323,13 @@ def main() -> int:
             argv += ["--cookies-from-browser", args.cookies_from_browser]
         if args.device:
             argv += ["--device", args.device]
+        if args.language:
+            argv += ["--language", args.language]
+        if args.initial_prompt:
+            argv += ["--initial-prompt", args.initial_prompt]
+        # Refinement moves word boundaries. Align once after that, in its own
+        # process, instead of keeping Whisper and the phone model on one GPU.
+        argv += ["--no-align"]
         _run("1/4  Download and transcribe", argv, env)
 
     if not args.skip_refine:
@@ -297,7 +361,7 @@ def main() -> int:
         # is worse than none, because the word then gets said confidently
         # instead of reported missing.
         _run("      Note the words it cannot say",
-             ["scripts/verify_corpus.py", "--unspliceable", "--write-template",
+             ["scripts/verify_corpus.py", "--unspliceable", "--write-template", "--per-corpus",
               "--show", "12"], env)
 
     if not args.skip_pack:

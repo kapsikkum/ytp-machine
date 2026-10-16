@@ -27,6 +27,7 @@ import math
 import os
 import re
 import threading
+from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -74,7 +75,8 @@ def _table(kind: str) -> str:
     return _TABLES[kind]
 
 
-def _invalidate(clip_id: int | None = None) -> None:
+def _invalidate(clip_id: int | None = None, *, alignments: bool = True,
+                rendered: bool = True) -> None:
     """Drop the caches this edit invalidates.
 
     When the edit is to one clip, its forced alignment goes with it -- the
@@ -85,24 +87,19 @@ def _invalidate(clip_id: int | None = None) -> None:
     """
     try:
         from app.generate import invalidate_cache
-        invalidate_cache(alignments=clip_id is None)
+        invalidate_cache(alignments=alignments and clip_id is None)
     except Exception:
         pass
-    if clip_id is not None:
+    if clip_id is not None and alignments:
         try:
             from app.forced_align import invalidate as invalidate_alignment
             invalidate_alignment(clip_id)
         except Exception:
             pass
+    if rendered:
         try:
             from app import clip_cache
             clip_cache.invalidate(clip_id)
-        except Exception:
-            pass
-    else:
-        try:
-            from app import clip_cache
-            clip_cache.invalidate()
         except Exception:
             pass
 
@@ -226,10 +223,16 @@ def source_clips(source_id: int):
 # A dict rather than a job queue: there is one of these, it is per source, and
 # app/jobs.py exists for generation, which has to survive a queue of requests
 # from a browser. This does not.
-_align_state: dict[str, Any] = {"running": False, "source_id": None,
+_align_state: dict[str, Any] = {"running": False, "source_id": None, "corpus": None,
                                 "done": 0, "total": 0, "result": None,
                                 "error": None}
 _align_lock = threading.Lock()
+
+
+def alignment_running() -> bool:
+    """Called under jobs.corpus_guard when changing the active corpus."""
+    with _align_lock:
+        return bool(_align_state["running"])
 
 
 def _align_ready() -> tuple[bool, str]:
@@ -296,13 +299,16 @@ def align_status(source_id: int):
                     pending += 1
                 else:
                     unknown_clips += 1
-    st = dict(_align_state)
+    with _align_lock:
+        st = dict(_align_state)
+    matches = st["source_id"] == source_id and st["corpus"] == active()["slug"]
     return {"available": ready, "reason": why, "pending": pending, "stale": stale,
             "no_pronunciation": unknown_clips,
             "unknown_words": sorted(unknown)[:20],
-            "running": st["running"] and st["source_id"] == source_id,
-            "done": st["done"], "total": st["total"],
-            "result": st["result"], "error": st["error"]}
+            "corpus": active()["slug"], "alignment_corpus": st["corpus"],
+            "running": st["running"] and matches,
+            "done": st["done"] if matches else 0, "total": st["total"] if matches else 0,
+            "result": st["result"] if matches else None, "error": st["error"] if matches else None}
 
 
 @router.post("/source/{source_id}/align")
@@ -319,44 +325,56 @@ def align_source(source_id: int, redo: bool = False):
     if not ready:
         raise HTTPException(status_code=503, detail=why)
 
-    with _align_lock:
-        if _align_state["running"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"already aligning source {_align_state['source_id']}")
-        _align_state.update(running=True, source_id=source_id, done=0,
-                            total=0, result=None, error=None)
-
-    # The pass only visits clips with no times, so stale ones lose theirs
-    # first -- otherwise the button offers work it then quietly skips.
-    from app.phone_align import outside
-    with get_db() as conn:
-        bad = [r["id"] for r in conn.execute(
-            "SELECT id, phones, end_time - start_time AS dur FROM word_clips "
-            "WHERE source_id=? AND phones IS NOT NULL AND phones != ''", (source_id,))
-            if outside(r["phones"], r["dur"])]
-        for cid in bad:
-            conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?", (cid,))
-    if bad:
-        log.info("ALIGN   source %s: dropped %d alignment(s) that had moved off "
-                 "their clip", source_id, len(bad))
-
+    from app.database import using_corpus
+    from app.jobs import corpus_guard, maintenance_in_progress
+    corpus = dict(active())
     def work() -> None:
         try:
             from scripts.align_phones import align_corpus
-            done, skipped, failed = align_corpus(source_id=source_id, redo=redo)
-            _align_state["result"] = {"aligned": done, "no_pronunciation": skipped,
-                                      "failed": failed}
+            with using_corpus(corpus):
+                done, skipped, failed = align_corpus(source_id=source_id, redo=redo)
+            with _align_lock:
+                _align_state["result"] = {"aligned": done, "no_pronunciation": skipped,
+                                          "failed": failed}
             log.info("ALIGN   source %s: %d aligned, %d without a pronunciation, "
                      "%d failed", source_id, done, skipped, failed)
         except Exception as exc:                       # noqa: BLE001
-            _align_state["error"] = str(exc)
+            with _align_lock:
+                _align_state["error"] = str(exc)
             log.exception("alignment of source %s failed", source_id)
         finally:
-            _align_state["running"] = False
+            with corpus_guard(), _align_lock:
+                _align_state["running"] = False
 
-    threading.Thread(target=work, daemon=True, name="align-source").start()
-    return {"started": True, "source_id": source_id}
+    # Reserve atomically with corpus switches and background job registration.
+    with corpus_guard():
+        if maintenance_in_progress():
+            raise HTTPException(status_code=409, detail="corpus maintenance is in progress")
+        _source_path(source_id)
+        with _align_lock:
+            if _align_state["running"]:
+                raise HTTPException(status_code=409,
+                    detail=f"already aligning source {_align_state['source_id']}")
+            _align_state.update(running=True, source_id=source_id, corpus=corpus["slug"],
+                                done=0, total=0, result=None, error=None)
+        try:
+            # Stale times must be cleared before the resumable pass visits them.
+            from app.phone_align import outside
+            with get_db() as conn:
+                bad = [r["id"] for r in conn.execute(
+                    "SELECT id, phones, end_time - start_time AS dur FROM word_clips "
+                    "WHERE source_id=? AND phones IS NOT NULL AND phones != ''", (source_id,))
+                    if outside(r["phones"], r["dur"])]
+                for cid in bad:
+                    conn.execute("UPDATE word_clips SET phones=NULL WHERE id=?", (cid,))
+            if bad:
+                _invalidate(alignments=False, rendered=False)
+            threading.Thread(target=work, daemon=True, name="align-source").start()
+        except BaseException:
+            with _align_lock:
+                _align_state["running"] = False
+            raise
+    return {"started": True, "source_id": source_id, "corpus": corpus["slug"]}
 
 
 @router.get("/source/{source_id}/video")
@@ -382,9 +400,34 @@ def source_video(source_id: int, c: str = ""):
                         headers={"Cache-Control": "no-cache"})
 
 
+_envelopes: OrderedDict[tuple, dict] = OrderedDict()
+_envelope_lock = threading.Lock()
+
+
+def _spectral_bins(samples, sample_rate: int = 16000) -> dict:
+    """Measured STFT, bounded to 300 frames x 64 frequency bins per request."""
+    import numpy as np
+    fft_size = 512
+    frames = max(1, min(300, math.ceil(len(samples) / 256)))
+    window = np.hanning(fft_size)
+    centres = np.linspace(0, max(0, len(samples) - 1), frames).astype(int)
+    magnitudes = np.zeros((frames, 64), dtype=np.float64)
+    for i, centre in enumerate(centres):
+        a, b = max(0, centre - fft_size // 2), min(len(samples), centre + fft_size // 2)
+        frame = np.zeros(fft_size)
+        offset = a - (centre - fft_size // 2)
+        frame[offset:offset + b - a] = samples[a:b]
+        spectrum = np.abs(np.fft.rfft(frame * window)) * (2 / window.sum())
+        magnitudes[i] = spectrum[:256].reshape(64, 4).max(axis=1)
+    db = 20 * np.log10(np.maximum(magnitudes, 1e-4))
+    values = np.rint(np.clip((db + 80) / 80, 0, 1) * 255).astype(np.uint8)
+    return {"values": values.tolist(), "max_hz": sample_rate // 2,
+            "bins": 64, "db_min": -80, "db_max": 0}
+
+
 @router.get("/source/{source_id}/envelope")
 def envelope(source_id: int, start: float = 0.0, end: float = 0.0,
-             buckets: int = 900):
+             buckets: int = 900, spectrogram: bool = False):
     """Loudness across a span, for drawing a waveform.
 
     An edge is nearly impossible to place from numbers alone and obvious from
@@ -393,20 +436,36 @@ def envelope(source_id: int, start: float = 0.0, end: float = 0.0,
     """
     from app.ytpmv.pitch import decode_audio, rms_windows
 
-    if not (math.isfinite(start) and math.isfinite(end)) or end <= start:
-        raise HTTPException(status_code=400, detail="end must be after start")
+    if not (math.isfinite(start) and math.isfinite(end)) or start < 0 or end <= start:
+        raise HTTPException(status_code=400, detail="start must be non-negative and end after start")
     span = min(end - start, 60.0)          # a minute is plenty to look at
     path = _source_path(source_id)
+    buckets = max(1, min(buckets, 4000))
+    stat = os.stat(path)
+    key = (os.path.normcase(os.path.realpath(path)), stat.st_mtime_ns, stat.st_size,
+           start, span, buckets, spectrogram)
+    with _envelope_lock:
+        cached = _envelopes.get(key)
+        if cached is not None:
+            _envelopes.move_to_end(key)
+            return cached
     try:
         x = decode_audio(path, start, span, 16000, "s16le")
         # A screen's width at most: a million buckets was a 10 MB answer.
-        buckets = max(1, min(buckets, 4000))
-        values = rms_windows(x, max(1, len(x) // buckets)).astype(int).tolist()
+        values = rms_windows(x, max(1, math.ceil(len(x) / buckets))).astype(int).tolist()
+        result = {"start": start, "end": start + span,
+                  "peak": max(values) if values else 0, "values": values}
+        if spectrogram:
+            result["spectrogram"] = _spectral_bins(x)
     except Exception as exc:
         log.warning("envelope of source %s failed: %s", source_id, exc)
         raise HTTPException(status_code=500, detail="could not read the audio")
-    return {"start": start, "end": start + span,
-            "peak": max(values) if values else 0, "values": values}
+    with _envelope_lock:
+        _envelopes[key] = result
+        _envelopes.move_to_end(key)
+        while len(_envelopes) > 24:
+            _envelopes.popitem(last=False)
+    return result
 
 
 @router.patch("/clip/{clip_id}")
@@ -450,6 +509,11 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
                                 detail="a clip must be at least 20ms long")
         conn.execute(f"UPDATE {table} SET {', '.join(sets)} WHERE id=?",
                      (*params, clip_id))
+        if kind == "word":
+            # A reader must never see the new word/window with persisted
+            # character or rendered metadata for the previous one.
+            conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (clip_id,))
+            conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (clip_id,))
         if moved and kind == "word":
             # Moved by hand, against the waveform: whatever was reported
             # about where it was cut is answered.
@@ -497,7 +561,7 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
         out = dict(conn.execute(f"SELECT id, word, start_time, end_time "
                                 f"FROM {table} WHERE id=?", (clip_id,)).fetchone(),
                    kind=kind)
-    _invalidate(clip_id)
+    _invalidate(clip_id, alignments=kind == "word", rendered=kind == "word")
     log.info("EDIT    clip %s -> %s %.3f-%.3f", clip_id, out["word"],
              out["start_time"], out["end_time"])
     return out
@@ -539,7 +603,7 @@ def set_rating(clip_id: int, rating: Rating):
             "SELECT word, score FROM splice_ratings WHERE clip_id=?", (clip_id,))}
     # A rating changes which clip gets chosen, not where anything is cut, so
     # the alignments stay: they cost a model pass each to rebuild.
-    _invalidate(clip_id)
+    _invalidate(clip_id, alignments=False, rendered=False)
     log.info("RATE    clip %s for %r = %s", clip_id, word, rating.score)
     return {"id": clip_id, "ratings": out}
 
@@ -554,14 +618,14 @@ def delete_clip(clip_id: int, kind: str = "word"):
         if not row:
             raise HTTPException(status_code=404, detail=f"no {kind} clip {clip_id}")
         conn.execute(f"DELETE FROM {table} WHERE id=?", (clip_id,))
-        # Ratings key on clip id, and ids are reused by AUTOINCREMENT only
-        # after a vacuum -- but a stale rating on a deleted clip is dead weight
-        # either way.
-        try:
+        # Word and noise ids are independent. Removing noise 1 must preserve
+        # word 1's feedback, alignment and rendered audio.
+        if kind == "word":
             conn.execute("DELETE FROM splice_ratings WHERE clip_id=?", (clip_id,))
-        except Exception:
-            pass
-    _invalidate(clip_id)
+            conn.execute("DELETE FROM boundary_reports WHERE clip_id=?", (clip_id,))
+            conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (clip_id,))
+            conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (clip_id,))
+    _invalidate(clip_id, alignments=kind == "word", rendered=kind == "word")
     log.info("DELETE  clip %s (%s)", clip_id, row["word"])
     return {"deleted": clip_id, "word": row["word"]}
 
@@ -602,7 +666,7 @@ def add_clip(source_id: int, clip: NewClip, kind: str = "word"):
             (source_id, word, round(clip.start_time, 4), round(clip.end_time, 4),
              src["source_file"]))
         new_id = cur.lastrowid
-    _invalidate()
+    _invalidate(new_id, alignments=False, rendered=False)
     log.info("ADD     clip %s = %s %.3f-%.3f", new_id, word,
              clip.start_time, clip.end_time)
     return {"id": new_id, "word": word, "kind": kind,
@@ -894,7 +958,7 @@ def save_recipe(word: str, plan: SplicePlan):
                      "ON CONFLICT(word) DO UPDATE SET recipe=?",
                      (word, body, body))
     ph.invalidate_recipes()
-    _invalidate()
+    _invalidate(alignments=False, rendered=False)
     log.info("RECIPE  %s = %s", word,
              " | ".join(f"{'-'.join(gr.phones)}<{gr.source}" for gr in plan.groups))
     return {"word": word, "saved": True}
@@ -909,7 +973,7 @@ def delete_recipe(word: str):
     with get_db() as conn:
         conn.execute("DELETE FROM splice_recipes WHERE word=?", (word,))
     ph.invalidate_recipes()
-    _invalidate()
+    _invalidate(alignments=False, rendered=False)
     log.info("RECIPE  %s cleared", word)
     return {"word": word, "saved": False}
 
