@@ -74,6 +74,56 @@ class YtpmvCorpusTests(unittest.TestCase):
         self.stack.enter_context(patch.object(g, "_build_video", side_effect=encode))
         self.stack.enter_context(patch.object(samples, "decode_audio", side_effect=decode))
 
+    def test_grid_fills_widescreen_and_balances_incomplete_rows(self):
+        self.assertEqual(render.grid_cells(3), [(0, 0, 960, 540), (960, 0, 960, 540), (0, 540, 1920, 540)])
+        for width, height in ((1920, 1080), (256, 224), (160, 144)):
+            for count in range(1, 33):
+                cells = render.grid_cells(count, width, height)
+                self.assertEqual(len(cells), count)
+                self.assertEqual(sum(w*h for x,y,w,h in cells), width*height)
+                last_y = 0
+                for y in sorted({c[1] for c in cells}):
+                    row = [c for c in cells if c[1] == y]
+                    self.assertEqual(y, last_y)
+                    last_x = 0
+                    for x, _, w, h in row:
+                        self.assertEqual(x, last_x)
+                        self.assertGreater(min(w,h), 0)
+                        last_x += w
+                    self.assertEqual(last_x, width)
+                    last_y = y + row[0][3]
+                self.assertEqual(last_y, height)
+
+    def test_chip_parts_play_without_corpus_samples_in_a_voice_project(self):
+        with patch.object(samples, 'build', side_effect=AssertionError('chip requested a corpus sample')), \
+                patch.object(render.recommend, 'recommend', side_effect=AssertionError('chip requested a word')):
+            result = render.preview_mix({'midi_id': 'midi', 'parts': [
+                {'id': 'alpha', 'tone': 'piano'}, {'id': 'beta', 'tone': 'pulse'}],
+                'seconds': .4, 'options': {'balance': False}})
+        with wave.open(str(self.root / result['audio_url'].lstrip('/'))) as wav:
+            pcm = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2')
+        self.assertGreater(int(np.abs(pcm.astype(np.int32)).max()), 1000)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg is required for waveform tiles')
+    def test_chip_video_tiles_work_in_mixed_mode_and_retro_draft(self):
+        self.song.parts.append(Part(id='gamma', name='third', track=2, channel=2, program=0,
+                                   notes=[Note(0, .1, 67, 100)], role='chords'))
+        with patch.object(samples, 'build', side_effect=AssertionError('chip requested a corpus sample')), \
+                patch.object(render.recommend, 'recommend', side_effect=AssertionError('chip requested a word')), \
+                patch.object(render, '_OUT_W', 640), patch.object(render, '_OUT_H', 360):
+            result = render.render_ytpmv({'midi_id': 'midi', 'parts': [
+                {'id': 'alpha', 'tone': 'piano'}, {'id': 'beta', 'tone': 'pulse'},
+                {'id': 'gamma', 'tone': 'snes', 'program': 0}],
+                'options': {'chip': 'nes', 'draft': True, 'balance': False,
+                            'max_seconds': .2, 'flash': False, 'dim': False}})
+        self.assertEqual(result['size'], [640,360])
+        raw = subprocess.run(['ffmpeg','-v','error','-i',str(self.root/result['video_url'].lstrip('/')),
+                              '-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],
+                             check=True,capture_output=True).stdout
+        pixels = np.frombuffer(raw,dtype=np.uint8).reshape(360,640,3)
+        for x,y,w,h in render.grid_cells(3,640,360):
+            self.assertGreater(int(pixels[y:y+h,x:x+w].max()), 30)
+
     def test_parallel_voice_catalogues_use_local_pools(self):
         g._use_voice(None)
         installed = g._installed
@@ -289,16 +339,20 @@ class YtpmvCorpusTests(unittest.TestCase):
         for slug, colour, frequency in (("alpha", "red", 220), ("beta", "blue", 440)):
             path = Path(self.entries[slug]["dir"], "downloads", "same.mp4")
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                            f"color=c={colour}:s=64x64:r=25:d=0.6", "-f", "lavfi", "-i",
+                            f"color=c={colour}:s=160x90:r=25:d=0.6", "-f", "lavfi", "-i",
                             f"sine=frequency={frequency}:sample_rate={SR}:duration=0.6",
                             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                             "-shortest", str(path)], check=True, capture_output=True)
+        self.song.parts.append(Part(id='gamma', name='third', track=2, channel=2, program=0,
+                                   notes=[Note(0, .1, 67, 100)], role='chords'))
         result = render.render_ytpmv({"midi_id": "midi", "parts": [
             {"id": "alpha", "text": "hello", "corpus": "alpha"},
-            {"id": "beta", "text": "hello", "corpus": "beta"}],
+            {"id": "beta", "text": "hello", "corpus": "beta"},
+            {"id": "gamma", "text": "hello", "corpus": "alpha"}],
             "options": {"balance": False, "max_seconds": 1, "flip": False,
                         "flash": False, "dim": False}})
-        self.assertEqual([p["corpus"] for p in result["parts"]], ["alpha", "beta"])
+        self.assertEqual([p["corpus"] for p in result["parts"]], ["alpha", "beta", "alpha"])
+        self.assertEqual(result['size'], [1920, 1080])
         audio_a, audio_b = [samples.build("hello", corpus=slug) for slug in self.entries]
         self.assertAlmostEqual(audio_a.voice.info.f0, 220, delta=8)
         self.assertAlmostEqual(audio_b.voice.info.f0, 440, delta=8)
@@ -306,10 +360,11 @@ class YtpmvCorpusTests(unittest.TestCase):
         raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-frames:v", "1",
                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                              check=True, capture_output=True).stdout
-        pixels = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3).astype(np.int16)
-        # The square sources are padded to the renderer's widescreen tiles.
-        self.assertGreater(np.mean((pixels[:, 0] > 150) & (pixels[:, 0] > pixels[:, 2] + 100)), 0.25)
-        self.assertGreater(np.mean((pixels[:, 2] > 150) & (pixels[:, 2] > pixels[:, 0] + 100)), 0.25)
+        pixels = np.frombuffer(raw, dtype=np.uint8).reshape(1080, 1920, 3).astype(np.int16)
+        # Two top cells, one full-width bottom cell, with no empty corners.
+        for (x,y,w,h), channel in zip(render.grid_cells(3), [0,2,0]):
+            tile = pixels[y:y+h, x:x+w]
+            self.assertGreater(np.mean(tile[:,:,channel] > 150), .98)
         self.assertEqual(db.active()["slug"], "alpha")
 
 

@@ -420,12 +420,25 @@ player can pause and seek within the section. **Solo** affects mix auditions
 only, leaving mute settings and the final render unchanged. **Stop** also
 cancels queued preview work. Per-part previews start at that part's first note.
 
+The track workbench shows real MIDI activity above a dock for the selected
+part. Pick a track to edit its voice, sample or chip instrument; its corpus
+selector and M/S controls also work directly from the track header. **Part**,
+**Song & render**, and **Video preview** keep local settings, global options,
+and the composition in separate dock panels. **Find & manage tracks** holds
+the search and role filters. OPL and SNES expose their GM patch banks beside
+the instrument selector; automatic chip sounds follow a changed MIDI patch.
+Chip instruments play independently of corpus clips and draw waveform tiles.
+
 Each MIDI keeps its own arrangement, voice and render options in this browser's
-local storage. **Undo** reverses edits in the current session. Common controls
-stay visible; **settings** reveals pitch, pan, note length and tile controls.
-Use **takes & clip** to watch the sample and choose a numbered take inline.
-The part search, role filters and bulk voice controls help with larger songs.
+local storage. **Undo** reverses edits in the current session. **Settings**
+reveals pitch, pan, note length and tile controls. Use **takes & clip** to watch
+the sample and choose a numbered take inline. Bulk voice controls live with
+the song settings.
 If browser storage fills or is blocked, the save indicator reports the failure.
+
+Video exports fill a 1920×1080 (16:9) canvas. Rows share the available space;
+three visible parts place two across the top and one across the full lower
+row. Source pictures are cropped centrally to fill each cell without stretching.
 
 Rendering keeps the last successful export visible. **Cancel render** stops a
 queued or running job; a refresh reconnects to an acknowledged job, and

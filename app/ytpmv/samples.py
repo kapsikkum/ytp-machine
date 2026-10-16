@@ -143,7 +143,7 @@ class Sample:
                 return got
         cmd = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{self.offset:.3f}",
                "-i", self.mp4, "-t", f"{self.duration + 0.1:.3f}",
-               "-vf", f"scale={w}:{h}:force_original_aspect_ratio=disable,fps={FPS}",
+               "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}:exact=1,setsar=1,fps={FPS}",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
         from app.media_process import run
         proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)

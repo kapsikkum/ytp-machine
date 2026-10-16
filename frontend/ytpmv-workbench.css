@@ -1,0 +1,114 @@
+/* Track workbench: arrangement above, the existing part controls in one dock. */
+body { background:var(--bg); }
+body > .card { max-width:1440px; width:calc(100% - 2rem); border-radius:0; margin-bottom:0; }
+body.has-song #midi-import { display:none; }
+body.has-song #library:not([open]) { display:none; }
+body.has-song #song { margin-top:1rem; padding:.7rem 1rem; display:flex; flex-wrap:wrap; align-items:center; gap:.55rem 1rem; background:var(--surface); }
+#song h2 { font-family:inherit; font-size:1rem; letter-spacing:0; color:var(--text); }
+#song .chips { flex:1; gap:.7rem; }
+#song .chip { border:0; background:transparent; padding:0; font-size:.68rem; }
+#song .chip b { font-weight:400; }
+#project-tools { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+#project-tools button { font-size:.75rem; min-height:34px; border-radius:4px; }
+#project-tools #render-btn { font-family:inherit; font-weight:500; font-size:.8rem; letter-spacing:0; text-transform:none; box-shadow:none; padding:.45rem .85rem; }
+#transport { padding:.55rem 1rem; border-color:var(--line); }
+#transport .tools { gap:.4rem; }
+#transport button { min-height:32px; font-size:.76rem; border-radius:4px; }
+#transport #preview-range { margin-top:.2rem; }
+#transport #preview-range summary { font-size:.68rem; margin-top:.25rem; }
+#transport .hint,#status,#preview-status { margin-top:.3rem; font-size:.7rem; }
+#parts-card { padding:0; background:var(--surface); }
+#track-tools { border-bottom:1px solid var(--line); padding:.3rem 1rem; }
+#track-tools summary { font-size:.72rem; color:var(--muted); cursor:pointer; padding:.25rem 0; }
+#parts-tools { margin:.5rem 0; }
+#parts-tools input,#parts-tools select { min-height:32px; font-size:.72rem; }
+.track-ruler { display:grid; grid-template-columns:330px minmax(0,1fr); min-height:31px; font-size:.66rem; color:var(--muted); border-bottom:1px solid var(--line-2); }
+.track-ruler > span { padding:.45rem .75rem; background:var(--raised); border-right:1px solid var(--line-2); }
+.time-ruler { display:flex; justify-content:space-between; padding:0 .5rem; border:0; border-radius:0; background:var(--raised); color:var(--muted); font-size:.66rem; }
+.track { display:grid; grid-template-columns:330px minmax(0,1fr); min-height:68px; border-bottom:1px solid var(--line-2); }
+.track-head { display:flex; align-items:center; flex-wrap:wrap; gap:.35rem .6rem; padding:.55rem .65rem; border-left:3px solid var(--track-color); border-right:1px solid var(--line-2); background:var(--surface); }
+.track.selected .track-head { background:var(--raised); }
+.track-name { display:flex; flex-direction:column; gap:.2rem; flex:1; min-width:80px; color:var(--text); text-align:left; padding:0; border:0; border-radius:0; background:transparent; white-space:normal; }
+.track-name b { font-size:.74rem; font-weight:500; }
+.track.selected .track-name b { color:var(--yellow); }
+.track-name small { color:var(--muted); font-size:.64rem; overflow-wrap:anywhere; }
+.track-cast { width:158px; min-width:0; }
+.track-cast select,.track-cast .track-tone { width:100%; min-width:0; font-size:.66rem; min-height:29px; padding:.3rem; border-radius:4px; }
+.track-tone { white-space:normal; text-align:left; color:var(--track-color); }
+.track-switches { display:flex; gap:.2rem; }
+.track-switches button { min-width:22px; font-size:.65rem; padding:.15rem .2rem; min-height:24px; border-radius:3px; }
+.track-switches button[aria-pressed=true] { color:var(--yellow); border-color:var(--yellow); }
+.track-region { --grid-line:var(--line); position:relative; display:flex; flex-direction:column; justify-content:center; min-width:0; margin:0; padding:.4rem .5rem; border:0; border-radius:0; text-align:left; color:var(--track-color); background:repeating-linear-gradient(90deg,transparent 0,transparent calc(12.5% - 1px),var(--grid-line) calc(12.5% - 1px),var(--grid-line) 12.5%),var(--bg); overflow:hidden; }
+.track-region:hover:not(:disabled),.track-region[aria-pressed=true] { color:var(--track-color); background:repeating-linear-gradient(90deg,transparent 0,transparent calc(12.5% - 1px),var(--grid-line) calc(12.5% - 1px),var(--grid-line) 12.5%),var(--surface); }
+.track-region::after { content:''; position:absolute; left:var(--playhead,0%); width:1px; top:0; bottom:0; background:var(--yellow); pointer-events:none; }
+.track-region > span { display:block; color:var(--text); font-size:.62rem; padding:.1rem .35rem; background:color-mix(in srgb,var(--track-color) 16%,var(--surface)); border-radius:3px 3px 0 0; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.track-region svg { width:100%; height:32px; display:block; background:color-mix(in srgb,var(--track-color) 10%,var(--surface)); }
+.track-region rect { fill:currentColor; }
+.track.muted .track-region { opacity:.38; }
+.track.solo .track-switches button[data-track-flag=solo] { color:var(--green); border-color:var(--green); }
+#editor-tabs { display:flex; gap:1rem; padding:.4rem .8rem 0; border-bottom:1px solid var(--line-2); }
+#editor-tabs button { font-size:.75rem; border:0; background:transparent; border-radius:0; padding:.55rem .2rem; color:var(--muted); }
+#editor-tabs button[aria-selected=true] { color:var(--text); box-shadow:inset 0 -2px var(--yellow); }
+#workbench-dock { min-height:230px; }
+#panel-part .part,#panel-part .part.instrumental,body.synth #panel-part .part { border:0; border-radius:0; background:var(--surface); padding:1rem; grid-template-columns:minmax(130px,.6fr) minmax(220px,1.25fr) minmax(290px,1.35fr); gap:1.25rem; }
+#panel-part .part.instrumental { grid-template-columns:minmax(150px,.75fr) minmax(290px,1.5fr); }
+#panel-part .part .who .role { font-size:.66rem; }
+#panel-part .part .who .name { font-size:.85rem; }
+#panel-part .part .who .meta { font-size:.67rem; }
+#panel-part .part .who .source-note { font-size:.66rem; }
+#panel-part .part select,#panel-part .part input,#panel-part .part button { font-size:.72rem; border-radius:4px; }
+#panel-part .part .sound .row { gap:.3rem; }
+#panel-part .part .sound .row:first-child { flex-wrap:wrap; }
+#panel-part .part .sound input[type=text] { flex-basis:100%; }
+#panel-part .part .sound .take { flex:1; }
+#panel-part .part .knobs .kv { grid-template-columns:60px minmax(0,1fr); }
+#panel-part .part .knobs .v select { font-size:.72rem; white-space:normal; }
+#panel-part .part .instrument-description { margin:.7rem 0; color:var(--muted); font-size:.68rem; line-height:1.6; }
+#panel-part .part .flags { gap:.4rem .7rem; }
+#panel-song { padding:1rem; }
+#panel-song #machine { margin-bottom:.8rem; }
+#panel-song #options { gap:1rem; }
+#panel-song #bulk-tools { padding-top:.65rem; border-top:1px solid var(--line); }
+#panel-video { padding:1rem; }
+#render-card { width:100%; max-width:none; margin:0; padding:.75rem 0 0; border:0; background:transparent; box-shadow:none; }
+#composition-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem; color:var(--muted); font-size:.72rem; margin-bottom:.6rem; }
+#composition-heading b { font-weight:500; color:var(--text); }
+#composition-preview { aspect-ratio:16/9; width:min(100%,850px); margin:auto; background:var(--bg); display:flex; flex-direction:column; border:1px solid var(--line-2); }
+.composition-row { display:flex; flex:1; min-height:0; }
+.composition-row button { flex:1; min-width:0; border:1px solid var(--bg); border-radius:0; background:var(--raised); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:.4rem; white-space:normal; overflow:hidden; }
+.composition-row b { font-size:clamp(.7rem,2vw,1.4rem); font-weight:500; overflow-wrap:anywhere; color:var(--yellow); }
+.composition-row span { color:var(--muted); font-size:.65rem; }
+.composition-empty { margin:auto; color:var(--muted); font-size:.75rem; }
+#result video { aspect-ratio:16/9; object-fit:contain; }
+#no-track { padding:1.5rem; font-size:.8rem; color:var(--muted); }
+#workbench-footer { display:flex; padding:.55rem 1rem; border-top:1px solid var(--line); }
+#save-state { font-size:.65rem; }
+@media(max-width:1050px) {
+ .track,.track-ruler { grid-template-columns:285px minmax(0,1fr); }
+ .track-cast { width:135px; }
+ #panel-part .part,#panel-part .part.instrumental,body.synth #panel-part .part { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); }
+ #panel-part .part .who { grid-column:1/-1; display:flex; align-items:center; flex-wrap:wrap; gap:.4rem 1rem; }
+ #panel-part .part .who .source-note { margin:0; }
+}
+@media(max-width:650px) {
+ body > .card { width:100%; }
+ #song .chips { flex-basis:100%; order:3; }
+ #project-tools { margin-left:auto; }
+ .track,.track-ruler { grid-template-columns:170px minmax(0,1fr); }
+ .track-head { gap:.3rem; }
+ .track-name { min-width:0; flex-basis:100%; }
+ .track-cast { width:110px; flex:1; }
+ .track-switches button { min-height:28px; }
+ .track-cast select { min-height:32px; }
+ .track-region svg { height:44px; }
+ .time-ruler span:nth-child(2),.time-ruler span:nth-child(4) { display:none; }
+ #panel-part .part,#panel-part .part.instrumental,body.synth #panel-part .part { grid-template-columns:minmax(0,1fr); gap:1rem; padding:.8rem; }
+ #panel-part .part .who { display:block; }
+ #panel-part .part button,#panel-part .part select { min-height:38px; }
+ #workbench-dock { min-height:0; }
+ #editor-tabs { gap:.75rem; }
+ #editor-tabs button { font-size:.7rem; }
+ #transport { padding:.5rem .7rem; }
+ #parts-tools input[type=search] { min-width:0; width:100%; flex-basis:100%; }
+ #composition-heading { font-size:.65rem; }
+}

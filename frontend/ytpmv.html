@@ -189,6 +189,8 @@
       .part, .part.instrumental, body.synth .part { grid-template-columns: 1fr; }
     }
   </style>
+  <link rel="stylesheet" href="/ytpmv-workbench.css">
+  <script src="/ytpmv-workbench.js"></script>
 </head>
 <body>
 
@@ -393,6 +395,7 @@
   let song = null;          // the analysis
   let parts = {};           // id -> settings being edited
   let info = {};            // id -> {sample describe}
+  let workbench = null;
   const songRequests = latestRequest();
   const previewRequests = latestRequest();
   const previewIntents = latestRequest();
@@ -835,13 +838,20 @@
     song.instruments.machines[m][k].some(([t]) => t === tone));
   // What auto picks: a drum is the voice off the chip's sample channel, unless
   // there is no voice, when it is the chip's own kit.
-  const autoTone = (p, chip) => ((synthMode && p.chip_tones_synth) || p.chip_tones)[chip];
+  const autoTone = (p, chip) => p.program_tones?.[chip]?.[parts[p.id]?.program ?? p.settings.program ?? 0]
+    || ((synthMode && p.chip_tones_synth) || p.chip_tones)[chip];
   const toneOf = (p, s, chip) => s.instrument || (chip ? autoTone(p, chip) : 'clean');
   // The octave a part is really played at. The suggestion suits a speaking
   // voice and a chip does not use it, so until somebody moves it, a part a
   // chip plays is at the octave it was written in -- and says so.
   const onChip = (p, s) => song.instruments.synth.includes(toneOf(p, s, chipNow()));
   const octaveOf = (p, s) => onChip(p, s) && !s.octaveSet ? 0 : s.octave;
+  const toneName = (p, s) => {
+    const tone = toneOf(p, s, chipNow());
+    if (['opl2', 'opl3', 'snes'].includes(tone) && !p.is_drums)
+      return `${tone.toUpperCase()} · ${song.instruments.programs[s.program ?? p.settings.program ?? 0]}`;
+    return TONE_TEXT[tone] || tone.replace(/-/g, ' ');
+  };
 
   function drawChip() {
     const chip = chipNow();
@@ -877,14 +887,25 @@
       corpusSelect.add(new Option(`${s.corpus} (not installed)`, s.corpus));
     }
     corpusSelect.value = s.corpus || '';
-    r.querySelector('[data-el=source-note]').textContent = onChip(p, s) ? `plays ${toneOf(p, s, chip)}`
+    r.querySelector('[data-el=source-note]').textContent = onChip(p, s) ? `plays ${toneName(p, s)}`
       : `voice: ${corpusName(corpusOf(s))}${s.corpus ? '' : ' · follows page voice'}`;
     r.querySelector('input[data-k=text]').setAttribute('list', vocabularyFor(corpusOf(s)));
 
+    let about = r.querySelector('[data-el=instrument-about]');
+    if (!about) {
+      about = document.createElement('p'); about.dataset.el = 'instrument-about'; about.className = 'instrument-description';
+      r.querySelector('.knobs').appendChild(about);
+    }
+    const tone = toneOf(p, s, chip);
+    const entry = [...cat.voice, ...Object.values(cat.machines).flatMap(m => [...m.melodic, ...m.drums])].find(([t]) => t === tone);
+    about.textContent = `${onChip(p,s) ? 'Chip instrument' : 'Recorded voice'} · ${entry?.[1] || toneName(p,s)}`;
+    workbench?.updateTrack(p.id);
     const wrap = r.querySelector('[data-el=patch-wrap]');
     if (!wrap) return;
-    wrap.title = 'The General MIDI instrument: the patch an OPL plays, and the sample a SNES does';
-    wrap.hidden = !['opl2', 'opl3', 'snes'].includes(toneOf(p, s, chip));
+    wrap.removeAttribute('data-advanced');
+    wrap.title = 'Choose a GM patch for OPL / SNES, or the MIDI instrument used to pick the automatic chip sound.';
+    wrap.hidden = !onChip(p,s) || (!['opl2', 'opl3', 'snes'].includes(tone) && (!!s.instrument || !p.program_tones?.[chip]));
+    wrap.querySelector('.k').textContent = ['opl2', 'opl3', 'snes'].includes(tone) ? 'patch' : 'MIDI patch';
     const sel = wrap.querySelector('select');
     if (!sel.options.length) {
       sel.innerHTML = cat.programs.map((name, i) =>
@@ -988,6 +1009,7 @@
     const busy = pendingCorpora.has(id);
     r.setAttribute('aria-busy', String(busy));
     r.querySelectorAll('input, select, button').forEach(el => { if (el.dataset.k !== 'corpus') el.disabled = busy; });
+    workbench?.updateTrack(id);
     $('render-btn').disabled = rendering || pendingCorpora.size > 0;
     $('undo-btn').disabled = pendingCorpora.size > 0 || !undoStack.length;
   }
@@ -1087,9 +1109,10 @@
       const matches = `${p.instrument} ${ROLE_TEXT[p.role] || p.role} ${s.text || ''} ${corpusName(corpusOf(s))}`.toLowerCase().includes(query);
       const category = filter === 'all' || (filter === 'muted' ? s.mute : filter === 'solo' ? s.solo
         : filter === 'drums' ? p.is_drums : p.role === filter);
-      r.hidden = !(matches && category); if (!r.hidden) shown++;
+      r.hidden = !(matches && category); r.dataset.filtered = String(r.hidden); if (!r.hidden) shown++;
     }
     $('part-count').textContent = `${shown} / ${song.parts.length} parts`;
+    workbench?.refresh();
   }
   function drawMix(id) {
     const r = row(id), s = parts[id]; if (!r) return;
@@ -1178,8 +1201,13 @@
     else if (k === 'solo') { s.solo = e.target.checked; r.classList.toggle('solo', s.solo); }
     else if (k === 'mute' || k === 'visible') { s[k] = e.target.checked; r.classList.toggle('muted', s.mute); }
     else if (k === 'hit') { s.hit = e.target.checked; refreshSample(id); }
-    else if (k === 'instrument') { s.instrument = e.target.value; drawInstrument(song.parts.find(p => p.id === id)); }
-    else if (k === 'program') s.program = parseInt(e.target.value);
+    else if (k === 'instrument') {
+      const p = song.parts.find(p => p.id === id); s.instrument = e.target.value;
+      if (onChip(p,s) && !p.settings.text) { s.mute = false; s.visible = true;
+        r.querySelector('[data-k=mute]').checked = false; r.querySelector('[data-k=visible]').checked = true; }
+      drawInstrument(p);
+    }
+    else if (k === 'program') { s.program = parseInt(e.target.value); drawInstrument(song.parts.find(p => p.id === id)); }
     else s[k] = e.target.value;
     changed(`${id}:${k}`);
   });
@@ -1390,7 +1418,7 @@
           lastResult = {result: j.result, meta: job.meta};
           renderHistory = [lastResult, ...renderHistory.filter(item => item.result.video_url !== j.result.video_url)].slice(0, 5);
           store.set('ytpmv-render-history', renderHistory);
-          show(j.result, job.meta); drawRenderHistory();
+          show(j.result, job.meta); drawRenderHistory(); workbench?.setTab('video');
           status(`Finished ${job.meta.title}.`);
         } else status(`${job.meta.title}: ${j.error || 'render cancelled'}`, j.status === 'error');
         return;
@@ -1506,6 +1534,9 @@
       $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(err.message)}</span>`;
     }
   });
+  workbench = createYtpmvWorkbench({song: () => song, parts: () => parts, row, onChip, toneName,
+    speed: () => Number($('opt-speed').value), synth: () => synthMode,
+    corpusName: s => corpusName(corpusOf(s)), selectCorpus});
   loadLibrary();
 
   // ── come back to where we were ───────────────────────────────────────────

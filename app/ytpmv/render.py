@@ -208,6 +208,14 @@ def analyse(midi_id: str, progress=None) -> dict:
         # And with no voice, where a drum has nothing to play but the kit.
         p["chip_tones_synth"] = {c: chip_tone(part, c, as_bass=(part.id == low), voice_drums=False)
                                  for c in CHIPS}
+        # A bounded overview of real MIDI notes for the track workbench.
+        stride = max(1, math.ceil(len(part.notes) / 1024))
+        p["activity"] = [[round(n.start, 4), round(n.dur, 4), n.pitch]
+                         for n in part.notes[::stride]]
+        p["program_tones"] = {
+            c: [chip_tone(part, c, as_bass=(part.id == low), program=program)
+                for program in range(len(music.GM_PROGRAMS))]
+            for c in CHIPS if not part.is_drums and not c.endswith("-voice")}
     return out
 
 
@@ -495,22 +503,30 @@ def _merge(defaults: dict, given: dict | None) -> dict:
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 def grid(n: int) -> tuple[int, int, int, int]:
-    """(cols, rows, tile_w, tile_h) for n tiles, as near 16:9 overall as it gets."""
+    """Nominal grid on a fixed widescreen canvas; rows may contain fewer cells."""
     n = max(n, 1)
-    best = None
-    for cols in range(1, n + 1):
-        rows = math.ceil(n / cols)
-        aspect = (cols * 16) / (rows * 9)
-        cost = abs(math.log(aspect / (16 / 9))) + 0.3 * (cols * rows - n)
-        if best is None or cost < best[0]:
-            best = (cost, cols, rows)
-    _c, cols, rows = best
-    tw = min(samples.SRC_W, _OUT_W // cols)
-    th = tw * 9 // 16
-    if th * rows > _OUT_H:
-        th = _OUT_H // rows
-        tw = th * 16 // 9
-    return cols, rows, tw - tw % 2, th - th % 2
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    return cols, rows, _OUT_W // cols, _OUT_H // rows
+
+
+def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H) -> list[tuple[int, int, int, int]]:
+    """(x, y, width, height), covering the canvas without empty grid slots.
+
+    Balance the row counts, putting the extra cells in the upper rows. Three
+    parts are two on top and one centred across the full lower row. Integer
+    boundaries partition every pixel, including console-sized canvases.
+    """
+    n = max(1, n)
+    rows = grid(n)[1]
+    cells = []
+    for row_index in range(rows):
+        count = n // rows + (row_index < n % rows)
+        y0, y1 = row_index * height // rows, (row_index + 1) * height // rows
+        for col in range(count):
+            x0, x1 = col * width // count, (col + 1) * width // count
+            cells.append((x0, y0, x1 - x0, y1 - y0))
+    return cells
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -565,7 +581,7 @@ def _through_chip(song: music.Song, settings: dict, given: dict, chip: str | Non
         if chip and not keep:
             s_["tone"] = chip_tone(p, chip, as_bass=(p.id == low), program=s_.get("program"),
                                    voice_drums=not synth)
-        if synth:
+        if synth or s_["tone"] in tones.SYNTH:
             # Muted for want of a word is not muted: there are no words.
             s_["text"] = s_["tone"]
             s_["mute"] = bool(asked.get("mute", False))
@@ -673,7 +689,13 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     given = {p.get("id"): p for p in prepare_parts(params.get("parts") or [], synth)}
     # Recommendations only for parts the request did not choose a sound for,
     # and none at all when nothing is going to be said.
-    need = [] if synth else [p for p in song.parts if not (given.get(p.id) or {}).get("text")
+    def needs_voice(p):
+        asked = given.get(p.id) or {}
+        tone = (tones.resolve(asked.get("tone")) if tones.overrides_switch(asked.get("tone"))
+                else chip_tone(p, chip) if chip else "clean")
+        return tone not in tones.SYNTH
+
+    need = [] if synth else [p for p in song.parts if needs_voice(p) and not (given.get(p.id) or {}).get("text")
                              and not ((given.get(p.id) or {}).get("mute")
                                       and not (given.get(p.id) or {}).get("visible", True))]
     recs = {}
@@ -690,6 +712,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
     _through_chip(song, settings, given, chip, g_transpose, synth)
+    chip_parts = {p.id for p in song.parts if settings[p.id]["tone"] in tones.SYNTH}
 
     t_from = _num(start_seconds, 0, 0, max(0, song.duration / speed)) if audio_only else 0.0
     T = min(song.duration / speed + _TAIL, t_from + max_s)
@@ -714,7 +737,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     for i, part in enumerate(wanted.values()):
         say("samples", i, len(wanted))
         s = settings[part.id]
-        if synth:
+        if part.id in chip_parts:
             sample_of[part.id] = []             # the chip needs nothing to play from
             continue
         if vary == "ultra":
@@ -757,21 +780,25 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     #
     # Without a voice every shown part is played into it, muted or not,
     # because its tile is a picture of the sound it makes.
-    cols, rows, tw, th = grid(len([p for p in shown if p.id in sample_of]) or 1)
-    W, H = cols * tw, rows * th
+    tiles = [p for p in shown if p.id in sample_of]
+    if not tiles and not synth:
+        tiles = [p for p in playing if p.id in sample_of][:1]
+    W, H = _OUT_W, _OUT_H
     draft = bool(opts.get("draft", False))
     is_retro = screen in screens.SIZES
     if is_retro:
         cw, ch = screens.SIZES[screen]
-        sw, sh = cw // cols, ch // rows            # a tile, in the console's own pixels
-    elif draft:
-        cw, ch = W // 2, H // 2
-        sw, sh = tw // 2, th // 2
     else:
-        cw, ch = W, H
-        sw, sh = tw, th
+        # Samples are 480p-wide sources. Decode/composite near their native
+        # size and upscale the finished canvas once, rather than retaining
+        # hundreds of megabytes of already-upscaled frames per take.
+        cw = min(W, math.ceil(math.sqrt(len(tiles) or 1)) * samples.SRC_W)
+        ch = max(2, int(cw * H / W) // 2 * 2)
+        if draft:
+            cw, ch = max(2, cw // 4 * 2), max(2, ch // 4 * 2)
+    cells = dict(zip((p.id for p in tiles), grid_cells(len(tiles), cw, ch)))
     traces: dict[str, np.ndarray] = {}
-    scratch = np.zeros_like(mix) if balance or synth else None
+    scratch = np.zeros_like(mix) if balance or chip_parts else None
     levels: dict[str, dict] = {}
     # With balance, every part is kept as a stem on disk until all of them are
     # measured, because where one belongs depends on the rest; see
@@ -793,7 +820,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
         if part.id not in sample_of:
             continue
         into = mix if part.id in playing_ids else None
-        if (balance and into is not None) or synth:
+        if (balance and into is not None) or part.id in chip_parts:
             scratch[span[0]:span[1]] = 0.0
             into = scratch
         span = [N, 0]
@@ -801,13 +828,13 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                               t_from, T, speed, g_transpose, flip, tick, jitter, vary, cuts,
                               span)
         lo, hi = span[0], max(span)
-        if synth and settings[part.id]["visible"] and not audio_only:
+        if part.id in chip_parts and part.id in cells and not audio_only:
             traces[part.id] = scope.traces(
-                scratch.mean(axis=1), n_frames, spf, max(1, sw - 1),
+                scratch.mean(axis=1), n_frames, spf, max(1, cells[part.id][2] - 1),
                 hz=None if part.is_drums else midi_to_hz(
                     part.median_pitch() + 12 * settings[part.id]["octave"]
                     + settings[part.id]["transpose"] + g_transpose))
-        if synth and not balance and part.id in playing_ids:
+        if part.id in chip_parts and not balance and part.id in playing_ids:
             mix[lo:hi] += scratch[lo:hi]
         if balance and into is scratch and part.id in playing_ids:
             pan = (settings[part.id]["pan"] + 1) * math.pi / 4
@@ -871,17 +898,10 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                            "volume": settings[p.id]["volume"], "pan": settings[p.id]["pan"]}
                           for p in playing if p.id in sample_of]}
 
-    tiles = [p for p in shown if p.id in sample_of]
-    if not tiles and not synth:
-        tiles = [p for p in playing if p.id in sample_of][:1]
-        cols, rows, tw, th = grid(len(tiles))
-        W, H = cols * tw, rows * th
-    tile_w = sw if (is_retro or draft) else tw
-    tile_h = sh if (is_retro or draft) else th
-    frames_of = {} if synth else {p.id: [smp.frames(tile_w, tile_h,
+    frames_of = {p.id: [smp.frames(cells[p.id][2], cells[p.id][3],
                                                  check_cancel=lambda: say("frames", 0, n_frames))
                                        for smp in sample_of[p.id]]
-                                  for p in tiles}
+                                  for p in tiles if p.id not in chip_parts}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
     run_id = uuid.uuid4().hex[:10]
@@ -898,23 +918,16 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
 
     resources.callback(discard_partial)
     vf = ["format=yuv420p"]
-    src_w, src_h = (screens.SIZES[screen] if is_retro else (W // 2, H // 2) if draft else (W, H))
-    if synth or is_retro or draft:
-        # Drawn in the console's pixels, so a label goes where its tile is
-        # once they are blown up, not where a full-size tile would have been.
-        label_tw, label_th = sw * W // src_w, sh * H // src_h
-    else:
-        label_tw, label_th = tw, th
+    src_w, src_h = cw, ch
     font = g.subtitle_font() if labels else None
     if font:
-        for i, p in enumerate(tiles):
-            x, y = (i % cols) * label_tw, (i // cols) * label_th
+        for p, (x, y, label_tw, label_th) in zip(tiles, grid_cells(len(tiles), W, H)):
             text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
             f = font.replace("\\", "/").replace(":", "\\:")
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
                          f":fontsize={max(12, label_th // 12)}:borderw=2:bordercolor=black"
                          f":x={x + 8}:y={y + label_th - label_th // 12 - 10}")
-    if draft and not is_retro:
+    if not is_retro and (src_w, src_h) != (W, H):
         vf.insert(0, f"scale={W}:{H}:flags=bilinear")
     if is_retro:
         # Blown back up first, so the labels below are still placed in the
@@ -935,7 +948,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     stage = ["frames", 0, n_frames]
     watchers = resources.enter_context(ExitStack())
     watchers.enter_context(cancellation_watch(proc, (lambda: say(*stage)) if progress else None))
-    canvas = np.zeros((src_h, src_w, 3) if (synth or is_retro or draft) else (H, W, 3), dtype=np.uint8)
+    canvas = np.zeros((src_h, src_w, 3), dtype=np.uint8)
     drawn: dict[int, tuple] = {}              # tile -> the state last drawn into canvas
     last_frame = None                         # the last retro frame, while nothing moves
     try:
@@ -944,14 +957,14 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
             if f % 25 == 0:
                 say("frames", f, n_frames)
             t = f / FPS
-            moved = synth
+            moved = bool(chip_parts)
             for i, p in enumerate(tiles):
-                if synth:
+                x0, y0, tile_w, tile_h = cells[p.id]
+                if p.id in chip_parts:
                     # A pixel of black between tiles, so the traces do not run together.
-                    x0, y0 = (i % cols) * sw, (i // cols) * sh
-                    canvas[y0:y0 + sh - 1, x0:x0 + sw - 1] = _scope_tile(
+                    canvas[y0:y0 + tile_h - 1, x0:x0 + tile_w - 1] = _scope_tile(
                         traces[p.id][f], hits.get(p.id, []), starts_of[p.id], t,
-                        sw - 1, sh - 1, flash, dim, screen)
+                        tile_w - 1, tile_h - 1, flash, dim, screen)
                     continue
                 state = _tile_state(frames_of[p.id], hits.get(p.id, []), starts_of[p.id],
                                     t, flash, dim)
@@ -959,7 +972,6 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                     continue                  # the canvas already shows it
                 drawn[i] = state
                 moved = True
-                x0, y0 = (i % cols) * tile_w, (i // cols) * tile_h
                 canvas[y0:y0 + tile_h, x0:x0 + tile_w] = _draw_tile(frames_of[p.id], state)
             try:
                 if is_retro:

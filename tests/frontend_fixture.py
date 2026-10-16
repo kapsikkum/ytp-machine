@@ -61,6 +61,7 @@ def fixture_song(corpus, midi_id=MIDI_ID):
                                 ("kick", "drums:kick", "Kick drum")]:
         suggestion = fixture_part(part_id, corpus)
         song["parts"].append({"id": part_id, "role": role, "instrument": name, "notes": 8,
+            "activity": [[i * 1.2, .4 + i % 2 * .2, 48 + i % 5 * 3] for i in range(8)],
             "range": None if part_id == "kick" else ["C3", "C5"], "polyphony": 1,
             "is_drums": part_id == "kick", "settings": suggestion["settings"],
             "recommended": suggestion["recommended"],
@@ -68,10 +69,12 @@ def fixture_song(corpus, midi_id=MIDI_ID):
             "chip_tones_synth": {c: "md-fm" for c in CHIPS} |
                                  {c + "-voice": "md-fm" for c in CHIPS}})
     song["instruments"] = {"voice": [["clean", "Voice as recorded"], ["robot", "Robotic voice"]],
-        "synth": ["md-fm", "md-noise"], "programs": ["Acoustic Grand Piano", "Bright Piano"],
+        "synth": ["md-fm", "md-noise", "opl2", "opl3", "snes"], "programs": ["Acoustic Grand Piano", "Bright Piano"],
         "chips": {c: "Synthetic chip for browser checks" for c in CHIPS},
         "machine_of": {c: "md" for c in CHIPS}, "machines": {"md": {"name": "Mega Drive",
-            "melodic": [["md-fm", "FM instrument"]], "drums": [["md-noise", "Noise drum"]]}}}
+            "melodic": [["md-fm", "FM instrument"]], "drums": [["md-noise", "Noise drum"]]},
+            "opl": {"name": "OPL2 / OPL3", "melodic": [["opl2", "AdLib FM patch"], ["opl3", "OPL3 FM patch"]], "drums": [["opl2", "AdLib kit"]]},
+            "snes": {"name": "SNES", "melodic": [["snes", "BRR sampled instrument"]], "drums": [["snes", "BRR kit"]]}}}
     return song
 
 

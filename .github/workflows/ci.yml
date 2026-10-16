@@ -225,6 +225,7 @@ jobs:
           node tests/test_frontend_browser.js
           node tests/test_ytpmv_browser.js
           node tests/test_ytpmv_ux_browser.js
+          node tests/test_ytpmv_workbench_browser.js
 
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
