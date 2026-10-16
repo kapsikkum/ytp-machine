@@ -136,8 +136,57 @@
     body.synth .voice-only, body.synth .part .sound, body:not(.synth) .synth-only { display: none !important; }
     body.synth .part { grid-template-columns: minmax(150px, 1fr) minmax(280px, 2fr); }
 
+    /* The arranger keeps everyday controls visible; details are per part. */
+    :root { --dim: #9898a3; }
+    body.has-song #drop { padding: .65rem; }
+    body.has-song #drop small { display: none; }
+    #transport { position: sticky; top: var(--top-height, 60px); z-index: 30; background: var(--surface); padding: .75rem 1rem; border: 1px solid var(--line-2); }
+    #transport .tools, #parts-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+    #transport button { min-height: 40px; }
+    #transport #render-btn { margin-left: auto; font-size: .95rem; padding: .45rem 1rem; }
+    #transport #player { display: block; width: 100%; height: 34px; margin-top: .5rem; }
+    #transport .preview-range { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin-top: .5rem; font-size: .76rem; color: var(--muted); }
+    #transport input[type=number] { width: 5rem; }
+    #transport .hint, #status { font-size: .76rem; }
+    #parts-tools { margin-bottom: .8rem; }
+    #parts-tools input[type=search] { flex: 1; min-width: 10rem; }
+    #parts-tools .count, #save-state, #result-state { font-size: .75rem; color: var(--muted); }
+    #bulk-tools { margin: .5rem 0 1rem; font-size: .78rem; }
+    #bulk-tools summary { cursor: pointer; }
+    #bulk-tools .tools { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+    .part:not(.expanded) [data-advanced] { display: none !important; }
+    .part.solo { border-color: var(--green); }
+    .part.instrumental { grid-template-columns: minmax(150px, 1fr) minmax(270px, 2fr); }
+    .part.instrumental .sound, .part:not(.instrumental) .instrument-only { display: none; }
+    .part.muted { opacity: .72; }
+    .part .source-note { font-size: .72rem; color: var(--muted); overflow-wrap: anywhere; margin-top: .4rem; }
+    .part .flags button { font-size: .72rem; }
+    .part button, .part select { min-height: 34px; }
+    .knobs .v select { max-width: none; }
+    .knobs .mix { flex-wrap: wrap; }
+    .knobs .mix input[type=number] { width: 4.2rem; font-size: .76rem; }
+    .knobs .mix button { padding: .15rem .4rem; font-size: .7rem; }
+    .sample-panel { margin-top: .6rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+    .sample-panel video { width: 100%; max-height: 14rem; background: #000; border-radius: 6px; }
+    .sample-panel input { width: 5rem; }
+    .sample-panel p, .result-meta { color: var(--muted); font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; }
+    #result-state { margin-top: .6rem; }
+    #result-state.stale { color: var(--amber); }
+    #recent-renders { margin-top: .7rem; }
+    #recent-renders button { margin: .3rem .4rem .1rem 0; font-size: .74rem; white-space: normal; }
+    #status:empty, #preview-status:empty { display: none; }
+    @media (max-width: 600px) {
+      .card { padding: .85rem; }
+      #transport { padding: .6rem; }
+      #transport .tools { gap: .35rem; }
+      #transport #render-btn { margin-left: 0; }
+      .part { padding: .7rem; gap: .5rem; }
+      .part button, .part select { min-height: 40px; }
+      .knobs .flags label { min-height: 36px; }
+    }
+
     @media (max-width: 820px) {
-      .part, body.synth .part { grid-template-columns: 1fr; }
+      .part, .part.instrumental, body.synth .part { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -158,18 +207,18 @@
 
 <div class="card">
   <div class="lede"><b>YTPMV</b><span class="voice-only">a MIDI file, sung by the corpus — every note pitch perfect</span><span class="synth-only">a MIDI file, played on the chip — no voice at all</span></div>
-  <div id="drop" tabindex="0">
+  <div id="drop" tabindex="0" role="button" aria-label="Choose or drop a MIDI file">
     <b>drop a .mid file here</b> or click to pick one
     <small>each instrument becomes a tile; each note replays its clip, tuned to the note</small>
   </div>
   <input type="file" id="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
-  <div id="upload-status" class="hint"></div>
+  <div id="upload-status" class="hint" role="status"></div>
 </div>
 
 <details class="card" id="library" hidden>
   <summary><span class="section-label" style="margin:0">midi library</span><span class="count" id="lib-count"></span></summary>
   <div class="lib-tools">
-    <input type="search" id="lib-search" placeholder="search titles, keys, instruments…">
+    <input type="search" id="lib-search" placeholder="search titles, keys, instruments…" aria-label="Search MIDI library">
     <select id="lib-sort" title="Order by">
       <option value="added">newest</option>
       <option value="title">title</option>
@@ -207,6 +256,27 @@
   </details>
 </div>
 
+<div class="card" id="transport" hidden>
+  <div class="tools">
+    <button id="preview-mix" class="play">▶ preview mix</button>
+    <button id="stop-preview" title="Stop audition audio and cancel its queued work">stop</button>
+    <button id="undo-btn" disabled>undo</button>
+    <button id="render-btn">render video</button>
+    <button id="cancel-render" hidden>cancel render</button>
+    <button id="reconnect-render" hidden>reconnect</button>
+  </div>
+  <details id="preview-range"><summary class="hint">preview range</summary>
+    <div class="preview-range"><label>from <input type="number" id="preview-from" value="0" min="0" step="1"> seconds</label>
+      <label>length <select id="preview-seconds"><option value="6">6 seconds</option><option value="10" selected>10 seconds</option><option value="15">15 seconds</option></select></label>
+      <span>Solo leaves mute settings and the video render unchanged. Auto balance is measured over this preview section.</span>
+    </div>
+  </details>
+  <audio id="player" controls preload="none" hidden aria-label="Arrangement preview"></audio>
+  <div id="preview-status" class="hint" role="status"></div>
+  <div id="status" role="status"></div>
+  <div id="progress" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100"><div></div></div>
+</div>
+
 <div class="card" id="parts-card" hidden>
   <div id="machine">
     <label title="Play the song on an emulated console, sound and picture both: the picture is cut to that machine's resolution and colours. The plain settings play the notes on the chip; the -voice settings keep the voice, played off that console's sample channel.">chip
@@ -236,6 +306,20 @@
     </label>
     <span id="chip-about"></span>
   </div>
+  <div id="parts-tools">
+    <input id="part-search" type="search" placeholder="find a part, voice or sample…" aria-label="Filter parts">
+    <select id="part-filter" aria-label="Filter parts by role"><option value="all">all parts</option><option value="lead">tune</option><option value="bass">bass</option><option value="drums">drums</option><option value="muted">muted</option><option value="solo">solo</option></select>
+    <button id="expand-parts">expand settings</button>
+    <span class="count" id="part-count"></span>
+    <span id="save-state" role="status"></span>
+  </div>
+  <details id="bulk-tools"><summary>change multiple parts</summary><div class="tools">
+    <select id="bulk-corpus" aria-label="Corpus to apply to all voice parts"></select>
+    <button id="apply-corpus" title="Includes voice parts hidden by the filter">apply to all voice parts</button>
+    <button id="unmute-all">unmute all</button>
+    <button id="clear-solo">clear solo</button>
+    <button id="reset-btn" title="Restore each part's suggested settings; undo can restore your changes">reset to suggestions</button>
+  </div></details>
   <div id="parts"></div>
 </div>
 
@@ -282,16 +366,10 @@
     <label title="Draft preview renders at half resolution for faster generation"><input type="checkbox" id="opt-draft"> draft preview</label>
     </div>
   </div>
-  <div id="actions">
-    <button id="render-btn">RENDER</button>
-    <button id="reset-btn" title="Throw away your changes and go back to the suggestions">reset to suggestions</button>
-    <span id="status"></span>
-  </div>
-  <div id="progress"><div></div></div>
+  <div id="result-state" role="status"></div>
   <div id="result"></div>
+  <details id="recent-renders" hidden><summary>recent renders on this device</summary><div id="render-history"></div></details>
 </div>
-
-<audio id="player" hidden></audio>
 
 <script>
 (() => {
@@ -302,6 +380,10 @@
     'drums:kick': 'kick drum', 'drums:snare': 'snare', 'drums:hats': 'hi-hats',
     'drums:toms': 'toms', 'drums:cymbals': 'cymbals', 'drums:perc': 'percussion' };
   const MODE_TEXT = { perfect: 'pitch perfect', tape: 'tape (chipmunk)', raw: 'as recorded' };
+  const TONE_TEXT = {clean: 'voice: as recorded', voice: 'voice: as recorded', robot: 'robot voice',
+    dac: 'voice: Mega Drive DAC', dpcm: 'voice: NES DPCM', 'psg-pcm': 'voice: Master System PCM',
+    brr: 'voice: SNES sampler', 'gb-pcm': 'voice: Game Boy PCM', 'sb-pcm': 'voice: Sound Blaster 8-bit',
+    'sb16-pcm': 'voice: Sound Blaster 16-bit', 'sid-digi': 'voice: Commodore 64 digi'};
   const STAGE = { waiting: 'waiting to start', samples: 'cutting samples', notes: 'singing notes',
     measuring: 'measuring words', frames: 'drawing frames', encoding: 'encoding', finished: 'finishing' };
   const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -313,10 +395,24 @@
   let info = {};            // id -> {sample describe}
   const songRequests = latestRequest();
   const previewRequests = latestRequest();
+  const previewIntents = latestRequest();
   let sampleRequests = {};
   let corpusRequests = {};
   const pendingCorpora = new Set();
-  let rendering = false;
+  let renderJob = store.get('ytpmv-active-render', null);
+  if (!renderJob?.id || !renderJob.meta?.title) renderJob = null;
+  let rendering = !!renderJob;
+  let previewJob = null;
+  let lastResult = null;
+  let renderHistory = store.get('ytpmv-render-history', []);
+  if (!Array.isArray(renderHistory)) renderHistory = [];
+  renderHistory = renderHistory.filter(item => item?.meta && typeof item.result?.video_url === 'string');
+  let projects = store.get('ytpmv-projects', {});
+  if (!projects || typeof projects !== 'object' || Array.isArray(projects)) projects = {};
+  let undoStack = [], lastState = '', lastEdit = '', lastEditAt = 0, batchEdit = false;
+  const expandedParts = new Set();
+  const samplePanels = new Set();
+  const renderPollRequests = latestRequest();
 
   async function api(url, opts = {}, corpus = liveVoice) {
     const r = await fetch(url, {...opts, headers: {...(opts.headers || {}),
@@ -325,7 +421,8 @@
     try { body = await r.json(); } catch {}
     if (!r.ok) {
       const d = body && body.detail;
-      throw new Error((d && (d.message || d)) || `server said ${r.status}`);
+      const error = new Error((d && (d.message || d)) || `server said ${r.status}`);
+      error.status = r.status; throw error;
     }
     return body;
   }
@@ -370,6 +467,8 @@
         `<option value="${esc(c.slug)}"${c.slug === liveVoice && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}` +
         `${c.words ? ` (${c.words} words)` : ''}</option>`).join('') +
         `<option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
+      $('bulk-corpus').innerHTML = '<option value="">follow page voice</option>' + installedCorpora.map(c =>
+        `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}</option>`).join('');
     } catch {
       voiceSel.innerHTML = `<option>unavailable</option><option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
     }
@@ -380,6 +479,8 @@
   // mixer settings survive, and other users keep their own default voice.
   voiceSel.addEventListener('change', async () => {
     const slug = voiceSel.value;
+    const wasBatch = batchEdit; batchEdit = true;
+    try {
     if (slug === NO_VOICE || synthMode) {
       setSynth(slug === NO_VOICE);
       if (slug === NO_VOICE || slug === liveVoice) {
@@ -408,6 +509,10 @@
       voiceSel.value = synthMode ? NO_VOICE : liveVoice;
     }
     voiceSel.disabled = false;
+    } finally {
+      batchEdit = wasBatch; voiceSel.disabled = false;
+      if (song) changed('page-voice');
+    }
   });
 
   for (let s = -12; s <= 12; s++) {
@@ -416,6 +521,61 @@
     if (s === 0) o.selected = true;
     $('opt-transpose').appendChild(o);
   }
+
+  const OPTION_IDS = ['chip', 'len', 'speed', 'transpose', 'vary', 'balance', 'accurate',
+    'jitter', 'flip', 'flash', 'dim', 'labels', 'draft'];
+  const captureOptions = () => Object.fromEntries(OPTION_IDS.map(key => {
+    const el = $('opt-' + key); return [key, el.type === 'checkbox' ? el.checked : el.value];
+  }));
+  const defaultOptions = captureOptions();
+  function applyOptions(options = {}) {
+    for (const key of OPTION_IDS) {
+      const el = $('opt-' + key), value = options[key] ?? defaultOptions[key];
+      if (el.type === 'checkbox') el.checked = !!value;
+      else if (Array.from(el.options).some(o => o.value === String(value))) el.value = String(value);
+    }
+  }
+  function captureState(defaults = false) {
+    const state = {parts, options: captureOptions(), voice: liveVoice, synth: synthMode};
+    if (defaults) state.defaults = Object.fromEntries(song.parts.map(p => [p.id,
+      {settings: p.settings, recommended: p.recommended, corpus: p.recommendationCorpus}]));
+    return state;
+  }
+  function arrangementSignature() {
+    if (!song) return '';
+    const text = JSON.stringify({midi_id: song.midi_id, options: captureOptions(), synth: synthMode,
+      parts: song.parts.map(sendable)});
+    let a = 2166136261, b = 2246822519;
+    for (let i = 0; i < text.length; i++) {
+      a = Math.imul(a ^ text.charCodeAt(i), 16777619); b = Math.imul(b ^ text.charCodeAt(i), 3266489917);
+    }
+    return `${text.length}:${a >>> 0}:${b >>> 0}`;
+  }
+  function saveProject() {
+    if (!song || batchEdit || pendingCorpora.size) return;
+    projects[song.midi_id] = {...captureState(), title: song.title, at: Date.now()};
+    try {
+      localStorage.setItem('ytpmv-projects', JSON.stringify(projects));
+      localStorage.setItem('ytpmv-last-midi', JSON.stringify(song.midi_id));
+      localStorage.removeItem('ytpmv');
+      $('save-state').textContent = 'saved on this device';
+    } catch { $('save-state').textContent = 'device storage unavailable — keep this tab open'; }
+  }
+  function updateResultState() {
+    if (!lastResult) { $('result-state').textContent = ''; return; }
+    const sameSong = song && lastResult.meta.midi_id === song.midi_id;
+    const stale = !sameSong || lastResult.meta.signature !== arrangementSignature();
+    $('result-state').classList.toggle('stale', stale);
+    $('result-state').textContent = stale ? `Saved render: ${lastResult.meta.title} — ${sameSong ? 'settings have changed since this render' : 'from another song'}`
+      : `Saved render matches this arrangement: ${lastResult.meta.title}`;
+  }
+  const topHeader = document.querySelector('header.top');
+  const positionTransport = () => document.documentElement.style.setProperty('--top-height', `${topHeader.getBoundingClientRect().height}px`);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(positionTransport).observe(topHeader);
+  positionTransport();
+  for (const key of OPTION_IDS) $('opt-' + key).addEventListener('change', () => {
+    if (song) changed('option-' + key);
+  });
 
   // ── upload ───────────────────────────────────────────────────────────────
   const drop = $('drop'), file = $('file');
@@ -439,7 +599,7 @@
       const data = await api('/api/ytpmv/midi', { method: 'POST', body: fd });
       if (!songRequests.current(request)) return;
       $('upload-status').textContent = '';
-      load(data, null);
+      load(data, projects[data.midi_id]?.parts || null, projects[data.midi_id]);
       loadLibrary();
     } catch (e) {
       if (!songRequests.current(request)) return;
@@ -447,11 +607,26 @@
     }
   }
 
-  function load(data, saved) {
+  function load(data, saved, project = null) {
+    stopPreview();
     Object.values(typing).forEach(clearTimeout); typing = {}; sampleRequests = {}; corpusRequests = {};
     pendingCorpora.clear();
     $('render-btn').disabled = rendering;
     song = data;
+    if (project) {
+      if (installedCorpora.some(c => c.slug === project.voice)) {
+        liveVoice = project.voice; store.set('ytpmv-default-corpus', liveVoice);
+      }
+      synthMode = !!project.synth;
+      document.body.classList.toggle('synth', synthMode);
+      store.set('ytpmv-synth', synthMode);
+      applyOptions(project.options);
+    } else applyOptions(defaultOptions);
+    for (const o of $('opt-chip').options) o.disabled = synthMode && soundsVoice(o.value);
+    if (synthMode && soundsVoice(chipNow())) $('opt-chip').value = chipNow().replace(/-voice$/, '') || 'md';
+    lastChip = chipNow();
+    voiceSel.value = synthMode ? NO_VOICE : liveVoice;
+    expandedParts.clear(); samplePanels.clear();
     parts = {};
     info = {};
     for (const p of song.parts) {
@@ -460,7 +635,6 @@
       parts[p.id] = Object.assign({}, p.settings, (saved && saved[p.id]) || {});
       if (!parts[p.id].corpus && p.recommended && p.recommended.pitch) info[p.id] = { pitch: p.recommended.pitch };
     }
-    store.set('ytpmv', { midi_id: song.midi_id, parts });
     $('song-title').textContent = song.title || 'untitled';
     $('song-desc').textContent = song.description;
     $('song-chips').innerHTML = [
@@ -469,11 +643,28 @@
       ['parts', song.parts.length],
     ].map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
     drawVoiceHelp();
-    ['song', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
+    ['song', 'transport', 'parts-card', 'render-card'].forEach(id => $(id).hidden = false);
+    document.body.classList.add('has-song');
+    $('preview-from').value = 0;
+    $('preview-from').max = Math.ceil(song.duration / Number($('opt-speed').value));
     drawParts();
-    if (!synthMode) for (const p of song.parts) {
-      if (parts[p.id].corpus) selectCorpus(p.id, parts[p.id].corpus, true);
-      else if (parts[p.id].text) refreshSample(p.id);
+    undoStack = []; lastEdit = ''; lastState = JSON.stringify(captureState(true));
+    $('undo-btn').disabled = true;
+    lastResult = renderHistory.find(item => item.meta?.midi_id === song.midi_id) || null;
+    if (lastResult) show(lastResult.result, lastResult.meta);
+    else $('result').innerHTML = '';
+    saveProject(); updateResultState(); drawRenderHistory();
+    if (!synthMode) {
+      const recommendations = new Map();
+      for (const p of song.parts) {
+        const s = parts[p.id], voice = corpusOf(s);
+        if (s.corpus || data.corpus !== liveVoice) {
+          if (!recommendations.has(voice)) recommendations.set(voice, api(`/api/ytpmv/midi/${song.midi_id}`, {}, voice));
+          selectCorpus(p.id, s.corpus || '', true, recommendations.get(voice).then(d => ({
+            ...d.parts.find(part => part.id === p.id), corpus: d.corpus, noises: d.noises, units: d.units,
+          })));
+        } else if (s.text) refreshSample(p.id);
+      }
     }
   }
 
@@ -540,12 +731,13 @@
       const alts = (rec.alternatives || []).map(a =>
         `<button data-alt="${esc(a.text)}" data-take="${a.take}">${esc(a.text)}</button>`).join('');
       return `
-      <div class="part${s.mute ? ' muted' : ''}" data-id="${p.id}">
+      <div class="part${s.mute ? ' muted' : ''}${s.solo ? ' solo' : ''}${expandedParts.has(p.id) ? ' expanded' : ''}" data-id="${p.id}">
         <div class="who">
           <div class="role">${ROLE_ICON[p.role] || '♪'} ${esc(ROLE_TEXT[p.role] || p.role)}</div>
           <div class="name">${esc(p.instrument)}</div>
           <div class="meta">${p.notes} notes · ${esc(range)}${p.polyphony > 1 && !p.is_drums ? ` · up to ${p.polyphony} at once` : ''}</div>
-          <div class="synth-only">
+          <div class="source-note" data-el="source-note"></div>
+          <div class="instrument-only">
             <button class="play" data-act="preview" title="hear a few seconds of this part on its own, on the chip">▶ part</button>
             <div class="err" data-el="err"></div>
           </div>
@@ -553,52 +745,64 @@
         <div class="sound">
           <div class="row">
             <input type="text" list="${esc(vocabularyFor(corpusOf(s)))}" value="${esc(s.text || '')}" placeholder="a word or phrase" data-k="text" aria-label="Sample for ${esc(p.instrument)}">
-            <button data-act="prev" title="previous take">◀</button>
+            <button data-act="prev" title="previous take" aria-label="Previous take for ${esc(p.instrument)}">◀</button>
             <span class="take" data-el="take">take ${s.take + 1}</span>
-            <button data-act="next" title="next take">▶</button>
+            <button data-act="next" title="next take" aria-label="Next take for ${esc(p.instrument)}">▶</button>
           </div>
           <div class="row">
             <button class="play" data-act="preview" title="hear a few seconds of this part on its own">▶ part</button>
-            <button data-act="clip" title="see and hear the clip it is cut from">clip</button>
+            <button data-act="clip" aria-expanded="${samplePanels.has(p.id)}" title="Browse numbered takes and watch the sample here">takes &amp; clip</button>
             <span data-el="badge"></span>
           </div>
           <div class="row alts" data-el="alts">${alts ? `<span class="or">or:</span>${alts}` : ''}</div>
           <div class="err" data-el="err"></div>
+          <div class="sample-panel" data-el="sample-panel"${samplePanels.has(p.id) ? '' : ' hidden'}>
+            <video controls preload="none" aria-label="Source sample for ${esc(p.instrument)}"></video>
+            <div class="row"><label>take <input type="number" min="1" value="${s.take + 1}" data-k="take-choice" aria-label="Take number for ${esc(p.instrument)}"></label><span data-el="take-total"></span></div>
+            <p data-el="sample-source"></p>
+          </div>
         </div>
         <div class="knobs">
           <div class="kv">
             <div class="kvrow" title="What plays this part. auto is whatever the chip picks; anything else is kept whatever the chip is">
               <span class="k">instrument</span>
-              <div class="v"><select data-k="instrument" data-el="inst" autocomplete="off"></select></div>
+              <div class="v"><select data-k="instrument" data-el="inst" autocomplete="off" aria-label="Instrument for ${esc(p.instrument)}"></select></div>
             </div>
             <div class="kvrow voice-only" data-el="corpus-wrap" title="The installed corpus this part sings with. Follow page voice uses the voice selected at the top.">
               <span class="k">corpus</span>
               <div class="v"><select data-k="corpus" aria-label="Corpus for ${esc(p.instrument)}"></select></div>
             </div>
-            ${p.is_drums ? '' : `<div class="kvrow" data-el="patch-wrap" title="The General MIDI instrument: the patch an OPL plays, and the sample a SNES does" hidden>
+            ${p.is_drums ? '' : `<div class="kvrow" data-advanced data-el="patch-wrap" title="The General MIDI instrument: the patch an OPL plays, and the sample a SNES does" hidden>
               <span class="k">patch</span>
               <div class="v"><select data-k="program" data-el="patch" autocomplete="off"></select></div>
             </div>
-            <div class="kvrow" title="Move the part up or down without changing the tune">
+            <div class="kvrow" data-advanced title="Move the part up or down without changing the tune">
               <span class="k">octave</span>
               <div class="v oct"><button data-act="oct-">−</button><span data-el="oct">${fmtOct(s.octave)}</span><button data-act="oct+">+</button></div>
             </div>`}
-            <div class="kvrow voice-only" data-el="mode-wrap" title="How the clip is put on the note">
+            <div class="kvrow voice-only" data-advanced data-el="mode-wrap" title="How the clip is put on the note">
               <span class="k">sound</span>
-              <div class="v"><select data-k="mode">${Object.entries(MODE_TEXT).map(([v, t]) =>
+              <div class="v"><select data-k="mode" aria-label="Pitch mode for ${esc(p.instrument)}">${Object.entries(MODE_TEXT).map(([v, t]) =>
                 `<option value="${v}"${s.mode === v ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
             </div>
             <div class="kvrow">
               <span class="k">level</span>
               <div class="v mix">
-                <input type="range" min="0" max="2" step="0.05" value="${s.volume}" data-k="volume" title="volume">
-                <span class="tiny">pan</span>
-                <input type="range" min="-1" max="1" step="0.05" value="${s.pan}" data-k="pan" title="left or right">
+                <input type="range" min="0" max="2" step="0.05" value="${s.volume}" data-k="volume" aria-label="Volume for ${esc(p.instrument)}">
+                <input type="number" min="0" max="200" step="5" value="${Math.round(s.volume * 100)}" data-k="volume-value" aria-label="Volume percent for ${esc(p.instrument)}"><span class="tiny">%</span>
+                <button data-act="volume-reset" data-advanced title="Restore the suggested volume">default</button>
               </div>
             </div>
-            <div class="kvrow" title="Cut each sound at the end of its note, or let it ring until the next one">
+            <div class="kvrow" data-advanced>
+              <span class="k">pan</span><div class="v mix">
+                <input type="range" min="-1" max="1" step="0.05" value="${s.pan}" data-k="pan" aria-label="Pan for ${esc(p.instrument)}">
+                <input type="number" min="-100" max="100" step="5" value="${Math.round(s.pan * 100)}" data-k="pan-value" aria-label="Pan percent for ${esc(p.instrument)}" title="−100 left, 0 centre, +100 right">
+                <button data-act="pan-center">centre</button>
+              </div>
+            </div>
+            <div class="kvrow" data-advanced title="Cut each sound at the end of its note, or let it ring until the next one">
               <span class="k">notes</span>
-              <div class="v"><select data-k="sustain">
+              <div class="v"><select data-k="sustain" aria-label="Note length for ${esc(p.instrument)}">
                 <option value="note"${s.sustain === 'note' ? ' selected' : ''}>stop at note end</option>
                 <option value="ring"${s.sustain === 'ring' ? ' selected' : ''}>let it ring</option>
               </select></div>
@@ -606,14 +810,19 @@
           </div>
           <div class="flags">
             <label><input type="checkbox" data-k="mute"${s.mute ? ' checked' : ''}> mute</label>
-            <label><input type="checkbox" data-k="visible"${s.visible ? ' checked' : ''}> show tile</label>
-            ${p.is_drums ? `<label class="voice-only" title="Cut the word down to a drum sound (the pop of a b, the hiss of an s) instead of saying the whole word"><input type="checkbox" data-k="hit"${s.hit !== false ? ' checked' : ''}> drum hit</label>` : ''}
+            <label title="Audition this part in the mix preview without changing mute or the final render"><input type="checkbox" data-k="solo"${s.solo ? ' checked' : ''}> solo</label>
+            <button data-act="expand" aria-expanded="${expandedParts.has(p.id)}">${expandedParts.has(p.id) ? 'less' : 'settings'}</button>
+            <button data-act="reset-part" data-advanced>reset part</button>
+            <label data-advanced><input type="checkbox" data-k="visible"${s.visible ? ' checked' : ''}> show tile</label>
+            ${p.is_drums ? `<label class="voice-only" data-advanced title="Cut the word down to a drum sound (the pop of a b, the hiss of an s) instead of saying the whole word"><input type="checkbox" data-k="hit"${s.hit !== false ? ' checked' : ''}> drum hit</label>` : ''}
           </div>
         </div>
       </div>`;
     }).join('');
     for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); drawCorpusBusy(p.id); }
     drawChip();
+    filterParts();
+    updateSoloLabel();
   }
 
   // ── instruments ──────────────────────────────────────────────────────────
@@ -643,10 +852,11 @@
   function drawInstrument(p) {
     const r = row(p.id); if (!r) return;
     const s = parts[p.id], chip = chipNow(), cat = song.instruments;
+    r.classList.toggle('instrumental', onChip(p, s));
     const kind = p.is_drums ? 'drums' : 'melodic';
     const own = machineOf(chip);
     const option = ([t, about]) =>
-      `<option value="${esc(t)}" title="${esc(about)}"${s.instrument === t ? ' selected' : ''}>${esc(t)}</option>`;
+      `<option value="${esc(t)}" title="${esc(about)}"${s.instrument === t ? ' selected' : ''}>${esc(TONE_TEXT[t] || t.replace(/-/g, ' '))}</option>`;
     const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(option).join('')}</optgroup>` : '';
     const auto = chip ? autoTone(p, chip) : 'voice';
     let html = `<option value=""${s.instrument ? '' : ' selected'}>auto: ${esc(auto)}</option>`;
@@ -667,6 +877,8 @@
       corpusSelect.add(new Option(`${s.corpus} (not installed)`, s.corpus));
     }
     corpusSelect.value = s.corpus || '';
+    r.querySelector('[data-el=source-note]').textContent = onChip(p, s) ? `plays ${toneOf(p, s, chip)}`
+      : `voice: ${corpusName(corpusOf(s))}${s.corpus ? '' : ' · follows page voice'}`;
     r.querySelector('input[data-k=text]').setAttribute('list', vocabularyFor(corpusOf(s)));
 
     const wrap = r.querySelector('[data-el=patch-wrap]');
@@ -710,6 +922,7 @@
     delete s.instrument;
     if (synth && !s.octaveSet) delete s.octave;
     delete s.octaveSet;
+    delete s.solo;
     return s;
   }
 
@@ -760,6 +973,8 @@
       const t = r && r.querySelector('[data-el=take]');
       if (t) t.textContent = `take ${d.take + 1}/${d.takes}`;
       drawBadge(id);
+      drawSamplePanel(id);
+      saveProject();
     } catch (e) {
       if (!current()) return;
       info[id] = null;
@@ -772,13 +987,15 @@
     const r = row(id); if (!r) return;
     const busy = pendingCorpora.has(id);
     r.setAttribute('aria-busy', String(busy));
-    r.querySelectorAll('.sound input, .sound button, [data-act=preview]').forEach(el => { el.disabled = busy; });
+    r.querySelectorAll('input, select, button').forEach(el => { if (el.dataset.k !== 'corpus') el.disabled = busy; });
     $('render-btn').disabled = rendering || pendingCorpora.size > 0;
+    $('undo-btn').disabled = pendingCorpora.size > 0 || !undoStack.length;
   }
 
   async function selectCorpus(id, choice, restore = false, recommendation = null) {
     const s = parts[id], analysis = song;
     if (!s) return;
+    if (!restore) stopPreview(true);
     const p = song.parts.find(p => p.id === id);
     const voice = choice || liveVoice;
     const sequence = (corpusRequests[id] || 0) + 1;
@@ -822,7 +1039,7 @@
         r.querySelector('[data-el=take]').textContent = `take ${s.take + 1}`;
       }
       message('');
-      changed(id);
+      changed(id, !restore);
       drawInstrument(p);
       drawBadge(id);
       if (!synthMode) await refreshSample(id);
@@ -831,18 +1048,112 @@
       if (!restore) s.corpus = p.settings.corpus || (p.recommendationCorpus === liveVoice ? '' : p.recommendationCorpus);
       drawInstrument(p);
       message(e.message);
-      changed(id);
+      changed(id, !restore);
     } finally {
       if (song === analysis && corpusRequests[id] === sequence) {
         pendingCorpora.delete(id);
         drawCorpusBusy(id);
+        saveProject();
       }
     }
   }
 
-  function changed(id) {
-    store.set('ytpmv', { midi_id: song.midi_id, parts });
+  function changed(id, record = true) {
+    if (!song || batchEdit) return;
+    if (record) stopPreview(true);
+    const current = JSON.stringify(captureState(true));
+    if (record && lastState && current !== lastState) {
+      if (!id || id !== lastEdit || Date.now() - lastEditAt > 700) {
+        undoStack.push(lastState); if (undoStack.length > 30) undoStack.shift();
+      }
+      lastEdit = id; lastEditAt = Date.now();
+    }
+    lastState = current;
+    $('undo-btn').disabled = !undoStack.length;
+    saveProject(); updateResultState(); updateSoloLabel(); filterParts();
   }
+
+  function updateSoloLabel() {
+    if (!song) return;
+    const count = Object.values(parts).filter(s => s.solo).length;
+    $('preview-mix').textContent = count ? `▶ preview solo (${count})` : '▶ preview mix';
+  }
+  function filterParts() {
+    if (!song) return;
+    const query = $('part-search').value.trim().toLowerCase(), filter = $('part-filter').value;
+    let shown = 0;
+    for (const p of song.parts) {
+      const s = parts[p.id], r = row(p.id); if (!r) continue;
+      const matches = `${p.instrument} ${ROLE_TEXT[p.role] || p.role} ${s.text || ''} ${corpusName(corpusOf(s))}`.toLowerCase().includes(query);
+      const category = filter === 'all' || (filter === 'muted' ? s.mute : filter === 'solo' ? s.solo
+        : filter === 'drums' ? p.is_drums : p.role === filter);
+      r.hidden = !(matches && category); if (!r.hidden) shown++;
+    }
+    $('part-count').textContent = `${shown} / ${song.parts.length} parts`;
+  }
+  function drawMix(id) {
+    const r = row(id), s = parts[id]; if (!r) return;
+    for (const key of ['volume', 'pan']) {
+      r.querySelector(`[data-k=${key}]`).value = s[key];
+      r.querySelector(`[data-k=${key}-value]`).value = Math.round(s[key] * 100);
+    }
+  }
+  function drawSamplePanel(id) {
+    const r = row(id); if (!r || !samplePanels.has(id)) return;
+    const panel = r.querySelector('[data-el=sample-panel]'), video = panel.querySelector('video');
+    const sample = info[id];
+    if (sample?.url && video.dataset.url !== sample.url) {
+      video.src = sample.url; video.dataset.url = sample.url;
+    }
+    const number = panel.querySelector('input');
+    number.value = parts[id].take + 1; number.max = sample?.takes || 1;
+    panel.querySelector('[data-el=take-total]').textContent = `of ${sample?.takes || 1}`;
+    panel.querySelector('[data-el=sample-source]').textContent = sample?.pitch?.source || 'Sample is loading…';
+  }
+  $('part-search').addEventListener('input', filterParts);
+  $('part-filter').addEventListener('change', filterParts);
+  $('expand-parts').addEventListener('click', () => {
+    const expand = expandedParts.size !== song.parts.length;
+    expandedParts.clear(); if (expand) song.parts.forEach(p => expandedParts.add(p.id));
+    $('expand-parts').textContent = expand ? 'collapse settings' : 'expand settings'; drawParts();
+  });
+  $('undo-btn').addEventListener('click', () => {
+    if (!undoStack.length || pendingCorpora.size) return;
+    stopPreview();
+    Object.values(typing).forEach(clearTimeout); typing = {};
+    const state = JSON.parse(undoStack.pop());
+    parts = state.parts; liveVoice = state.voice; synthMode = state.synth;
+    document.body.classList.toggle('synth', synthMode);
+    voiceSel.value = synthMode ? NO_VOICE : liveVoice;
+    store.set('ytpmv-default-corpus', liveVoice); store.set('ytpmv-synth', synthMode);
+    applyOptions(state.options); lastChip = chipNow();
+    for (const o of $('opt-chip').options) o.disabled = synthMode && soundsVoice(o.value);
+    for (const p of song.parts) if (state.defaults[p.id]) {
+      p.settings = state.defaults[p.id].settings; p.recommended = state.defaults[p.id].recommended;
+      p.recommendationCorpus = state.defaults[p.id].corpus;
+    }
+    info = {}; sampleRequests = {}; samplePanels.clear();
+    lastEdit = ''; drawParts(); changed(null, false);
+    if (!synthMode) song.parts.forEach(p => refreshSample(p.id));
+  });
+  $('unmute-all').addEventListener('click', () => {
+    Object.values(parts).forEach(s => { s.mute = false; }); drawParts(); changed();
+  });
+  $('clear-solo').addEventListener('click', () => {
+    Object.values(parts).forEach(s => { s.solo = false; }); drawParts(); changed();
+  });
+  $('apply-corpus').addEventListener('click', async () => {
+    const chosen = $('bulk-corpus').value, voice = chosen || liveVoice, analysis = song;
+    const targets = song.parts.filter(p => !synthMode && !onChip(p, parts[p.id]));
+    if (!targets.length) { status('Choose a voice instrument first.'); return; }
+    const button = $('apply-corpus'); button.disabled = true; batchEdit = true;
+    try {
+      const recommendations = api(`/api/ytpmv/midi/${song.midi_id}`, {}, voice);
+      await Promise.all(targets.map(p => selectCorpus(p.id, chosen, false, recommendations.then(d => ({
+        ...d.parts.find(part => part.id === p.id), corpus: d.corpus, noises: d.noises, units: d.units,
+      })))));
+    } finally { batchEdit = false; button.disabled = false; if (song === analysis) changed(); }
+  });
 
   let typing = {};
   $('parts').addEventListener('input', (e) => {
@@ -855,13 +1166,22 @@
       clearTimeout(typing[id]);
       typing[id] = setTimeout(() => { refreshSample(id); if (s.text && s.mute && !song.parts.find(p => p.id === id).settings.text) {
         s.mute = false; s.visible = true; drawParts(); } }, 450);
-    } else if (k === 'volume' || k === 'pan') s[k] = parseFloat(e.target.value);
+    } else if (['volume', 'pan', 'volume-value', 'pan-value'].includes(k)) {
+      if (e.target.value === '' || !Number.isFinite(Number(e.target.value))) return;
+      const key = k.split('-')[0], value = Number(e.target.value) / (k.endsWith('-value') ? 100 : 1);
+      s[key] = Math.max(key === 'pan' ? -1 : 0, Math.min(key === 'pan' ? 1 : 2, value)); drawMix(id);
+    }
+    else if (k === 'take-choice') {
+      if (!e.target.value) return;
+      s.take = Math.max(0, Math.min((info[id]?.takes || 1) - 1, Math.trunc(Number(e.target.value)) - 1)); refreshSample(id);
+    }
+    else if (k === 'solo') { s.solo = e.target.checked; r.classList.toggle('solo', s.solo); }
     else if (k === 'mute' || k === 'visible') { s[k] = e.target.checked; r.classList.toggle('muted', s.mute); }
     else if (k === 'hit') { s.hit = e.target.checked; refreshSample(id); }
     else if (k === 'instrument') { s.instrument = e.target.value; drawInstrument(song.parts.find(p => p.id === id)); }
     else if (k === 'program') s.program = parseInt(e.target.value);
     else s[k] = e.target.value;
-    changed(id);
+    changed(`${id}:${k}`);
   });
 
   $('parts').addEventListener('click', async (e) => {
@@ -873,7 +1193,18 @@
       changed(id); refreshSample(id); return;
     }
     const act = b.dataset.act;
-    if (act === 'prev' || act === 'next') {
+    if (act === 'expand') {
+      if (expandedParts.has(id)) expandedParts.delete(id); else expandedParts.add(id);
+      r.classList.toggle('expanded', expandedParts.has(id));
+      b.textContent = expandedParts.has(id) ? 'less' : 'settings'; b.setAttribute('aria-expanded', String(expandedParts.has(id)));
+    } else if (act === 'reset-part') {
+      parts[id] = {...song.parts.find(p => p.id === id).settings};
+      changed(); drawParts(); if (!synthMode) refreshSample(id);
+    } else if (act === 'volume-reset' || act === 'pan-center') {
+      const key = act === 'volume-reset' ? 'volume' : 'pan';
+      s[key] = key === 'pan' ? 0 : song.parts.find(p => p.id === id).settings.volume;
+      drawMix(id); changed();
+    } else if (act === 'prev' || act === 'next') {
       const n = (info[id] && info[id].takes) || 1;
       s.take = ((s.take + (act === 'next' ? 1 : -1)) % n + n) % n;
       changed(id); refreshSample(id);
@@ -884,23 +1215,14 @@
       r.querySelector('[data-el=oct]').textContent = fmtOct(s.octave);
       changed(id);
     } else if (act === 'clip') {
-      if (info[id] && info[id].url) window.open(info[id].url, '_blank');
+      const panel = r.querySelector('[data-el=sample-panel]');
+      panel.hidden = !panel.hidden;
+      if (panel.hidden) { samplePanels.delete(id); panel.querySelector('video').pause(); }
+      else { samplePanels.add(id); drawSamplePanel(id); }
+      b.setAttribute('aria-expanded', String(!panel.hidden));
     } else if (act === 'preview') {
       if (pendingCorpora.has(id)) return;
-      const request = previewRequests.next(), analysis = song, chip = chipNow(), synth = synthMode;
-      const part = sendable(song.parts.find(p => p.id === id)), snapshot = JSON.stringify(part);
-      b.disabled = true; const old = b.textContent; b.textContent = '…';
-      try {
-        const d = await post('/api/ytpmv/preview', { midi_id: analysis.midi_id, seconds: 6,
-          part, chip: chip || null, synth });
-        if (!previewRequests.current(request) || song !== analysis || parts[id] !== s || chipNow() !== chip || synthMode !== synth
-            || JSON.stringify(sendable(song.parts.find(p => p.id === id))) !== snapshot) return;
-        const pl = $('player'); pl.src = d.audio_url; await pl.play();
-      } catch (err) {
-        if (err.name !== 'AbortError' && previewRequests.current(request)) {
-          r.querySelectorAll('[data-el=err]').forEach(el => { el.textContent = err.message; });
-        }
-      } finally { b.disabled = false; b.textContent = old; }
+      startPreview(id);
     }
   });
 
@@ -911,28 +1233,108 @@
     for (const p of song.parts) if (parts[p.id].text) refreshSample(p.id);
   });
 
+  function renderOptions() {
+    const options = {
+      speed: Number($('opt-speed').value), transpose: Number($('opt-transpose').value),
+      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: chipNow() || false,
+      balance: $('opt-balance').checked, accurate: $('opt-accurate').checked,
+      flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
+      labels: $('opt-labels').checked, draft: $('opt-draft').checked, synth: synthMode,
+    };
+    if (Number($('opt-len').value)) options.max_seconds = Number($('opt-len').value);
+    return options;
+  }
+  async function stopPreview(clear = false, keepIntent = false) {
+    if (!keepIntent) previewIntents.cancel();
+    previewRequests.cancel();
+    const previous = previewJob; previewJob = null;
+    const player = $('player'); player.pause();
+    if (player.readyState) player.currentTime = 0;
+    if (clear) { player.removeAttribute('src'); player.load(); player.hidden = true; }
+    document.querySelectorAll('.sample-panel video').forEach(video => video.pause());
+    if (previous) {
+      try { await api(`/api/jobs/${previous}`, {method: 'DELETE'}); }
+      catch (e) {
+        if (e.status === 404) return true;
+        if (!previewJob) previewJob = previous;
+        $('preview-status').textContent = `Audio stopped; could not confirm cancellation: ${e.message}`;
+        return false;
+      }
+    }
+    return true;
+  }
+  async function startPreview(partId = null) {
+    if (!song || pendingCorpora.size) return;
+    const intent = previewIntents.next();
+    if (!await stopPreview(true, true)) return;
+    if (!previewIntents.current(intent)) return;
+    const request = previewRequests.next(), analysis = song, signature = arrangementSignature();
+    const solos = Object.values(parts).some(s => s.solo);
+    const selection = song.parts.map(p => {
+      const s = sendable(p); s.visible = false;
+      if (solos && !partId) s.mute = !parts[p.id].solo;
+      return s;
+    });
+    const label = partId ? song.parts.find(p => p.id === partId).instrument : solos ? 'solo mix' : 'mix';
+    $('preview-status').textContent = `Preparing ${label}…`;
+    const current = () => previewRequests.current(request) && song === analysis && signature === arrangementSignature();
+    try {
+      const job = await post('/api/ytpmv/preview-mix', {midi_id: song.midi_id,
+        parts: selection, options: renderOptions(), seconds: Number($('preview-seconds').value),
+        start: Number($('preview-from').value) || 0, part_id: partId});
+      if (!current()) { await api(`/api/jobs/${job.id}`, {method: 'DELETE'}); return; }
+      previewJob = job.id;
+      while (current()) {
+        const j = await api(`/api/jobs/${job.id}`);
+        if (!current()) return;
+        if (j.status === 'done') {
+          previewJob = null;
+          const result = j.result, player = $('player');
+          player.src = result.audio_url; player.hidden = false;
+          $('preview-status').textContent = `${label} · ${mmss(result.from || 0)}–${mmss((result.from || 0) + result.duration)}${result.problems?.length ? ` · ${result.problems.length} parts could not play` : ''}`;
+          try { await player.play(); } catch (e) { if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') throw e; }
+          return;
+        }
+        if (j.status === 'error' || j.status === 'cancelled') {
+          previewJob = null; throw new Error(j.error || 'Preview cancelled.');
+        }
+        $('preview-status').textContent = j.status === 'queued' ? `Preview queued${j.position ? ` · ${j.position} ahead` : ''}`
+          : `Preparing ${label} · ${STAGE[j.stage] || j.stage}`;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (e) {
+      if (previewRequests.current(request)) $('preview-status').textContent = `${e.message}${previewJob ? ' — Stop cancels any pending preview.' : ''}`;
+    }
+  }
+  $('preview-mix').addEventListener('click', () => startPreview());
+  $('stop-preview').addEventListener('click', async () => {
+    if (await stopPreview()) $('preview-status').textContent = 'Preview stopped.';
+  });
+  for (const id of ['preview-from', 'preview-seconds']) $(id).addEventListener('change', () => stopPreview(true));
+
   // ── render ───────────────────────────────────────────────────────────────
   const bar = $('progress'), barFill = bar.firstElementChild;
   function status(msg, error = false) { $('status').textContent = msg; $('status').className = error ? 'error' : ''; }
   function progress(f) {
     if (f == null) { bar.classList.remove('on'); return; }
     bar.classList.add('on'); barFill.style.width = `${Math.round(f * 100)}%`;
+    bar.setAttribute('aria-valuenow', String(Math.round(f * 100)));
+  }
+
+  function drawRenderControls() {
+    rendering = !!renderJob;
+    $('render-btn').disabled = rendering || pendingCorpora.size > 0;
+    $('cancel-render').hidden = !renderJob;
   }
 
   $('render-btn').addEventListener('click', async () => {
     if (pendingCorpora.size || rendering) return;
-    const btn = $('render-btn');
     rendering = true;
-    btn.disabled = true;
-    $('result').innerHTML = '';
-    const len = parseInt($('opt-len').value);
-    const options = {
-      speed: parseFloat($('opt-speed').value), transpose: parseInt($('opt-transpose').value),
-      vary: $('opt-vary').value, jitter: $('opt-jitter').checked, chip: $('opt-chip').value || false, balance: $('opt-balance').checked, accurate: $('opt-accurate').checked,
-      flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
-      labels: $('opt-labels').checked, draft: $('opt-draft').checked, synth: synthMode,
-    };
-    if (len) options.max_seconds = len;
+    $('render-btn').disabled = true;
+    const options = renderOptions();
+    const meta = {midi_id: song.midi_id, title: song.title || 'untitled', options,
+      signature: arrangementSignature(), at: Date.now()};
+    status(`Submitting ${meta.title}…`);
     try {
       const job = await post('/api/ytpmv/render', {
         midi_id: song.midi_id, options,
@@ -950,38 +1352,74 @@
         // choice. And the tone only goes when somebody picked one.
         parts: song.parts.map(sendable),
       });
-      const result = await poll(job.id);
-      if (result) show(result);
+      renderJob = {id: job.id, meta};
+      store.set('ytpmv-active-render', renderJob); drawRenderControls();
+      await poll(job.id);
     } catch (e) { status(e.message, true); progress(null); }
-    rendering = false;
-    btn.disabled = pendingCorpora.size > 0;
+    drawRenderControls();
   });
 
   // Each stage gets its own slice of the bar, so it never runs backwards.
   const SLICE = { measuring: [0, .05], samples: [.05, .15], notes: [.15, .35], frames: [.35, .95], encoding: [.95, 1] };
 
   async function poll(id) {
+    const request = renderPollRequests.next(), job = renderJob;
+    if (!job || job.id !== id) return;
+    $('reconnect-render').hidden = true;
     let delay = 300;
-    for (;;) {
+    while (renderPollRequests.current(request) && renderJob === job) {
       await new Promise(r => setTimeout(r, delay));
       delay = Math.min(delay * 1.3, 1500);
-      const j = await api(`/api/jobs/${id}`);
-      if (j.status === 'cancelled') { progress(null); status('Job cancelled.', true); return null; }
-      if (j.status === 'error') { progress(null); status(j.error, true); return null; }
-      if (j.status === 'done') { progress(null); status(''); return j.result; }
+      let j;
+      try { j = await api(`/api/jobs/${id}`); }
+      catch (e) {
+        if (!renderPollRequests.current(request) || renderJob !== job) return;
+        if (e.status === 404) {
+          renderJob = null; store.set('ytpmv-active-render', null); drawRenderControls(); progress(null);
+          status(`The server no longer remembers the render of ${job.meta.title}. Its last saved export is kept below.`, true);
+        } else {
+          status(`Connection interrupted — ${job.meta.title} may still be rendering. Reconnect to check.`, true);
+          $('reconnect-render').hidden = false;
+        }
+        return;
+      }
+      if (!renderPollRequests.current(request) || renderJob !== job) return;
+      if (['cancelled', 'error', 'done'].includes(j.status)) {
+        renderJob = null; store.set('ytpmv-active-render', null); progress(null); drawRenderControls();
+        if (j.status === 'done') {
+          lastResult = {result: j.result, meta: job.meta};
+          renderHistory = [lastResult, ...renderHistory.filter(item => item.result.video_url !== j.result.video_url)].slice(0, 5);
+          store.set('ytpmv-render-history', renderHistory);
+          show(j.result, job.meta); drawRenderHistory();
+          status(`Finished ${job.meta.title}.`);
+        } else status(`${job.meta.title}: ${j.error || 'render cancelled'}`, j.status === 'error');
+        return;
+      }
       if (j.status === 'queued') { status(`queued${j.position ? ` — ${j.position} ahead` : ''}`); progress(0); continue; }
       const [a, b] = SLICE[j.stage] || [0, 0];
       const within = j.total ? j.done / j.total : 0;
       progress(a + (b - a) * within);
-      status(`${STAGE[j.stage] || j.stage}${j.total > 1 ? ` ${j.done}/${j.total}` : ''} · ${Math.round(j.running_for || 0)}s`);
+      status(`${job.meta.title} · ${STAGE[j.stage] || j.stage}${j.total > 1 ? ` ${j.done}/${j.total}` : ''} · ${Math.round(j.running_for || 0)}s`);
     }
   }
+
+  $('cancel-render').addEventListener('click', async () => {
+    if (!renderJob) return;
+    const button = $('cancel-render'), job = renderJob; button.disabled = true;
+    try {
+      const result = await api(`/api/jobs/${job.id}`, {method: 'DELETE'});
+      status(result.cancelled ? `Cancelling ${job.meta.title}…` : 'Checking the finished job…');
+      if (renderJob === job) poll(job.id);
+    } catch (e) { status(`Could not cancel: ${e.message}`, true); $('reconnect-render').hidden = false; }
+    finally { button.disabled = false; }
+  });
+  $('reconnect-render').addEventListener('click', () => { if (renderJob) poll(renderJob.id); });
 
   // What the file should be called once it is off this page. The song's name
   // says what it is; the render's own id keeps two goes at the same song from
   // landing on top of each other in the downloads folder.
-  function downloadName(r) {
-    const stem = (song && song.title ? song.title : 'ytpmv')
+  function downloadName(r, meta) {
+    const stem = (meta?.title || r.song?.title || 'ytpmv')
       .replace(/\.[a-z0-9]+$/i, '')          // it arrived as a filename
       .replace(/[^\w\-. ]+/g, ' ')           // nothing a filesystem will argue with
       .replace(/\s+/g, ' ').trim().slice(0, 60) || 'ytpmv';
@@ -989,19 +1427,35 @@
     return `${stem}${hash ? ' ' + hash : ''}.mp4`;
   }
 
-  function show(r) {
+  function show(r, meta) {
     const probs = (r.problems || []).map(p =>
       `<div class="err">${esc(p.name)}: ${esc(p.error)} — that part was left out</div>`).join('');
-    const name = downloadName(r);
+    const name = downloadName(r, meta);
     $('result').innerHTML = `
-      <video src="${r.video_url}" controls autoplay playsinline></video>
+      <p class="result-meta">${esc(meta.title)} · ${meta.options.speed}× speed · ${meta.options.transpose > 0 ? '+' : ''}${meta.options.transpose} semitones · ${esc(meta.options.chip || 'voice')} ${meta.options.draft ? '· draft' : ''}</p>
+      <video src="${esc(r.video_url)}" controls playsinline preload="metadata"></video>
       ${probs}
       <div class="links">
         <a class="download" href="${r.video_url}" download="${esc(name)}">⤓ download ${esc(name)}</a>
         <a href="${r.video_url}" target="_blank">open on its own →</a>
         · ${r.duration}s · ${r.size[0]}×${r.size[1]}
       </div>`;
+    $('result').querySelector('video').addEventListener('error', () => {
+      $('result-state').textContent = 'This saved video is no longer available on the server. Render it again to create a new export.';
+    });
+    updateResultState();
   }
+
+  function drawRenderHistory() {
+    $('recent-renders').hidden = !renderHistory.length;
+    $('render-history').innerHTML = renderHistory.map((item, index) =>
+      `<button data-render="${index}">${esc(item.meta.title)} · ${new Date(item.meta.at).toLocaleString()}</button>`).join('');
+  }
+  $('render-history').addEventListener('click', e => {
+    const button = e.target.closest('[data-render]'); if (!button) return;
+    lastResult = renderHistory[Number(button.dataset.render)];
+    show(lastResult.result, lastResult.meta);
+  });
 
   // ── library: every MIDI anyone has uploaded, kept on the server ─────────
   let library = [];
@@ -1011,7 +1465,8 @@
     return d < 1 ? 'today' : d < 2 ? 'yesterday' : d < 30 ? `${Math.floor(d)} days ago` : new Date(t * 1000).toLocaleDateString();
   };
   async function loadLibrary() {
-    try { library = await api('/api/ytpmv/library'); } catch { return; }
+    try { library = await api('/api/ytpmv/library'); }
+    catch { $('upload-status').textContent = 'MIDI library could not load. You can still upload a file or reload this page to retry.'; return; }
     $('library').hidden = !library.length;
     drawLibrary();
   }
@@ -1038,9 +1493,12 @@
     $('upload-status').textContent = 'loading it and picking sounds…';
     try {
         await voicesReady;
-        const data = await api(`/api/ytpmv/midi/${row.dataset.mid}`);
+        if (song) saveProject();
+        const project = projects[row.dataset.mid];
+        const voice = installedCorpora.some(c => c.slug === project?.voice) ? project.voice : liveVoice;
+        const data = await api(`/api/ytpmv/midi/${row.dataset.mid}`, {}, voice);
       if (!songRequests.current(request)) return;
-      load(data, null);
+      load(data, project?.parts || null, project);
       $('upload-status').textContent = '';
       drawLibrary();
     } catch (err) {
@@ -1053,11 +1511,30 @@
   // ── come back to where we were ───────────────────────────────────────────
   if (synthMode) setSynth(true);
   const saved = store.get('ytpmv');
-  if (saved && saved.midi_id) {
+  const lastMidi = store.get('ytpmv-last-midi', saved?.midi_id);
+  if (lastMidi) {
     const request = songRequests.next();
-    voicesReady.then(() => api(`/api/ytpmv/midi/${saved.midi_id}`)).then(d => {
-      if (songRequests.current(request)) load(d, saved.parts);
-    }).catch(() => {});
+    voicesReady.then(() => {
+      const project = projects[lastMidi];
+      const voice = installedCorpora.some(c => c.slug === project?.voice) ? project.voice : liveVoice;
+      return api(`/api/ytpmv/midi/${lastMidi}`, {}, voice);
+    }).then(d => {
+      if (songRequests.current(request)) load(d, projects[lastMidi]?.parts || saved?.parts, projects[lastMidi]);
+    }).catch(e => { $('upload-status').textContent = `Could not restore the last song: ${e.message}`; });
+  }
+  drawRenderHistory();
+  if (renderJob?.id && renderJob.meta) {
+    $('transport').hidden = false;
+    drawRenderControls();
+    status(`Reconnecting to ${renderJob.meta.title}…`);
+    voicesReady.then(() => { if (renderJob) poll(renderJob.id); });
+  }
+  const CONSOLE_NAMES = {md: 'Mega Drive', nes: 'NES', sms: 'Master System', snes: 'SNES',
+    gb: 'Game Boy', gbc: 'Game Boy Color', opl2: 'AdLib OPL2', opl3: 'Sound Blaster OPL3',
+    sid: 'Commodore 64 (6581)', sid8580: 'Commodore 64 (8580)'};
+  for (const option of $('opt-chip').options) if (option.value) {
+    const voice = option.value.endsWith('-voice'), key = option.value.replace(/-voice$/, '');
+    option.textContent = `${CONSOLE_NAMES[key] || key} · ${voice ? 'sampled voice' : 'synth'}`;
   }
 })();
 </script>

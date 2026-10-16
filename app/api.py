@@ -716,6 +716,12 @@ class YtpmvRenderRequest(BaseModel):
     options: dict = {}
 
 
+class YtpmvMixPreviewRequest(YtpmvRenderRequest):
+    start: float = 0
+    seconds: float = 10
+    part_id: str | None = None
+
+
 def _ytpmv_call(fn, *args, **kwargs):
     from app.ytpmv.render import YtpmvError
     from app.ytpmv.samples import SampleError
@@ -790,3 +796,28 @@ def ytpmv_render(req: YtpmvRenderRequest):
     body = job.as_dict()
     body["position"] = jobs.position(job.id)
     return JSONResponse(status_code=202, content=body)
+
+
+@router.post("/ytpmv/preview-mix")
+def ytpmv_preview_mix(req: YtpmvMixPreviewRequest):
+    """Queue a short audio audition, with the same settings as the final mix."""
+    from app.ytpmv import render
+    song = _ytpmv_call(render.load_song, req.midi_id)
+    parts = _ytpmv_call(render.prepare_parts, req.parts, bool(req.options.get("synth", False)))
+    start = render._num(req.start, 0, 0, render.MAX_SECONDS)
+    if req.part_id:
+        part = song.part(req.part_id)
+        if part is None:
+            raise HTTPException(status_code=400, detail="No such part.")
+        speed = render._num(req.options.get("speed", 1), 1, .25, 4)
+        start = max(0, (part.notes[0].start / speed if part.notes else 0) - .05)
+        given = {p.get("id"): p for p in parts}
+        parts = [{**given.get(p.id, {"id": p.id}), "mute": p.id != req.part_id,
+                  "visible": False} for p in song.parts]
+        parts = _ytpmv_call(render.prepare_parts, parts, bool(req.options.get("synth", False)))
+    seconds = render._num(req.seconds, 10, 1, 15)
+    job = _queued(lambda: jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": parts,
+        "options": req.options, "audio_preview": True, "start": start, "seconds": seconds},
+        label="Preview: " + (song.title or req.midi_id)))
+    return JSONResponse(status_code=202, content={"id": job.id, "status": job.status,
+                                                "position": jobs.position(job.id)})

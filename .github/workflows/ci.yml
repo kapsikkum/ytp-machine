@@ -211,6 +211,21 @@ jobs:
           python tests/test_editor_audio.py
           node tests/test_frontend.js
 
+      - name: Browser workflows
+        # Synthetic corpora/media only: project recall, cross-corpus voices,
+        # preview transport, render recovery and responsive controls.
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/ytpmv-browser" playwright
+          "$RUNNER_TEMP/ytpmv-browser/node_modules/.bin/playwright" install --with-deps chromium
+          export NODE_PATH="$RUNNER_TEMP/ytpmv-browser/node_modules"
+          python tests/frontend_fixture.py --port 8877 --seconds 180 > "$RUNNER_TEMP/ytpmv-fixture.log" 2>&1 &
+          fixture_pid=$!
+          trap 'curl -fsS -X POST http://127.0.0.1:8877/api/fixture/shutdown >/dev/null 2>&1 || true; wait "$fixture_pid" || true' EXIT
+          curl --retry 20 --retry-delay 1 --retry-connrefused -fsS http://127.0.0.1:8877/api/corpora >/dev/null
+          node tests/test_frontend_browser.js
+          node tests/test_ytpmv_browser.js
+          node tests/test_ytpmv_ux_browser.js
+
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where
         # the mistakes would be; needs no homeserver.

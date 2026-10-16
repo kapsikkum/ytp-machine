@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import wave
 from unittest.mock import patch
 
 import numpy as np
@@ -143,6 +144,71 @@ class YtpmvCorpusTests(unittest.TestCase):
         self.assertNotEqual(second["audio_url"], longer["audio_url"])
         self.assertEqual(db.active()["slug"], "alpha")
 
+    def test_mix_preview_uses_render_speed_key_pan_and_bounded_range(self):
+        self.parts[0].notes = [Note(1, .6, 60, 100)]
+        self.song.duration = 3
+        params = {"midi_id": "midi", "parts": [
+            {"id": "alpha", "volume": .65, "pan": -1},
+            {"id": "beta", "mute": True, "visible": False}],
+            "options": {"synth": True, "chip": "sms", "balance": False,
+                        "speed": 2, "transpose": 12}, "start": .5, "seconds": 1}
+        with patch.object(samples.Sample, "frames", side_effect=AssertionError('audio preview must not draw video')):
+            result = render.preview_mix(params)
+        self.assertEqual(result['from'], .5)
+        self.assertEqual(result['duration'], 1)
+        self.assertEqual([p['id'] for p in result['parts']], ['alpha'])
+        self.assertEqual(result['parts'][0]['volume'], .65)
+        path = Path(self.root, result['audio_url'].lstrip('/'))
+        with wave.open(str(path)) as wav:
+            self.assertEqual(wav.getnframes(), SR)
+            pcm = np.frombuffer(wav.readframes(SR), dtype='<i2').reshape(-1, 2).astype(float)
+        self.assertGreater(float(np.abs(pcm[:, 0]).max()), 100)
+        self.assertLess(float(np.abs(pcm[:, 1]).max()), 2)
+        spectrum = np.abs(np.fft.rfft(pcm[:SR // 5, 0] * np.hanning(SR // 5)))
+        peak = np.fft.rfftfreq(SR // 5, 1 / SR)[np.argmax(spectrum)]
+        self.assertAlmostEqual(peak, 523.25, delta=8)
+
+    def test_mix_preview_keeps_selected_corpora_and_skips_muted_parts(self):
+        self.stub_media()
+        result = render.preview_mix({'midi_id': 'midi', 'parts': [
+            {'id': 'alpha', 'text': 'hello', 'corpus': 'beta', 'pan': -.3, 'volume': .5},
+            {'id': 'beta', 'mute': True, 'visible': False}],
+            'options': {'balance': False}, 'seconds': 50})
+        self.assertEqual(result['parts'], [{'id': 'alpha', 'corpus': 'beta', 'volume': .5, 'pan': -.3}])
+        self.assertLessEqual(result['duration'], 15)
+
+    def test_seek_includes_held_notes_and_matches_full_mix_with_haas_and_variety(self):
+        self.stub_media()
+        choices = [samples.build('hello', corpus=slug) for slug in self.entries]
+        part = self.parts[0]
+        part.notes = [Note(0, .8, 60, 100), Note(.9, .2, 62, 100)]
+        settings = render._merge(render._default_settings_for(part, {'text': 'hello'}),
+                                 {'text': 'hello', 'mode': 'perfect', 'haas': True, 'pan': -.3})
+        full = np.zeros((2 * SR, 2), np.float32)
+        excerpt = np.zeros((SR, 2), np.float32)
+        render._play(part, settings, choices, full, 0, 2, 1, 0, False, jitter=True, vary='rotate')
+        render._play(part, settings, choices, excerpt, .25, 1.25, 1, 0, False, jitter=True, vary='rotate')
+        self.assertGreater(float(np.abs(excerpt[:SR // 5]).max()), .01)
+        np.testing.assert_allclose(excerpt, full[SR // 4:SR // 4 + SR], atol=1e-6)
+
+    def test_queued_part_audition_is_bounded_and_uses_audio_worker(self):
+        from app import api, jobs
+        request = api.YtpmvMixPreviewRequest(midi_id='midi', part_id='alpha', parts=[],
+            options={'synth': True, 'chip': 'sms'}, seconds=999)
+        with patch.object(jobs, '_ensure_worker'):
+            response = api.ytpmv_preview_mix(request)
+        import json
+        job = jobs.get(json.loads(response.body)['id'])
+        self.addCleanup(lambda: jobs.cancel(job.id))
+        self.assertEqual(job.params['seconds'], 15)
+        self.assertEqual([(p['id'], p['mute']) for p in job.params['parts']], [('alpha',False), ('beta',True)])
+        with patch.object(render, 'preview_mix', return_value={'audio_url':'/output/test.wav'}) as preview, \
+                patch.object(render, 'render_ytpmv', side_effect=AssertionError('preview must not encode video')):
+            jobs._run(job)
+        preview.assert_called_once()
+        self.assertEqual(job.status, 'done')
+        self.assertEqual(job.result['audio_url'], '/output/test.wav')
+
     def test_render_prepares_each_part_with_its_own_sample(self):
         self.stub_media()
         heard = []
@@ -209,9 +275,9 @@ class YtpmvCorpusTests(unittest.TestCase):
                     (b'content-type', b'multipart/form-data; boundary=test')]}, receive, send)
             return sent[0]['status']
 
-        for path in ('midi', 'sample', 'preview', 'render'):
+        for path in ('midi', 'sample', 'preview', 'render', 'preview-mix'):
             self.assertEqual(asyncio.run(request('/api/ytpmv/' + path, 'beta')), 200)
-        self.assertEqual(seen, ['beta'] * 4)
+        self.assertEqual(seen, ['beta'] * 5)
         self.assertEqual(asyncio.run(request('/api/edit/clip/1', 'beta')), 409)
         self.assertEqual(asyncio.run(request('/api/ytpmv/sample', 'missing')), 409)
         self.assertEqual(db.active()['slug'], 'alpha')

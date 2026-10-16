@@ -403,6 +403,27 @@ previews and the finished video use that same corpus. The voice at the top is
 this page's default and leaves the server's active corpus unchanged. Explicit
 part choices survive changes to that default and are restored on page reload.
 
+The sticky audition bar previews a 6–15 second section through the same mixer
+as the video render, including speed, key, pan, levels, chip, variety and
+automatic balance. Open **preview range** to choose where it starts; the
+player can pause and seek within the section. **Solo** affects mix auditions
+only, leaving mute settings and the final render unchanged. **Stop** also
+cancels queued preview work. Per-part previews start at that part's first note.
+
+Each MIDI keeps its own arrangement, voice and render options in this browser's
+local storage. **Undo** reverses edits in the current session. Common controls
+stay visible; **settings** reveals pitch, pan, note length and tile controls.
+Use **takes & clip** to watch the sample and choose a numbered take inline.
+The part search, role filters and bulk voice controls help with larger songs.
+If browser storage fills or is blocked, the save indicator reports the failure.
+
+Rendering keeps the last successful export visible. **Cancel render** stops a
+queued or running job; a refresh reconnects to an acknowledged job, and
+**reconnect** recovers from interrupted polling. Each export records its song
+and settings, and the page marks it when the arrangement has changed. Recent
+exports are remembered on this device; server cleanup can eventually remove
+their media, and a server restart can discard unfinished in-memory jobs.
+
 From a terminal:
 
 ```bash
@@ -833,6 +854,7 @@ once exhausted the container's thread ceiling before the queue existed.
 | `GET /api/ytpmv/midi/{id}/part/{part_id}?corpus={slug}` | suggested sounds for one part from an installed corpus |
 | `POST /api/ytpmv/sample` | `{"text","take","corpus"}` → the clip as an instrument, and the note it is on; corpus is optional |
 | `POST /api/ytpmv/preview` | `{"midi_id","part"}` → a few seconds of one part, audio only |
+| `POST /api/ytpmv/preview-mix` | `{"midi_id","parts","options","start","seconds","part_id"}` → queued audio audition; seconds capped at 15, optional part_id solos from its first note |
 | `POST /api/ytpmv/render` | `{"midi_id","parts","options"}` → `202` with a job id, polled like the rest |
 
 ## Tests

@@ -205,9 +205,10 @@ def _run_in_corpus(job: Job) -> None:
             # Through the same single worker as sentences, on purpose: a song
             # is the heaviest thing this box renders, and running one beside a
             # sentence is exactly the contention the queue exists to prevent.
-            from app.ytpmv.render import YtpmvError, render_ytpmv
+            from app.ytpmv.render import YtpmvError, render_ytpmv, preview_mix
             try:
-                job.result = render_ytpmv(job.params, progress=progress)
+                perform = preview_mix if job.params.get("audio_preview") else render_ytpmv
+                job.result = perform(job.params, progress=progress)
             except YtpmvError as exc:
                 job.error = str(exc)
                 job.error_kind = "request"

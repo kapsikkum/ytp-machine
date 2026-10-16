@@ -52,8 +52,8 @@ def fixture_part(part_id, corpus):
             "recommended": rec, "settings": settings, "noises": {"pop": 1}, "units": {"aa": 2}}
 
 
-def fixture_song(corpus):
-    song = {"midi_id": MIDI_ID, "corpus": corpus, "title": "Synthetic trio.mid",
+def fixture_song(corpus, midi_id=MIDI_ID):
+    song = {"midi_id": midi_id, "corpus": corpus, "title": "Synthetic trio.mid" if midi_id == MIDI_ID else "Second song.mid",
             "description": "A tiny fixture tune with a lead, bass and kick.", "duration": 12,
             "bpm": 120, "key": "C major", "time_signature": "4/4", "noises": {"pop": 1},
             "units": {"aa": 2}, "parts": []}
@@ -114,12 +114,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.file(self.server.media, "video/mp4")
         if route == "/api/edit/recipes": return self.reply({"recipes": []})
         if route == "/api/ytpmv/library":
-            return self.reply([{"midi_id": MIDI_ID, "title": "Synthetic trio.mid", "added": time.time(),
+            return self.reply([{"midi_id": mid, "title": title, "added": time.time(),
                 "description": "A tiny fixture tune with a lead, bass and kick.", "duration": 12,
                 "bpm": 120, "key": "C major", "time_signature": "4/4", "parts": 2,
-                "drums": 1, "notes": 24, "bytes": 256, "tempo_changes": 0}])
-        if route == f"/api/ytpmv/midi/{MIDI_ID}":
-            return self.reply(fixture_song(self.headers.get("X-Corpus", "fixture")))
+                "drums": 1, "notes": 24, "bytes": 256, "tempo_changes": 0}
+                for mid, title in [(MIDI_ID, 'Synthetic trio.mid'), ('fixture-second', 'Second song.mid')]])
+        if route in [f"/api/ytpmv/midi/{MIDI_ID}", "/api/ytpmv/midi/fixture-second"]:
+            return self.reply(fixture_song(self.headers.get("X-Corpus", "fixture"), route.rsplit('/', 1)[-1]))
         if route.startswith(f"/api/ytpmv/midi/{MIDI_ID}/part/"):
             part_id = route.rsplit("/", 1)[-1]
             corpus = q.get("corpus", [self.headers.get("X-Corpus", "fixture")])[0]
@@ -134,6 +135,9 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/jobs/fixture-render":
             return self.reply({"id": "fixture-render", "status": "done", "result": {
                 "video_url": "/api/fixture/video", "duration": 3, "size": [480, 270], "problems": []}})
+        if route == "/api/jobs/fixture-preview":
+            return self.reply({"id": "fixture-preview", "status": "done", "result": {
+                "audio_url": "/api/fixture/audio", "from": 0, "duration": 3, "problems": []}})
         if route.startswith("/api/edit/splice/"):
             return self.reply({"word": EVIL, "phones": ["K","AE","T"], "exact_total": 0,
                 "plan": [{"phones": ["K","AE","T"], "from": EVIL, "start_time": .1, "end_time": .9}],
@@ -162,6 +166,9 @@ class Handler(BaseHTTPRequestHandler):
         route=urlparse(self.path).path
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         data = json.loads(body) if body and self.headers.get("Content-Type", "").startswith("application/json") else {}
+        if route == '/api/fixture/shutdown':
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return self.reply({'stopping': True})
         if route == "/api/edit/splice-piece":
             return self.reply({"source_id":1,"clip_id":1,"src_start":.4,"src_end":1.4,"start":.5,"end":1.3})
         if route == "/api/ytpmv/midi":
@@ -170,10 +177,15 @@ class Handler(BaseHTTPRequestHandler):
             corpus = data.get("corpus") or self.headers.get("X-Corpus", "fixture")
             return self.reply({"corpus": corpus, "take": data.get("take", 0) % 3, "takes": 3,
                 "midi": 72 if corpus == "fixture-other" else 60, "stability": 12, "voiced": .95,
-                "duration": .6, "sample_url": "/api/fixture/video?corpus=" + corpus})
+                "duration": .6, "sample_url": "/api/fixture/video?corpus=" + corpus,
+                "source": 'Synthetic source recording'})
         if route == "/api/ytpmv/preview": return self.reply({"audio_url": "/api/fixture/audio"})
         if route == "/api/ytpmv/render": return self.reply({"id": "fixture-render", "status": "queued"}, 202)
+        if route == "/api/ytpmv/preview-mix": return self.reply({"id": "fixture-preview", "status": "queued"}, 202)
         return self.reply({"detail":"fixture write not implemented"},400)
+
+    def do_DELETE(self):
+        return self.reply({'cancelled': True, 'status': 'cancelled'})
 
 
 def main():

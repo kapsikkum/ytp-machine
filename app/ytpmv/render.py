@@ -607,7 +607,18 @@ def render_ytpmv(params: dict, progress=None) -> dict:
         return _render_ytpmv(params, progress, resources)
 
 
-def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
+def preview_mix(params: dict, progress=None) -> dict:
+    """Audition a bounded section through the same mixer as the video render."""
+    options = dict(params.get("options") or {})
+    options["max_seconds"] = _num(params.get("seconds", 10), 10, 1, 15)
+    options["flip"] = False
+    with ExitStack() as resources:
+        return _render_ytpmv({**params, "options": options}, progress, resources,
+                            audio_only=True, start_seconds=params.get("start", 0))
+
+
+def _render_ytpmv(params: dict, progress, resources: ExitStack,
+                  audio_only: bool = False, start_seconds: float = 0) -> dict:
     """Render a song. *params* is what POST /api/ytpmv/render was given:
 
         midi_id   from save_midi
@@ -662,7 +673,9 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
     given = {p.get("id"): p for p in prepare_parts(params.get("parts") or [], synth)}
     # Recommendations only for parts the request did not choose a sound for,
     # and none at all when nothing is going to be said.
-    need = [] if synth else [p for p in song.parts if not (given.get(p.id) or {}).get("text")]
+    need = [] if synth else [p for p in song.parts if not (given.get(p.id) or {}).get("text")
+                             and not ((given.get(p.id) or {}).get("mute")
+                                      and not (given.get(p.id) or {}).get("visible", True))]
     recs = {}
     groups = {}
     for part in need:
@@ -678,8 +691,9 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
                 for p in song.parts}
     _through_chip(song, settings, given, chip, g_transpose, synth)
 
-    T = min(song.duration / speed + _TAIL, max_s)
-    n_frames = max(1, int(round(T * FPS)))
+    t_from = _num(start_seconds, 0, 0, max(0, song.duration / speed)) if audio_only else 0.0
+    T = min(song.duration / speed + _TAIL, t_from + max_s)
+    n_frames = max(1, int(round((T - t_from) * FPS)))
     spf = SR // FPS                                # 1764: whole samples per frame
     N = n_frames * spf
     mix = np.zeros((N, 2), dtype=np.float32)
@@ -689,7 +703,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
     # No more notes at once than the machine had channels for; see tones.allocate.
     cuts = (tones.allocate([(p, settings[p.id].get("tone")) for p in playing], speed)
             if accurate else None)
-    shown = [p for p in song.parts if settings[p.id]["text"] and settings[p.id]["visible"]
+    shown = [] if audio_only else [p for p in song.parts if settings[p.id]["text"] and settings[p.id]["visible"]
              and p.notes]
     wanted = {p.id: p for p in playing + shown}
     playing_ids = {p.id for p in playing}
@@ -784,10 +798,10 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
             into = scratch
         span = [N, 0]
         hits[part.id] = _play(part, settings[part.id], sample_of[part.id], into,
-                              0.0, T, speed, g_transpose, flip, tick, jitter, vary, cuts,
+                              t_from, T, speed, g_transpose, flip, tick, jitter, vary, cuts,
                               span)
         lo, hi = span[0], max(span)
-        if synth and settings[part.id]["visible"]:
+        if synth and settings[part.id]["visible"] and not audio_only:
             traces[part.id] = scope.traces(
                 scratch.mean(axis=1), n_frames, spf, max(1, sw - 1),
                 hz=None if part.is_drums else midi_to_hz(
@@ -837,6 +851,25 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack) -> dict:
     wav = os.path.join(tmpdir, "mix.wav")
     _write_wav(wav, _finish_mix(mix))
     del mix
+
+    if audio_only:
+        os.makedirs("output", exist_ok=True)
+        output = os.path.join("output", f"ytpmv_sample_mix_{uuid.uuid4().hex[:12]}.wav")
+        # The preview is already complete before its public path appears.
+        staged = output + ".tmp"
+        try:
+            shutil.copyfile(wav, staged)
+            os.replace(staged, output)
+        finally:
+            if os.path.exists(staged):
+                os.remove(staged)
+        return {"audio_url": "/output/" + os.path.basename(output),
+                "from": round(t_from, 2), "duration": round(T - t_from, 2),
+                "problems": problems, "options": {"speed": speed, "transpose": g_transpose,
+                    "balance": balance, "chip": chip, "synth": synth},
+                "parts": [{"id": p.id, "corpus": settings[p.id]["corpus"],
+                           "volume": settings[p.id]["volume"], "pan": settings[p.id]["pan"]}
+                          for p in playing if p.id in sample_of]}
 
     tiles = [p for p in shown if p.id in sample_of]
     if not tiles and not synth:
@@ -1004,6 +1037,7 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
     rng = random.Random(f"{part.id}|{len(takes)}|{s['text']}")
     notes = sorted(part.notes, key=lambda n: (n.start, n.pitch))
     starts = sorted({n.start for n in notes})
+    beat_index = {start: i for i, start in enumerate(starts)}
     hits: list[_Hit] = []
     last_start = None
     pick = 0
@@ -1013,12 +1047,10 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
         t0 = n.start / speed
         if t0 >= T:
             break
-        if t0 < t_from:
-            continue
         if n.start != last_start:              # a chord is one hit: one take
             pick = (0 if vary == "off" or len(takes) <= 1 else
                     rng.randrange(len(takes)) if vary in ("random", "ultra") else
-                    len(hits) % len(takes))
+                    beat_index[n.start] % len(takes))
         j = bisect.bisect_right(starts, n.start)
         nxt = starts[j] / speed if j < len(starts) else T
         if not takes:
@@ -1045,6 +1077,11 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
         # like. Quantised, so the note cache still gets hits.
         detune = round(rng.uniform(-0.25, 0.25), 2) if jitter and part.is_drums else 0.0
         loud = 10 ** (rng.uniform(-1.2, 1.2) / 20.0) if jitter else 1.0
+        # Keep the same take/jitter sequence as the full song when seeking,
+        # and retain notes whose attack was before the preview cursor.
+        if t0 + dur + (0.018 if s.get("haas") else 0) <= t_from:
+            last_start = n.start
+            continue
         midi = n.pitch + shift
         if not takes:
             # Only its length and level reach the chip; see tones.apply.
@@ -1081,7 +1118,18 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
         if mix is not None and s["volume"] > 0:
             a = int(round((t0 - t_from) * SR))
             k = min(len(y), N - a)
-            if k > 0:
+            if a < 0:
+                gain = s["volume"] * loud * (0.35 + 0.65 * n.velocity / 127.0)
+                delay = int(round(.018 * SR)) if s.get("haas") else 0
+                for channel, offset, pan_gain in ((0, a + (delay if s["pan"] > 0 else 0), gl),
+                                                  (1, a + (delay if s["pan"] <= 0 else 0), gr)):
+                    dest, source = max(0, offset), max(0, -offset)
+                    count = min(len(y) - source, N - dest)
+                    if count > 0:
+                        mix[dest:dest + count, channel] += y[source:source + count] * (gain * pan_gain)
+                        if span is not None:
+                            span[0] = min(span[0], dest); span[1] = max(span[1], dest + count)
+            elif k > 0:
                 gain = s["volume"] * loud * (0.35 + 0.65 * n.velocity / 127.0)
                 if s.get("haas"):
                     delay = int(round(0.018 * SR))  # 18ms Haas delay

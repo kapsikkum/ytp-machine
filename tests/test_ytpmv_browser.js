@@ -81,6 +81,7 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
 
     // Mixer edits and explicit voices survive changing the page's default voice.
     await control('lead', 'volume').fill('0.65');
+    await part('lead').locator('[data-act="expand"]').click();
     await control('lead', 'pan').fill('0.25');
     await control('lead', 'mode').selectOption('tape');
     await part('lead').locator('[data-act="oct+"]').click();
@@ -101,14 +102,15 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
     const nextSample = await withRequest('/api/ytpmv/sample', () => part('lead').locator('[data-act="next"]').click());
     assert.equal(nextSample.postDataJSON().corpus, 'fixture-other');
     assert.equal(nextSample.postDataJSON().take, 1);
-    const leadPreview = await withRequest('/api/ytpmv/preview', () =>
+    const leadPreview = await withRequest('/api/ytpmv/preview-mix', () =>
       part('lead').locator('.sound [data-act="preview"]').click());
-    assert.equal(leadPreview.postDataJSON().part.corpus, 'fixture-other');
-    assert.equal(leadPreview.postDataJSON().part.text, 'bell');
-    const bassPreview = await withRequest('/api/ytpmv/preview', () =>
+    assert.equal(leadPreview.postDataJSON().parts.find(p => p.id === 'lead').corpus, 'fixture-other');
+    assert.equal(leadPreview.postDataJSON().parts.find(p => p.id === 'lead').text, 'bell');
+    assert.equal(leadPreview.postDataJSON().part_id, 'lead');
+    const bassPreview = await withRequest('/api/ytpmv/preview-mix', () =>
       part('bass').locator('.sound [data-act="preview"]').click());
-    assert.equal(bassPreview.postDataJSON().part.corpus, 'fixture');
-    assert.equal(bassPreview.postDataJSON().part.text, 'second');
+    assert.equal(bassPreview.postDataJSON().parts.find(p => p.id === 'bass').corpus, 'fixture');
+    assert.equal(bassPreview.postDataJSON().parts.find(p => p.id === 'bass').text, 'second');
     await withRequest('/api/ytpmv/render', () => page.locator('#render-btn').click());
     const rendered = Object.fromEntries(latest('/api/ytpmv/render').data.parts.map(settings => [settings.id, settings]));
     assert.equal(rendered.lead.corpus, 'fixture-other');

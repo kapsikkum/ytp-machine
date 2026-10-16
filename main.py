@@ -123,7 +123,8 @@ class _Guard:
                 # YTPMV operations create previews/renders, not corpus edits.
                 # Their page-local default may differ from the server's voice.
                 voice_operation = path in {"/api/ytpmv/midi", "/api/ytpmv/sample",
-                                           "/api/ytpmv/preview", "/api/ytpmv/render"}
+                                           "/api/ytpmv/preview", "/api/ytpmv/render",
+                                           "/api/ytpmv/preview-mix"}
                 if writing and not voice_operation:
                     mismatch = True
                 else:
