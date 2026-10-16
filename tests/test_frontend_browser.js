@@ -20,6 +20,28 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
     assert.equal(await page.locator('#words').getByText('cat',{exact:true}).count(),0);
     await page.locator('#source').selectOption('1');
     await page.locator('#words').getByText('cat',{exact:true}).click();
+    // A focused word chip must play the unsaved boundaries, not select the
+    // same clip again and restore the database values before playback.
+    await page.evaluate(()=>{
+      window.fixturePlayedSpans=[];
+      const play=window.playSpan;
+      window.playSpan=(a,b)=>{window.fixturePlayedSpans.push([a,b]);play(a,b);};
+    });
+    await page.locator('#w-start').fill('0.55');
+    await page.locator('#w-end').fill('1.15');
+    await page.locator('#words').getByText('cat',{exact:true}).focus();
+    await page.keyboard.press('Space');
+    assert.equal(await page.locator('#w-start').inputValue(),'0.55');
+    assert.equal(await page.locator('#w-end').inputValue(),'1.15');
+    assert.deepEqual(await page.evaluate(()=>window.fixturePlayedSpans),[[.55,1.15]]);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#w-start').inputValue(),'0.55');
+    await page.evaluate(()=>document.activeElement.blur());
+    await page.keyboard.press('Space');
+    assert.deepEqual(await page.evaluate(()=>window.fixturePlayedSpans),[[.55,1.15],[.55,1.15]]);
+    await page.locator('#w-start').fill('0.400');
+    await page.locator('#w-end').fill('1.400');
+    await page.evaluate(()=>cancelPlayback());
     await page.locator('#spectrogram-toggle').check();
     await page.waitForResponse(r=>r.url().includes('/envelope')&&r.url().includes('spectrogram=true'));
     await page.waitForTimeout(100);

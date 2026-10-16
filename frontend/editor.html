@@ -615,9 +615,15 @@ function renderWords() {
     b.textContent = c.kind === 'noise' ? '*' + c.word + '*' : c.word;
     b.title = `${fmt(c.start_time)}–${fmt(c.end_time)} (${Math.round((c.end_time - c.start_time) * 1000)}ms)`
             + (c.flags.length ? '\n' + c.flags.join(', ') : '');
-    b.onclick = () => select(c);
+    b.onclick = () => { if (sel !== c) select(c); };
     b.onkeydown = ev => {
-      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(c); }
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault(); ev.stopPropagation();
+      if (ev.repeat) return;
+      // Selecting the same clip again reloads its saved boundaries. A focused
+      // word chip must audition the draft that is currently being edited.
+      if (sel !== c) select(c);
+      if (ev.key === ' ' && sel === c) playSelection();
     };
     wordNodes.set(c, b);
     box.appendChild(b);
@@ -1170,7 +1176,9 @@ window.addEventListener('beforeunload', ev => {
 });
 
 document.addEventListener('keydown', ev => {
+  if (ev.defaultPrevented || ev.target.isContentEditable) return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(ev.target.tagName)) return;
+  if (ev.repeat && ev.code === 'Space') { ev.preventDefault(); return; }
   if (ev.code === 'Space') { ev.preventDefault(); playSelection(); }
   if (ev.code === 'Escape') { deselect(); }
 });
