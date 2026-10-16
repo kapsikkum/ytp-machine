@@ -15,6 +15,9 @@ services:
       # Affects nothing in the app itself, but keeps container logs readable
       # next to the host's.
       TZ: ${TZ:-Australia/Sydney}
+      # HTTPS proxies must be explicitly trusted so browser Origin checks see
+      # their external scheme. Set this to the proxy's address as seen here.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     ports:
       # The API includes corpus editing/import and has no built-in login.
       # Opt into remote binding explicitly, behind an authenticated proxy.

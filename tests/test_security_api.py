@@ -143,6 +143,29 @@ class ApiSecurityTests(unittest.TestCase):
             self.assertEqual(self.web.post("/api/reload", headers=headers).status_code, 403)
         self.assertEqual(self.web.post("/api/reload", headers={"origin": "http://testserver"}).status_code, 200)
 
+    def test_https_writes_behind_explicitly_trusted_proxy(self):
+        from fastapi.testclient import TestClient
+        from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+        proxied = ProxyHeadersMiddleware(self.main.app, trusted_hosts="127.0.0.1,10.88.0.1")
+        headers = {"host": "ytp.example", "origin": "https://ytp.example",
+                   "sec-fetch-site": "same-origin", "x-forwarded-proto": "https"}
+        # Match nginx -> host loopback -> Podman bridge. The route's missing
+        # MIDI yields 422 only after the origin guard accepts the request.
+        with TestClient(proxied, client=("10.88.0.1", 1234)) as web:
+            for endpoint in ("/api/ytpmv/preview-mix", "/api/ytpmv/sample", "/api/generate"):
+                self.assertEqual(web.post(endpoint, headers=headers, json={}).status_code, 422)
+            for changed in ({"origin": "https://foreign.example"},
+                            {"origin": "https://ytp.example:9999"},
+                            {"sec-fetch-site": "cross-site"},
+                            {"x-forwarded-proto": "http"}):
+                self.assertEqual(web.post("/api/ytpmv/preview-mix",
+                                          headers={**headers, **changed}, json={}).status_code, 403)
+        # Forwarded headers do not let a direct, untrusted client change the
+        # scheme used for origin validation.
+        with TestClient(proxied, client=("192.0.2.10", 1234)) as web:
+            self.assertEqual(web.post("/api/ytpmv/preview-mix", headers=headers, json={}).status_code, 403)
+
     def test_small_request_budgets_apply_before_parsing(self):
         for endpoint, size in (("/api/ytpmv/midi", 4 << 20), ("/api/generate", 2 << 20)):
             response = self.web.post(endpoint, content=b"x", headers={"content-length": str(size)})

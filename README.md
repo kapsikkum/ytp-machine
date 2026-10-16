@@ -69,6 +69,16 @@ authenticated reverse proxy in front of it and set `MRS_BIND_ADDRESS` to the
 interface the proxy needs. Browser origin checks and Matrix allow-lists do not
 provide authentication for the HTTP API.
 
+For an HTTPS reverse proxy, preserve `Host` and set `X-Forwarded-Proto` to
+the external scheme. Set the app container's `FORWARDED_ALLOW_IPS` to the
+proxy's IP **as seen inside the container** (for example, `127.0.0.1,10.88.0.1`
+for a host nginx reaching Podman's default bridge). Compose accepts this in
+`.env`; NixOS OCI containers can set it in `environment.FORWARDED_ALLOW_IPS`.
+Uvicorn otherwise trusts only loopback and sees HTTP, causing HTTPS browser
+writes to fail with `not from another origin`. Trust specific proxy addresses,
+not `*`, and have the proxy overwrite forwarded headers. Requests from other
+origins must still receive 403.
+
 Mounted corpus directories are seeded with a consistent SQLite snapshot,
 including committed WAL writes and pronunciation overrides. Imports validate
 in staging before activation. Forced replacements retain the previous corpus
