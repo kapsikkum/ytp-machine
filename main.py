@@ -124,7 +124,8 @@ class _Guard:
                 # Their page-local default may differ from the server's voice.
                 voice_operation = path in {"/api/ytpmv/midi", "/api/ytpmv/sample",
                                            "/api/ytpmv/preview", "/api/ytpmv/render",
-                                           "/api/ytpmv/preview-mix"}
+                                           "/api/ytpmv/preview-mix"} or (
+                    scope["method"] == "DELETE" and path.startswith("/api/jobs/"))
                 if writing and not voice_operation:
                     mismatch = True
                 else:

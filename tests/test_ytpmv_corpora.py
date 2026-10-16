@@ -264,13 +264,13 @@ class YtpmvCorpusTests(unittest.TestCase):
             seen.append(db.active()['slug'])
             await JSONResponse({'corpus': db.active()['slug']})(scope, receive, send)
 
-        async def request(path, corpus):
+        async def request(path, corpus, method='POST'):
             sent = []
             async def receive():
                 return {'type': 'http.request', 'body': b'', 'more_body': False}
             async def send(message):
                 sent.append(message)
-            await main._Guard(endpoint)({'type': 'http', 'method': 'POST', 'path': path,
+            await main._Guard(endpoint)({'type': 'http', 'method': method, 'path': path,
                 'scheme': 'http', 'headers': [(b'x-corpus', corpus.encode()),
                     (b'content-type', b'multipart/form-data; boundary=test')]}, receive, send)
             return sent[0]['status']
@@ -278,6 +278,8 @@ class YtpmvCorpusTests(unittest.TestCase):
         for path in ('midi', 'sample', 'preview', 'render', 'preview-mix'):
             self.assertEqual(asyncio.run(request('/api/ytpmv/' + path, 'beta')), 200)
         self.assertEqual(seen, ['beta'] * 5)
+        self.assertEqual(asyncio.run(request('/api/jobs/queued-preview', 'beta', 'DELETE')), 200)
+        self.assertEqual(seen[-1], 'beta')
         self.assertEqual(asyncio.run(request('/api/edit/clip/1', 'beta')), 409)
         self.assertEqual(asyncio.run(request('/api/ytpmv/sample', 'missing')), 409)
         self.assertEqual(db.active()['slug'], 'alpha')
