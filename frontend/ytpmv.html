@@ -189,8 +189,23 @@
       .part, .part.instrumental, body.synth .part { grid-template-columns: 1fr; }
     }
   </style>
-  <link rel="stylesheet" href="/ytpmv-workbench.css">
+  <link rel="stylesheet" href="/ytpmv-interface.css">
+  <link id="advanced-style" rel="stylesheet" href="/ytpmv-workbench.css" media="not all">
+  <link id="simple-style" rel="stylesheet" href="/ytpmv-simple.css" media="not all">
+  <script>
+    (() => {
+      const requested = new URLSearchParams(location.search).get('mode');
+      let saved; try { saved = JSON.parse(localStorage.getItem('ytpmv-interface')); } catch {}
+      window.ytpmvInterface = ['simple','advanced'].includes(requested) ? requested : saved === 'simple' ? 'simple' : 'advanced';
+      document.documentElement.dataset.interface = window.ytpmvInterface;
+      document.getElementById(window.ytpmvInterface + '-style').media = 'all';
+      try { localStorage.setItem('ytpmv-interface', JSON.stringify(window.ytpmvInterface)); } catch {}
+    })();
+  </script>
   <script src="/ytpmv-workbench.js"></script>
+  <script src="/ytpmv-timeline.js"></script>
+  <script src="/ytpmv-instrument.js"></script>
+  <script src="/ytpmv-simple.js"></script>
 </head>
 <body>
 
@@ -203,8 +218,9 @@
     <a href="/editor.html">corpus</a>
   </nav>
   <div class="spacer"></div>
+  <nav id="interface-mode" aria-label="YTPMV interface"><a href="/ytpmv.html?mode=simple" data-interface="simple">Simple</a><a href="/ytpmv.html?mode=advanced" data-interface="advanced">Advanced</a></nav>
   <span id="voice-note"></span>
-  <label class="pill-select">voice <select id="voice-select"><option>loading…</option></select></label>
+<label class="pill-select">voice <select id="voice-select" aria-label="Default voice"><option>loading…</option></select></label>
 </header>
 
 <div class="card">
@@ -217,11 +233,11 @@
   <div id="upload-status" class="hint" role="status"></div>
 </div>
 
-<details class="card" id="library" hidden>
-  <summary><span class="section-label" style="margin:0">midi library</span><span class="count" id="lib-count"></span></summary>
+<section class="card" id="library" hidden>
+  <h2>MIDI library <span class="count" id="lib-count"></span></h2>
   <div class="lib-tools">
     <input type="search" id="lib-search" placeholder="search titles, keys, instruments…" aria-label="Search MIDI library">
-    <select id="lib-sort" title="Order by">
+    <select id="lib-sort" title="Order by" aria-label="Sort MIDI library">
       <option value="added">newest</option>
       <option value="title">title</option>
       <option value="duration">longest</option>
@@ -229,8 +245,9 @@
       <option value="parts">most parts</option>
     </select>
   </div>
+  <p id="lib-status" role="status">Uploaded MIDI files are shared on this server. Your track settings are saved on this device.</p>
   <div class="lib-list" id="lib-list"></div>
-</details>
+</section>
 
 <div class="card" id="song" hidden>
   <h2 id="song-title"></h2>
@@ -251,7 +268,7 @@
     suggestion puts each part where the voice sounds natural. <b>instrument</b> picks what plays a
     part: <b>auto</b> follows the chip, anything else stays put whatever the chip is — another
     machine's voice, or <b>voice</b> to keep the voice as recorded. A voice part's <b>corpus</b>
-    picks its performer from the installed voices; <b>follow page voice</b> uses the choice at the top.
+    picks its performer from the installed voices; the <b>Song default</b> group follows the default voice above the timeline.
     When an OPL or the SNES plays a part,
     <b>patch</b> picks which instrument.
     </p>
@@ -260,30 +277,37 @@
 
 <div class="card" id="transport" hidden>
   <div class="tools">
-    <button id="preview-mix" class="play">▶ preview mix</button>
-    <button id="stop-preview" title="Stop audition audio and cancel its queued work">stop</button>
+    <button id="transport-start" title="Return to song start (Home)" aria-label="Return to start"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 4h3v16H4zm15 0v16L8 12z"/></svg></button>
+    <button id="transport-back" title="Back 10 seconds" aria-label="Rewind 10 seconds"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4v16L2 12zm10 0v16l-10-8z"/></svg></button>
+    <button id="preview-mix" class="play" title="Play / pause song (Space)">▶ Play</button>
+    <button id="stop-preview" title="Stop audio and cancel its queued work" aria-label="Stop playback">■ Stop</button>
+    <button id="transport-forward" title="Forward 10 seconds" aria-label="Forward 10 seconds"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 4v16l10-8zm10 0v16l10-8z"/></svg></button>
+    <span id="transport-clock" aria-live="off">0:00.00</span>
     <button id="undo-btn" disabled>undo</button>
     <button id="render-btn">render video</button>
     <button id="cancel-render" hidden>cancel render</button>
     <button id="reconnect-render" hidden>reconnect</button>
   </div>
-  <details id="preview-range"><summary class="hint">preview range</summary>
-    <div class="preview-range"><label>from <input type="number" id="preview-from" value="0" min="0" step="1"> seconds</label>
+  <details id="preview-range"><summary class="hint"><span id="playback-scope">Whole song</span> · playback range</summary>
+    <div class="preview-range"><label><input type="checkbox" id="preview-selection"> Use range</label><label>from <input type="number" id="preview-from" value="0" min="0" step="1"> seconds</label>
       <label>length <select id="preview-seconds"><option value="6">6 seconds</option><option value="10" selected>10 seconds</option><option value="15">15 seconds</option></select></label>
-      <span>Solo leaves mute settings and the video render unchanged. Auto balance is measured over this preview section.</span>
+      <span>Without a range, Play continues from the playhead to the end. Shift + drag on the timeline selects a range. Solo affects playback only.</span>
     </div>
   </details>
-  <audio id="player" controls preload="none" hidden aria-label="Arrangement preview"></audio>
+  <audio id="player" preload="none" hidden aria-label="Arrangement playback"></audio>
+  <audio id="instrument-player" preload="none" hidden aria-label="Instrument audition"></audio>
+  <div id="instrument-status" class="hint" role="status"></div>
   <div id="preview-status" class="hint" role="status"></div>
   <div id="status" role="status"></div>
   <div id="progress" role="progressbar" aria-label="Render progress" aria-valuemin="0" aria-valuemax="100"><div></div></div>
 </div>
 
 <div class="card" id="parts-card" hidden>
+  <div id="video-layout-controls"><label>Grid <select id="opt-layout" aria-label="Video grid preset"><option value="balanced">Balanced grid</option><option value="two-rows">Two rows</option><option value="two-columns">Two columns</option><option value="strips">Vertical strips</option><option value="featured">Featured track</option></select></label><input type="hidden" id="opt-tile-order" value="[]"></div>
   <div id="machine">
-    <label title="Play the song on an emulated console, sound and picture both: the picture is cut to that machine's resolution and colours. The plain settings play the notes on the chip; the -voice settings keep the voice, played off that console's sample channel.">chip
-      <select id="opt-chip">
-        <option value="" selected>off</option>
+    <label title="Choose the console for the whole song. Auto tracks follow this choice; individual instrument overrides stay as chosen. Console settings also affect the video's resolution and colours.">Global chip
+      <select id="opt-chip" aria-label="Global chip">
+        <option value="" selected>No emulation</option>
         <option value="md">md</option>
         <option value="md-voice">md-voice</option>
         <option value="nes">nes</option>
@@ -396,6 +420,7 @@
   let parts = {};           // id -> settings being edited
   let info = {};            // id -> {sample describe}
   let workbench = null;
+  let partRows = new Map();
   const songRequests = latestRequest();
   const previewRequests = latestRequest();
   const previewIntents = latestRequest();
@@ -406,6 +431,7 @@
   if (!renderJob?.id || !renderJob.meta?.title) renderJob = null;
   let rendering = !!renderJob;
   let previewJob = null;
+  let preparingMix = false;
   let lastResult = null;
   let renderHistory = store.get('ytpmv-render-history', []);
   if (!Array.isArray(renderHistory)) renderHistory = [];
@@ -467,13 +493,12 @@
       liveVoice = installedCorpora.some(c => c.slug === savedVoice) ? savedVoice : d.active;
       store.set('ytpmv-default-corpus', liveVoice);
       voiceSel.innerHTML = installedCorpora.map(c =>
-        `<option value="${esc(c.slug)}"${c.slug === liveVoice && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}` +
-        `${c.words ? ` (${c.words} words)` : ''}</option>`).join('') +
-        `<option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
-      $('bulk-corpus').innerHTML = '<option value="">follow page voice</option>' + installedCorpora.map(c =>
+        `<option value="${esc(c.slug)}" title="${c.words || 0} words"${c.slug === liveVoice && !synthMode ? ' selected' : ''}>${esc(c.name || c.slug)}</option>`).join('') +
+        `<option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>Chip instruments only</option>`;
+      $('bulk-corpus').innerHTML = '<option value="">Follow song default</option>' + installedCorpora.map(c =>
         `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}</option>`).join('');
     } catch {
-      voiceSel.innerHTML = `<option>unavailable</option><option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>none: synthesised</option>`;
+      voiceSel.innerHTML = `<option>unavailable</option><option value="${NO_VOICE}"${synthMode ? ' selected' : ''}>Chip instruments only</option>`;
     }
   }
   const voicesReady = loadVoices();
@@ -487,14 +512,14 @@
     if (slug === NO_VOICE || synthMode) {
       setSynth(slug === NO_VOICE);
       if (slug === NO_VOICE || slug === liveVoice) {
-        $('voice-note').textContent = slug === NO_VOICE ? '(this page only)' : '';
+        $('voice-note').textContent = '';
         return;
       }
     }
     voiceSel.disabled = true;
     liveVoice = slug;
     store.set('ytpmv-default-corpus', slug);
-    $('voice-note').textContent = '(this page only)';
+    $('voice-note').textContent = '';
     try {
       if (song) {
         const analysis = song;
@@ -526,7 +551,7 @@
   }
 
   const OPTION_IDS = ['chip', 'len', 'speed', 'transpose', 'vary', 'balance', 'accurate',
-    'jitter', 'flip', 'flash', 'dim', 'labels', 'draft'];
+    'jitter', 'flip', 'flash', 'dim', 'labels', 'draft', 'layout', 'tile-order'];
   const captureOptions = () => Object.fromEntries(OPTION_IDS.map(key => {
     const el = $('opt-' + key); return [key, el.type === 'checkbox' ? el.checked : el.value];
   }));
@@ -535,7 +560,7 @@
     for (const key of OPTION_IDS) {
       const el = $('opt-' + key), value = options[key] ?? defaultOptions[key];
       if (el.type === 'checkbox') el.checked = !!value;
-      else if (Array.from(el.options).some(o => o.value === String(value))) el.value = String(value);
+      else if (!el.options || Array.from(el.options).some(o => o.value === String(value))) el.value = String(value);
     }
   }
   function captureState(defaults = false) {
@@ -627,7 +652,6 @@
     } else applyOptions(defaultOptions);
     for (const o of $('opt-chip').options) o.disabled = synthMode && soundsVoice(o.value);
     if (synthMode && soundsVoice(chipNow())) $('opt-chip').value = chipNow().replace(/-voice$/, '') || 'md';
-    lastChip = chipNow();
     voiceSel.value = synthMode ? NO_VOICE : liveVoice;
     expandedParts.clear(); samplePanels.clear();
     parts = {};
@@ -771,8 +795,8 @@
               <span class="k">instrument</span>
               <div class="v"><select data-k="instrument" data-el="inst" autocomplete="off" aria-label="Instrument for ${esc(p.instrument)}"></select></div>
             </div>
-            <div class="kvrow voice-only" data-el="corpus-wrap" title="The installed corpus this part sings with. Follow page voice uses the voice selected at the top.">
-              <span class="k">corpus</span>
+            <div class="kvrow voice-only" data-el="corpus-wrap" title="Choose the voice for this track. The Song default group follows the default voice above the timeline.">
+              <span class="k">voice</span>
               <div class="v"><select data-k="corpus" aria-label="Corpus for ${esc(p.instrument)}"></select></div>
             </div>
             ${p.is_drums ? '' : `<div class="kvrow" data-advanced data-el="patch-wrap" title="The General MIDI instrument: the patch an OPL plays, and the sample a SNES does" hidden>
@@ -822,6 +846,7 @@
         </div>
       </div>`;
     }).join('');
+    partRows = new Map([...$('parts').querySelectorAll('.part')].map(r => [r.dataset.id,r]));
     for (const p of song.parts) { drawBadge(p.id); drawInstrument(p); drawCorpusBusy(p.id); }
     drawChip();
     filterParts();
@@ -834,8 +859,6 @@
   const chipNow = () => $('opt-chip').value;
   const soundsVoice = (chip) => !chip || chip.endsWith('-voice');
   const machineOf = (chip) => soundsVoice(chip) ? null : song.instruments.machine_of[chip.split('-')[0]];
-  const inMachine = (m, tone) => ['melodic', 'drums'].some(k =>
-    song.instruments.machines[m][k].some(([t]) => t === tone));
   // What auto picks: a drum is the voice off the chip's sample channel, unless
   // there is no voice, when it is the chip's own kit.
   const autoTone = (p, chip) => p.program_tones?.[chip]?.[parts[p.id]?.program ?? p.settings.program ?? 0]
@@ -856,7 +879,7 @@
   function drawChip() {
     const chip = chipNow();
     $('chip-about').textContent = song && chip ? (song.instruments.chips || {})[chip] || ''
-      : 'off: every part is the voice, as recorded';
+      : 'No emulation: Auto tracks use recorded voices. Individually chosen chip instruments still play.';
   }
 
   function drawInstrument(p) {
@@ -869,7 +892,7 @@
       `<option value="${esc(t)}" title="${esc(about)}"${s.instrument === t ? ' selected' : ''}>${esc(TONE_TEXT[t] || t.replace(/-/g, ' '))}</option>`;
     const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(option).join('')}</optgroup>` : '';
     const auto = chip ? autoTone(p, chip) : 'voice';
-    let html = `<option value=""${s.instrument ? '' : ' selected'}>auto: ${esc(auto)}</option>`;
+    let html = `<option value=""${s.instrument ? '' : ' selected'}>Auto · ${esc(TONE_TEXT[auto] || auto.replace(/-/g, ' '))}</option>`;
     if (own) html += group(cat.machines[own].name, cat.machines[own][kind]);
     if (!synthMode) html += group('the voice', cat.voice);
     for (const [m, info] of Object.entries(cat.machines)) if (m !== own) html += group(info.name, info[kind]);
@@ -881,14 +904,14 @@
     const corpusWrap = r.querySelector('[data-el=corpus-wrap]');
     corpusWrap.hidden = onChip(p, s);
     const corpusSelect = corpusWrap.querySelector('select');
-    corpusSelect.innerHTML = `<option value="">follow page voice (${esc(corpusName(liveVoice) || 'unavailable')})</option>` +
-      installedCorpora.map(c => `<option value="${esc(c.slug)}">${esc(c.name || c.slug)}${c.words ? ` (${c.words} words)` : ''}</option>`).join('');
+    corpusSelect.innerHTML = `<optgroup label="Song default"><option value="">${esc(corpusName(liveVoice) || 'unavailable')}</option></optgroup>` +
+      '<optgroup label="Track override">' + installedCorpora.map(c => `<option value="${esc(c.slug)}" title="${c.words || 0} words">${esc(c.name || c.slug)}</option>`).join('') + '</optgroup>';
     if (s.corpus && !installedCorpora.some(c => c.slug === s.corpus)) {
       corpusSelect.add(new Option(`${s.corpus} (not installed)`, s.corpus));
     }
     corpusSelect.value = s.corpus || '';
     r.querySelector('[data-el=source-note]').textContent = onChip(p, s) ? `plays ${toneName(p, s)}`
-      : `voice: ${corpusName(corpusOf(s))}${s.corpus ? '' : ' · follows page voice'}`;
+      : `voice: ${corpusName(corpusOf(s))}${s.corpus ? ' · track override' : ' · song default'}`;
     r.querySelector('input[data-k=text]').setAttribute('list', vocabularyFor(corpusOf(s)));
 
     let about = r.querySelector('[data-el=instrument-about]');
@@ -914,20 +937,12 @@
     sel.value = String(s.program ?? p.settings.program ?? 0);
   }
 
-  // A choice that belonged to the machine being switched away from goes back
-  // to auto: a SID bass left behind on an NES song is a leftover, not a pick.
-  // Anything chosen from another machine was chosen on purpose, and stays.
-  let lastChip = chipNow();
+  // The song chip is a default, so only Auto tracks change their instrument.
+  // Explicit track instruments remain overrides until the user chooses Auto.
   $('opt-chip').addEventListener('change', () => {
-    const chip = chipNow(), was = song ? machineOf(lastChip) : null;
-    lastChip = chip;
     if (!song) return;
     drawChip();
-    for (const p of song.parts) {
-      const s = parts[p.id];
-      if (s.instrument && was && was !== machineOf(chip) && inMachine(was, s.instrument)) s.instrument = '';
-      drawInstrument(p);
-    }
+    for (const p of song.parts) drawInstrument(p);
     changed();
   });
 
@@ -948,7 +963,7 @@
   }
 
   const fmtOct = (o) => o > 0 ? `+${o}` : `${o}`;
-  const row = (id) => document.querySelector(`.part[data-id="${id}"]`);
+  const row = (id) => partRows.get(id) || document.querySelector(`.part[data-id="${id}"]`);
 
   function drawBadge(id) {
     const el = row(id)?.querySelector('[data-el=badge]');
@@ -995,6 +1010,7 @@
       if (t) t.textContent = `take ${d.take + 1}/${d.takes}`;
       drawBadge(id);
       drawSamplePanel(id);
+      workbench?.sampleChanged(id);
       saveProject();
     } catch (e) {
       if (!current()) return;
@@ -1098,7 +1114,9 @@
   function updateSoloLabel() {
     if (!song) return;
     const count = Object.values(parts).filter(s => s.solo).length;
-    $('preview-mix').textContent = count ? `▶ preview solo (${count})` : '▶ preview mix';
+    $('preview-mix').textContent = preparingMix ? 'Preparing…' : !$('player').paused ? 'Ⅱ Pause' : count ? `▶ Play solo (${count})` : '▶ Play';
+    $('preview-mix').setAttribute('aria-pressed',String(!$('player').paused));
+    $('preview-mix').setAttribute('aria-busy',String(preparingMix));
   }
   function filterParts() {
     if (!song) return;
@@ -1109,7 +1127,9 @@
       const matches = `${p.instrument} ${ROLE_TEXT[p.role] || p.role} ${s.text || ''} ${corpusName(corpusOf(s))}`.toLowerCase().includes(query);
       const category = filter === 'all' || (filter === 'muted' ? s.mute : filter === 'solo' ? s.solo
         : filter === 'drums' ? p.is_drums : p.role === filter);
-      r.hidden = !(matches && category); r.dataset.filtered = String(r.hidden); if (!r.hidden) shown++;
+      const filtered = !(matches && category);
+      if (!workbench) r.hidden = filtered;
+      r.dataset.filtered = String(filtered); if (!filtered) shown++;
     }
     $('part-count').textContent = `${shown} / ${song.parts.length} parts`;
     workbench?.refresh();
@@ -1149,7 +1169,7 @@
     document.body.classList.toggle('synth', synthMode);
     voiceSel.value = synthMode ? NO_VOICE : liveVoice;
     store.set('ytpmv-default-corpus', liveVoice); store.set('ytpmv-synth', synthMode);
-    applyOptions(state.options); lastChip = chipNow();
+    applyOptions(state.options);
     for (const o of $('opt-chip').options) o.disabled = synthMode && soundsVoice(o.value);
     for (const p of song.parts) if (state.defaults[p.id]) {
       p.settings = state.defaults[p.id].settings; p.recommended = state.defaults[p.id].recommended;
@@ -1268,15 +1288,20 @@
       balance: $('opt-balance').checked, accurate: $('opt-accurate').checked,
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked, draft: $('opt-draft').checked, synth: synthMode,
+      layout: $('opt-layout').value,
+      tile_order: JSON.parse($('opt-tile-order').value || '[]'),
     };
     if (Number($('opt-len').value)) options.max_seconds = Number($('opt-len').value);
     return options;
   }
-  async function stopPreview(clear = false, keepIntent = false) {
+  async function stopPreview(clear = false, keepIntent = false, keepKeyboard = false) {
+    if (!keepKeyboard) workbench?.stopInstrument?.();
     if (!keepIntent) previewIntents.cancel();
     previewRequests.cancel();
+    preparingMix = false; updateSoloLabel();
     const previous = previewJob; previewJob = null;
     const player = $('player'); player.pause();
+    const instrument = $('instrument-player'); instrument.pause(); instrument.removeAttribute('src'); instrument.load();
     if (player.readyState) player.currentTime = 0;
     if (clear) { player.removeAttribute('src'); player.load(); player.hidden = true; }
     document.querySelectorAll('.sample-panel video').forEach(video => video.pause());
@@ -1291,25 +1316,55 @@
     }
     return true;
   }
-  async function startPreview(partId = null) {
+  function keyboardState(id) {
+    const p = song?.parts.find(p => p.id === id); if (!p) return null;
+    const sound = {...sendable(p), mute:false, visible:false}, options = renderOptions();
+    for (const key of ['max_seconds','layout','tile_order','draft','flip','flash','dim','labels']) delete options[key];
+    const data = {midi_id:song.midi_id, part_id:id, parts:[sound], options};
+    return {key:JSON.stringify(data), data};
+  }
+  async function prepareKeyboard(state, notes, signal) {
+    // Let submission finish even if aborted, so its returned job can always
+    // be cancelled. Aborting the POST itself could leave orphaned work.
+    const job = await post('/api/ytpmv/preview-mix', {...state.data, notes, seconds:2});
+    let done = false;
+    const cancel = () => { if (!done) api(`/api/jobs/${job.id}`, {method:'DELETE'}).catch(()=>{}); };
+    signal.addEventListener('abort',cancel,{once:true});
+    try {
+      if (signal.aborted) { cancel(); throw new DOMException('Keyboard preparation cancelled','AbortError'); }
+      while (!signal.aborted) {
+        const result = await api(`/api/jobs/${job.id}`);
+        if (signal.aborted) break;
+        if (result.status === 'done') { done = true; return result.result; }
+        if (['error','cancelled'].includes(result.status)) { done = true; throw new Error(result.error || 'Keyboard preparation cancelled.'); }
+        await new Promise(resolve=>setTimeout(resolve,150));
+      }
+      throw new DOMException('Keyboard preparation cancelled','AbortError');
+    } finally { signal.removeEventListener('abort',cancel); if (!done) cancel(); }
+  }
+  async function startPreview(partId = null, note = null) {
     if (!song || pendingCorpora.size) return;
     const intent = previewIntents.next();
     if (!await stopPreview(true, true)) return;
     if (!previewIntents.current(intent)) return;
     const request = previewRequests.next(), analysis = song, signature = arrangementSignature();
+    preparingMix = !partId; updateSoloLabel();
     const solos = Object.values(parts).some(s => s.solo);
     const selection = song.parts.map(p => {
       const s = sendable(p); s.visible = false;
-      if (solos && !partId) s.mute = !parts[p.id].solo;
+      if (partId) s.mute = p.id !== partId;
+      else if (solos) s.mute = !parts[p.id].solo;
       return s;
     });
     const label = partId ? song.parts.find(p => p.id === partId).instrument : solos ? 'solo mix' : 'mix';
-    $('preview-status').textContent = `Preparing ${label}…`;
+    const statusNode = (partId && workbench?.instrumentPreparing(partId)) || $(partId ? 'instrument-status' : 'preview-status');
+    if (partId) $('preview-status').textContent = '';
+    statusNode.textContent = `Preparing ${label}${note !== null ? ' · single note' : ''}…`;
     const current = () => previewRequests.current(request) && song === analysis && signature === arrangementSignature();
     try {
       const job = await post('/api/ytpmv/preview-mix', {midi_id: song.midi_id,
-        parts: selection, options: renderOptions(), seconds: Number($('preview-seconds').value),
-        start: Number($('preview-from').value) || 0, part_id: partId});
+        parts: selection, options: renderOptions(), seconds: partId ? (note === null ? 6 : 2) : $('preview-selection').checked ? Number($('preview-seconds').value) : null,
+        start: Number($('preview-from').value) || 0, part_id: partId, note});
       if (!current()) { await api(`/api/jobs/${job.id}`, {method: 'DELETE'}); return; }
       previewJob = job.id;
       while (current()) {
@@ -1317,28 +1372,47 @@
         if (!current()) return;
         if (j.status === 'done') {
           previewJob = null;
-          const result = j.result, player = $('player');
-          player.src = result.audio_url; player.hidden = false;
-          $('preview-status').textContent = `${label} · ${mmss(result.from || 0)}–${mmss((result.from || 0) + result.duration)}${result.problems?.length ? ` · ${result.problems.length} parts could not play` : ''}`;
+          const result = j.result, player = $(partId ? 'instrument-player' : 'player');
+          preparingMix = false; updateSoloLabel();
+          player.src = result.audio_url;
+          if (partId) workbench?.instrumentReady(partId, result);
+          else workbench?.previewReady(result);
+          statusNode.textContent = `${label}${note !== null ? ' · note audition' : ''} · ${mmss(result.from || 0)}–${mmss((result.from || 0) + result.duration)}${result.problems?.length ? ` · ${result.problems.length} parts could not play` : ''}`;
           try { await player.play(); } catch (e) { if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') throw e; }
           return;
         }
         if (j.status === 'error' || j.status === 'cancelled') {
           previewJob = null; throw new Error(j.error || 'Preview cancelled.');
         }
-        $('preview-status').textContent = j.status === 'queued' ? `Preview queued${j.position ? ` · ${j.position} ahead` : ''}`
+        statusNode.textContent = j.status === 'queued' ? `Audio queued${j.position ? ` · ${j.position} ahead` : ''}`
           : `Preparing ${label} · ${STAGE[j.stage] || j.stage}`;
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     } catch (e) {
-      if (previewRequests.current(request)) $('preview-status').textContent = `${e.message}${previewJob ? ' — Stop cancels any pending preview.' : ''}`;
+      if (previewRequests.current(request)) statusNode.textContent = `${e.message}${previewJob ? ' — Stop cancels any pending audio.' : ''}`;
+    } finally {
+      if (previewRequests.current(request)) { preparingMix = false; updateSoloLabel(); }
     }
   }
-  $('preview-mix').addEventListener('click', () => startPreview());
-  $('stop-preview').addEventListener('click', async () => {
-    if (await stopPreview()) $('preview-status').textContent = 'Preview stopped.';
+  async function togglePlayback() {
+    const player = $('player');
+    if (!player.paused) player.pause();
+    else if (player.getAttribute('src')) {
+      if (player.ended) player.currentTime = 0;
+      try { await player.play(); } catch (e) { if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') $('preview-status').textContent = e.message; }
+    } else startPreview();
+  }
+  for (const event of ['play', 'pause', 'ended', 'emptied']) $('player').addEventListener(event, updateSoloLabel);
+  $('preview-mix').addEventListener('click', togglePlayback);
+  document.addEventListener('keydown', e => {
+    if (e.code !== 'Space' || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || !song || $('view-editor').hidden) return;
+    if (e.target.closest('input,textarea,select,[contenteditable=true],audio,video')) return;
+    e.preventDefault(); if (!e.repeat) togglePlayback();
   });
-  for (const id of ['preview-from', 'preview-seconds']) $(id).addEventListener('change', () => stopPreview(true));
+  $('stop-preview').addEventListener('click', async () => {
+    if (await stopPreview(true)) $('preview-status').textContent = 'Playback stopped.';
+  });
+  for (const id of ['preview-from', 'preview-seconds', 'preview-selection']) $(id).addEventListener('change', () => stopPreview(true));
 
   // ── render ───────────────────────────────────────────────────────────────
   const bar = $('progress'), barFill = bar.firstElementChild;
@@ -1487,6 +1561,7 @@
 
   // ── library: every MIDI anyone has uploaded, kept on the server ─────────
   let library = [];
+  let editingMidi = null, deletingMidi = null, libraryBusy = false;
   const mmss = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   const ago = t => {
     const d = (Date.now() / 1000 - t) / 86400;
@@ -1495,7 +1570,6 @@
   async function loadLibrary() {
     try { library = await api('/api/ytpmv/library'); }
     catch { $('upload-status').textContent = 'MIDI library could not load. You can still upload a file or reload this page to retry.'; return; }
-    $('library').hidden = !library.length;
     drawLibrary();
   }
   function drawLibrary() {
@@ -1504,17 +1578,71 @@
     const rows = library
       .filter(m => !q || `${m.title} ${m.key} ${m.description}`.toLowerCase().includes(q))
       .sort((a, b) => by === 'title' ? (a.title || '').localeCompare(b.title || '') : b[by] - a[by]);
-    $('lib-count').textContent = `${library.length} song${library.length === 1 ? '' : 's'}`;
+    $('lib-count').textContent = `${rows.length}${q ? ` of ${library.length}` : ''} song${library.length === 1 ? '' : 's'}`;
     const current = song && song.midi_id;
     $('lib-list').innerHTML = rows.map(m => `
-      <button type="button" class="lib-row${m.midi_id === current ? ' on' : ''}" data-mid="${esc(m.midi_id)}">
+      <article class="lib-entry" data-entry="${esc(m.midi_id)}"${libraryBusy ? ' aria-busy="true"' : ''}>
+      <button type="button" class="lib-row${m.midi_id === current ? ' on' : ''}" data-mid="${esc(m.midi_id)}"${libraryBusy ? ' disabled' : ''} aria-label="Open ${esc(m.title || 'untitled')}">
         <span class="t">${esc(m.title || 'untitled')}</span><span class="when">${ago(m.added)}</span>
         <span class="meta">${mmss(m.duration)} · ${m.bpm} BPM${m.tempo_changes ? ' (changes)' : ''} · ${esc(m.key)} · ${esc(m.time_signature)} · ${m.parts} part${m.parts === 1 ? '' : 's'}${m.drums ? ` + ${m.drums} drum${m.drums === 1 ? '' : 's'}` : ''} · ${m.notes.toLocaleString()} notes · ${Math.max(1, Math.round(m.bytes / 1024))} KB</span>
         <span class="desc">${esc(m.description)}</span>
-      </button>`).join('') || '<div class="hint">nothing matches</div>';
+      </button>
+      <div class="lib-actions"><button data-lib-action="rename"${libraryBusy ? ' disabled' : ''}>Rename</button><button data-lib-action="delete"${libraryBusy ? ' disabled' : ''}>Delete</button></div>
+      ${editingMidi === m.midi_id ? `<form class="lib-edit"><input name="title" aria-label="MIDI title" maxlength="80" required value="${esc(m.title || '')}"${libraryBusy ? ' disabled' : ''}><button type="submit"${libraryBusy ? ' disabled' : ''}>Save name</button><button type="button" data-lib-action="cancel"${libraryBusy ? ' disabled' : ''}>Cancel</button></form>` : ''}
+      ${deletingMidi === m.midi_id ? `<div class="lib-confirm"><span>Delete “${esc(m.title)}” from the library? Existing renders are kept.</span><button class="danger" data-lib-action="confirm-delete"${libraryBusy ? ' disabled' : ''}>Delete MIDI</button><button data-lib-action="cancel"${libraryBusy ? ' disabled' : ''}>Cancel</button></div>` : ''}
+      </article>`).join('') || `<div class="hint">${q ? 'No MIDI files match this search.' : 'No MIDI files yet. Import a .mid file above to get started.'}</div>`;
   }
   $('lib-search').addEventListener('input', drawLibrary);
   $('lib-sort').addEventListener('change', drawLibrary);
+  $('lib-list').addEventListener('click', async e => {
+    const action = e.target.closest('[data-lib-action]')?.dataset.libAction;
+    if (!action || libraryBusy) return;
+    const id = e.target.closest('[data-entry]').dataset.entry;
+    if (action === 'cancel') { editingMidi = deletingMidi = null; drawLibrary(); return; }
+    if (action === 'rename') {
+      editingMidi = id; deletingMidi = null; drawLibrary();
+      const input = $('lib-list').querySelector('.lib-edit input'); input.focus(); input.select(); return;
+    }
+    if (action === 'delete') { deletingMidi = id; editingMidi = null; drawLibrary(); return; }
+    if (action !== 'confirm-delete') return;
+    libraryBusy = true; drawLibrary();
+    try {
+      if (song?.midi_id === id) await stopPreview(true);
+      await api(`/api/ytpmv/midi/${encodeURIComponent(id)}`, {method:'DELETE'});
+      const title = library.find(m => m.midi_id === id)?.title;
+      library = library.filter(m => m.midi_id !== id);
+      delete projects[id]; store.set('ytpmv-projects', projects);
+      if (store.get('ytpmv-last-midi') === id) store.set('ytpmv-last-midi', null);
+      if (store.get('ytpmv')?.midi_id === id) localStorage.removeItem('ytpmv');
+      if (song?.midi_id === id) {
+        songRequests.cancel(); song = null; parts = {}; info = {}; partRows.clear();
+        for (const timer of Object.values(typing)) clearTimeout(timer);
+        typing = {}; corpusRequests = {}; sampleRequests = {}; pendingCorpora.clear();
+        document.body.classList.remove('has-song'); workbench.clearSong();
+      }
+      deletingMidi = null; $('lib-status').textContent = `Deleted ${title || 'MIDI'}. Existing renders are kept.`;
+    } catch (error) { $('lib-status').textContent = `Could not delete: ${error.message}`; }
+    finally { libraryBusy = false; drawLibrary(); }
+  });
+  $('lib-list').addEventListener('submit', async e => {
+    if (!e.target.matches('.lib-edit')) return;
+    e.preventDefault(); if (libraryBusy) return;
+    const id = e.target.closest('[data-entry]').dataset.entry, title = e.target.elements.title.value.trim();
+    if (!title) return;
+    libraryBusy = true; drawLibrary();
+    try {
+      const renamed = await api(`/api/ytpmv/midi/${encodeURIComponent(id)}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title})});
+      const item = library.find(m => m.midi_id === id); if (item) item.title = renamed.title;
+      if (song?.midi_id === id) { song.title = renamed.title; $('song-title').textContent = renamed.title; saveProject(); }
+      else if (projects[id]) { projects[id].title = renamed.title; store.set('ytpmv-projects', projects); }
+      editingMidi = null; $('lib-status').textContent = `Renamed to ${renamed.title}.`;
+    } catch (error) { $('lib-status').textContent = `Could not rename: ${error.message}`; }
+    finally {
+      libraryBusy = false; drawLibrary();
+      if (editingMidi) { const input = $('lib-list').querySelector('.lib-edit input'); if (input) { input.value = title; input.focus(); } }
+    }
+  });
   $('lib-list').addEventListener('click', async (e) => {
     const row = e.target.closest('.lib-row'); if (!row) return;
     const request = songRequests.next();
@@ -1534,9 +1662,19 @@
       $('upload-status').innerHTML = `<span style="color:var(--red)">${esc(err.message)}</span>`;
     }
   });
-  workbench = createYtpmvWorkbench({song: () => song, parts: () => parts, row, onChip, toneName,
+  const editorHooks = {song: () => song, parts: () => parts, row, onChip, toneName,
     speed: () => Number($('opt-speed').value), synth: () => synthMode,
-    corpusName: s => corpusName(corpusOf(s)), selectCorpus});
+    corpusName: s => corpusName(corpusOf(s)), selectCorpus,
+    audition: (id, note = null) => startPreview(id, note), sampleInfo: id => info[id],
+    keyboardState, prepareKeyboard,
+    stopForKeyboard: () => stopPreview(true, false, true),
+    stop: () => stopPreview(true), preview: togglePlayback,
+    notes: (id, params, signal) => api(`/api/ytpmv/midi/${encodeURIComponent(id)}/notes?${new URLSearchParams(params)}`, {signal})};
+  workbench = window.ytpmvInterface === 'simple' ? createYtpmvSimple(editorHooks) : createYtpmvWorkbench(editorHooks);
+  document.querySelectorAll('#interface-mode [data-interface]').forEach(link => {
+    if (link.dataset.interface === window.ytpmvInterface) link.setAttribute('aria-current','page');
+    link.addEventListener('click',saveProject);
+  });
   loadLibrary();
 
   // ── come back to where we were ───────────────────────────────────────────
@@ -1563,10 +1701,19 @@
   const CONSOLE_NAMES = {md: 'Mega Drive', nes: 'NES', sms: 'Master System', snes: 'SNES',
     gb: 'Game Boy', gbc: 'Game Boy Color', opl2: 'AdLib OPL2', opl3: 'Sound Blaster OPL3',
     sid: 'Commodore 64 (6581)', sid8580: 'Commodore 64 (8580)'};
-  for (const option of $('opt-chip').options) if (option.value) {
-    const voice = option.value.endsWith('-voice'), key = option.value.replace(/-voice$/, '');
-    option.textContent = `${CONSOLE_NAMES[key] || key} · ${voice ? 'sampled voice' : 'synth'}`;
+  const chipGroups = {};
+  for (const label of ['Chip instruments', 'Sampled voice through a chip']) {
+    const group = document.createElement('optgroup'); group.label = label;
+    chipGroups[label] = group;
   }
+  const initialChip = chipNow();
+  for (const option of [...$('opt-chip').options]) if (option.value) {
+    const voice = option.value.endsWith('-voice'), key = option.value.replace(/-voice$/, '');
+    option.textContent = `${CONSOLE_NAMES[key] || key} · ${voice ? 'sampled voice' : 'instruments'}`;
+    chipGroups[voice ? 'Sampled voice through a chip' : 'Chip instruments'].append(option);
+  }
+  $('opt-chip').append(...Object.values(chipGroups));
+  $('opt-chip').value = initialChip;
 })();
 </script>
 </body>

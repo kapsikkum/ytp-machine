@@ -92,7 +92,7 @@ async function sampleRace() {
   const settings={text:'old',take:0,hit:true};
   const b=sandbox({parts:{p:settings},info:{},sampleRequests:{},liveVoice:'test',corpusOf:s=>s.corpus || 'test',
     song:{parts:[{id:'p',is_drums:false}]},row(){return null;},post:()=>pending[call++].promise,
-    drawBadge(){badges++;},drawSamplePanel(){},saveProject(){}});
+    drawBadge(){badges++;},drawSamplePanel(){},saveProject(){},workbench:{sampleChanged(){}}});
   b.run(section(read('ytpmv.html'),'async function refreshSample','function changed'));
   const first=b.context.refreshSample('p');settings.text='new';const second=b.context.refreshSample('p');
   pending[1].resolve({take:0,takes:2,sample_url:'/new',hz:440});await second;

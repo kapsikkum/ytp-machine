@@ -1,0 +1,4 @@
+#interface-mode { display:flex; gap:0; padding:2px; border:1px solid var(--line-2); border-radius:5px; }
+#interface-mode a { border-radius:3px; font-size:.72rem; padding:.35rem .6rem; }
+#interface-mode a[aria-current=page] { color:var(--bg); background:var(--yellow); }
+@media(max-width:640px) { .top #interface-mode { order:2; width:auto; margin-left:auto; } }

@@ -407,27 +407,69 @@ part, choose `tape` for the classic chipmunk sound instead of `pitch perfect`.
 Render goes through the same queue as sentences.
 
 Voice parts also have a **corpus** dropdown containing the installed voices.
-Choose a different performer for each part, or leave it on **follow page voice**.
+Choose a different performer for each part, or use the **Song default** group.
+The closed menu shows the actual performer in either case. **Default voice**
+and **Global chip** stay above the arrangement; Auto tracks follow that chip,
+while explicitly chosen track instruments stay fixed.
 Switching a part's corpus refreshes its suggested sounds, takes and vocabulary;
 previews and the finished video use that same corpus. The voice at the top is
 this page's default and leaves the server's active corpus unchanged. Explicit
 part choices survive changes to that default and are restored on page reload.
 
-The sticky audition bar previews a 6–15 second section through the same mixer
-as the video render, including speed, key, pan, levels, chip, variety and
-automatic balance. Open **preview range** to choose where it starts; the
-player can pause and seek within the section. **Solo** affects mix auditions
-only, leaving mute settings and the final render unchanged. **Stop** also
-cancels queued preview work. Per-part previews start at that part's first note.
+The DAW transport plays from the playhead to the end when no range is selected.
+Shift + drag selects a playback range; **Clear range** returns to whole-song
+playback. Playback uses the same mixer as the video render, including speed,
+key, pan, levels, chip, variety and balance, within `YTPMV_MAX_SECONDS` (15
+minutes by default). **Space** plays/pauses throughout the editor except while
+editing text or a control. The transport clock and timeline cursor use the
+audio clock; return-to-start and ±10-second buttons seek it directly. There
+is one playback UI; the browser's native audio controls are hidden. **Solo**
+affects playback only. **Stop** also cancels pending audio preparation.
+
+Click the sound name in a track header for its instrument window: voice,
+sample/take, up to twelve suggestions, chip instrument and GM patch controls,
+a note-audition keyboard and a waveform decoded from the actual audition audio.
+Opening the instrument prepares all thirteen visible keys in one audio bank.
+The browser decodes it once and plays cached notes locally through Web Audio,
+including overlapping key presses, without per-key generation requests. Changing
+the voice, sample/take, instrument/patch or sound settings rebuilds the bank;
+returning to a recently used sound reuses its cache. Decoded banks are bounded
+to six entries and 48 MiB in the tab. Initial preparation shows a loading state.
+Keys audition one note; **Play track pattern** auditions only that track from
+its first note. The dock's **part** button auditions in place without opening
+the instrument window. Instrument auditions are separate from song playback.
+
+**MIDI library** replaces the editor while browsing. Search, sort, rename inline
+or delete an uploaded MIDI with confirmation. Rename updates an open song;
+deleting that song clears its local arrangement and returns to the library.
+Existing rendered files remain. Files used by queued/running renders cannot
+be deleted until those jobs stop. MIDI files are shared server-side; track
+settings remain local to the device.
+
+The header switches between **Simple** (the original stacked parts and render
+layout) and **Advanced** (the DAW workbench). Both share the current engine,
+fixes, corpus selection and saved arrangements. The interface preference is
+remembered on this device; `?mode=simple` or `?mode=advanced` selects it explicitly.
 
 The track workbench shows real MIDI activity above a dock for the selected
 part. Pick a track to edit its voice, sample or chip instrument; its corpus
-selector and M/S controls also work directly from the track header. **Part**,
+selector, quick sound button and M/S controls work directly from the header. **Track**,
 **Song & render**, and **Video preview** keep local settings, global options,
 and the composition in separate dock panels. **Find & manage tracks** holds
 the search and role filters. OPL and SNES expose their GM patch banks beside
 the instrument selector; automatic chip sounds follow a changed MIDI patch.
 Chip instruments play independently of corpus clips and draw waveform tiles.
+
+The timeline scrolls vertically through tracks and horizontally when zoomed.
+Its ruler and track controls stay pinned, and large arrangements draw only
+nearby track rows. Use **Fit song**, the zoom slider, **Focus range**, or
+**Part start** to navigate. Shift + wheel scrolls through time; Ctrl + wheel
+zooms around the pointer. Click or drag to seek, or Shift + drag to choose a
+playback range. The playhead follows the actual audio; **Follow playback**
+keeps it in view. Focus the timeline for arrows to seek, Shift + arrows
+to jump ten seconds, and Home/End to move to the ends. Zoomed views request
+bounded note detail for their visible time range without re-running voice
+recommendations. The MIDI note view is read-only.
 
 Each MIDI keeps its own arrangement, voice and render options in this browser's
 local storage. **Undo** reverses edits in the current session. **Settings**
@@ -439,6 +481,10 @@ If browser storage fills or is blocked, the save indicator reports the failure.
 Video exports fill a 1920×1080 (16:9) canvas. Rows share the available space;
 three visible parts place two across the top and one across the full lower
 row. Source pictures are cropped centrally to fill each cell without stretching.
+**Video preview** offers Balanced grid, Two rows, Two columns, Vertical strips
+and Featured track presets. Drag tiles to reorder them with animated movement,
+or use Alt + left/right on a focused tile. Source thumbnails show the crop;
+the selected preset and order persist per MIDI and are used by the renderer.
 
 Rendering keeps the last successful export visible. **Cancel render** stops a
 queued or running job; a refresh reconnects to an acknowledged job, and
@@ -877,7 +923,10 @@ once exhausted the container's thread ceiling before the queue existed.
 | `GET /api/ytpmv/midi/{id}/part/{part_id}?corpus={slug}` | suggested sounds for one part from an installed corpus |
 | `POST /api/ytpmv/sample` | `{"text","take","corpus"}` → the clip as an instrument, and the note it is on; corpus is optional |
 | `POST /api/ytpmv/preview` | `{"midi_id","part"}` → a few seconds of one part, audio only |
-| `POST /api/ytpmv/preview-mix` | `{"midi_id","parts","options","start","seconds","part_id"}` → queued audio audition; seconds capped at 15, optional part_id solos from its first note |
+| `GET /api/ytpmv/library` | uploaded MIDIs with searchable song metadata |
+| `PATCH /api/ytpmv/midi/{id}` | `{"title"}` → rename a MIDI and invalidate its cached metadata |
+| `DELETE /api/ytpmv/midi/{id}` | remove the MIDI and sidecars; reject deletion while a queued/running job uses it |
+| `POST /api/ytpmv/preview-mix` | `{"midi_id","parts","options","start","seconds","part_id","note","notes"}` → queued audio; null seconds plays to song end, part_id isolates a short pattern, note auditions one pitch, notes prepares a bank of 1–24 distinct pitches with offsets in the result |
 | `POST /api/ytpmv/render` | `{"midi_id","parts","options"}` → `202` with a job id, polled like the rest |
 
 ## Tests

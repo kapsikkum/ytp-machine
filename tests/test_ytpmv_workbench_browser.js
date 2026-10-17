@@ -11,19 +11,53 @@ async function run(chromium, origin='http://127.0.0.1:8877') {
   const out=path.resolve(__dirname,'..','output','ytpmv-smoke');fs.mkdirSync(out,{recursive:true});
   try {
     await page.goto(origin+'/ytpmv.html');
-    await page.locator('#library summary').click();
+    await page.locator('#open-midi-library').click();
     await page.locator('.lib-row[data-mid="fixture-song"]').click();
     await page.locator('.track[data-track="lead"]').waitFor();
     await page.waitForFunction(()=>!document.querySelector('.part[aria-busy=true]'));
     assert.equal(await page.locator('.track:visible').count(),3);
     assert.equal(await page.locator('.part:visible').count(),1);
     assert.equal(await page.locator('.track[data-track="lead"] rect').count(),8);
+    // Song defaults stay accessible while editing a track, with one shared
+    // control per setting. Closed voice menus display the real performer.
+    const voiceName = async id => page.locator(`[data-track-corpus="${id}"]`).evaluate(s=>s.selectedOptions[0].textContent);
+    const defaultName = await page.locator('#voice-select').evaluate(s=>s.selectedOptions[0].textContent);
+    assert.equal(await voiceName('lead'),defaultName);
+    assert.equal(await control('lead','corpus').evaluate(s=>s.selectedOptions[0].textContent),defaultName);
+    assert.equal(await page.getByLabel('Global chip',{exact:true}).isVisible(),true);
+    assert.equal(await page.locator('#song-sound #voice-select').count(),1);
+    assert.equal(await page.locator('#song-sound #opt-chip').count(),1);
+    assert.equal(await page.locator('#opt-chip').locator('optgroup').count(),2);
+    await page.locator('#opt-chip').selectOption('md');
+    assert.equal(await page.locator('.track[data-track=lead] .track-tone').isVisible(),true);
+    const previewRequest = page.waitForRequest(r=>new URL(r.url()).pathname==='/api/ytpmv/preview-mix');
+    await page.locator('#preview-mix').click();
+    assert.equal((await previewRequest).postDataJSON().options.chip,'md');
+    await page.locator('#stop-preview').click();
+    await control('lead','instrument').selectOption('md-fm');
+    await page.locator('#opt-chip').selectOption('md-voice');
+    assert.equal(await control('lead','instrument').inputValue(),'md-fm');
+    assert.equal(await page.locator('.track[data-track=lead] .track-tone').isVisible(),true);
+    assert.equal(await page.locator('[data-track-corpus=bass]').isVisible(),true);
+    await control('lead','instrument').selectOption('');
+    assert.equal(await page.locator('[data-track-corpus=lead]').isVisible(),true);
+    await page.locator('#opt-chip').selectOption('');
     await choose('bass');
     assert.equal(await control('bass','text').isVisible(),true);
     assert.equal(await control('lead','text').isVisible(),false);
     await page.locator('[data-track-corpus="bass"]').selectOption('fixture-other');
     await page.waitForFunction(()=>document.querySelector('.part[data-id=bass] [data-k=text]').value==='boom');
     assert.equal(await control('bass','corpus').inputValue(),'fixture-other');
+    assert.equal(await voiceName('bass'),'Alternate voice');
+    await page.locator('#voice-select').selectOption('fixture-other');
+    await page.waitForFunction(()=>!document.querySelector('.part[aria-busy=true]') && document.querySelector('.part[data-id=lead] [data-k=text]').value==='bell');
+    assert.equal(await voiceName('lead'),'Alternate voice');
+    assert.equal(await control('lead','corpus').inputValue(),'');
+    assert.equal(await control('bass','corpus').inputValue(),'fixture-other');
+    await page.locator('#voice-select').selectOption('fixture');
+    await page.waitForFunction(()=>!document.querySelector('.part[aria-busy=true]') && document.querySelector('.part[data-id=lead] [data-k=text]').value==='cat');
+    assert.equal(await voiceName('lead'),defaultName);
+    assert.equal(await voiceName('bass'),'Alternate voice');
     await choose('lead');
     await control('lead','instrument').selectOption('opl2');
     assert.equal(await control('lead','corpus').isVisible(),false);
@@ -40,7 +74,8 @@ async function run(chromium, origin='http://127.0.0.1:8877') {
     await page.locator('.time-ruler').click({position:{x:200,y:10}});
     assert(Number(await page.locator('#preview-from').inputValue())>0);
     await page.locator('#tab-video').click();
-    const cells=await page.locator('.composition-row button').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
+    assert.equal(await page.getByLabel('Global chip',{exact:true}).isVisible(),true);
+    const cells=await page.locator('.composition-tile').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};}));
     const box=await page.locator('#composition-preview').boundingBox();
     assert(Math.abs(box.width/box.height-16/9)<.01);
     assert.equal(cells.length,3);
@@ -59,10 +94,11 @@ async function run(chromium, origin='http://127.0.0.1:8877') {
       assert.equal(overflow,false,`overflow at ${width}`);
       await choose('lead');
       assert.equal(await control('lead','instrument').isVisible(),true);
+      assert.equal(await page.getByLabel('Global chip',{exact:true}).isVisible(),true);
     }
     await page.screenshot({path:path.join(out,'workbench-mobile.png'),fullPage:true});
     assert.deepEqual(errors,[]);
-    console.log('PASS workbench: real MIDI overview, selected-part dock, track corpus/solo, OPL/SNES patches, ruler seek, full 16:9 three-part composition, desktop/mobile');
+    console.log('PASS workbench: visible song sound defaults, actual inherited voice names, global chip preview, independent track overrides, selected-track dock, OPL/SNES patches, scrolling/seek, 16:9 grid, desktop/mobile');
   } finally { await browser.close(); }
 }
 module.exports=run;

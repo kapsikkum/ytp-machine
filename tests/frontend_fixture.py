@@ -43,7 +43,8 @@ def fixture_part(part_id, corpus):
     text = texts[part_id]
     rec = {"text": text, "take": 0, "octave": -1 if part_id == "lead" else 0,
            "pitch": {"midi": 72 if other else 60, "stability": 12, "voiced": .95, "dur": .6},
-           "alternatives": [{"text": "chime" if other else "cat", "take": 1}]}
+           "alternatives": [{"text": "chime" if other else "cat", "take": 1}] +
+                           [{"text": f"suggestion-{i}", "take": 0} for i in range(11)]}
     settings = {"id": part_id, "text": text, "take": 0, "corpus": corpus,
                 "octave": rec["octave"], "mode": "perfect", "volume": 1, "pan": 0,
                 "sustain": "note", "mute": False, "visible": True, "program": 0,
@@ -121,9 +122,18 @@ class Handler(BaseHTTPRequestHandler):
                 "description": "A tiny fixture tune with a lead, bass and kick.", "duration": 12,
                 "bpm": 120, "key": "C major", "time_signature": "4/4", "parts": 2,
                 "drums": 1, "notes": 24, "bytes": 256, "tempo_changes": 0}
-                for mid, title in [(MIDI_ID, 'Synthetic trio.mid'), ('fixture-second', 'Second song.mid')]])
+                for mid, title in self.server.midi_titles.items()])
         if route in [f"/api/ytpmv/midi/{MIDI_ID}", "/api/ytpmv/midi/fixture-second"]:
-            return self.reply(fixture_song(self.headers.get("X-Corpus", "fixture"), route.rsplit('/', 1)[-1]))
+            mid = route.rsplit('/', 1)[-1]
+            song = fixture_song(self.headers.get("X-Corpus", "fixture"), mid)
+            song['title'] = self.server.midi_titles.get(mid, song['title'])
+            return self.reply(song)
+        if route.startswith('/api/ytpmv/midi/') and route.endswith('/notes'):
+            start, end = float(q.get('start', ['0'])[0]), float(q.get('end', ['12'])[0])
+            ids = q.get('parts', [''])[0].split(',')
+            result = {pid: [[i*1.2, .4+i%2*.2, 48+i%5*3] for i in range(8)
+                            if start <= i*1.2+.6 and i*1.2 < end] for pid in ids}
+            return self.reply({'parts': result, 'counts': {pid: len(notes) for pid,notes in result.items()}, 'sampled': False})
         if route.startswith(f"/api/ytpmv/midi/{MIDI_ID}/part/"):
             part_id = route.rsplit("/", 1)[-1]
             corpus = q.get("corpus", [self.headers.get("X-Corpus", "fixture")])[0]
@@ -134,6 +144,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({"words": {"bell": 3, "boom": 2, "thump": 1}
                 if self.headers.get("X-Corpus") == "fixture-other" else {"cat": 2, "second": 1}})
         if route == "/api/fixture/audio": return self.file(self.server.audio, "audio/wav")
+        if route == '/api/fixture/keyboard': return self.file(self.server.keyboard, 'audio/wav')
         if route == "/api/fixture/video": return self.file(self.server.media, "video/mp4")
         if route == "/api/jobs/fixture-render":
             return self.reply({"id": "fixture-render", "status": "done", "result": {
@@ -141,6 +152,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/jobs/fixture-preview":
             return self.reply({"id": "fixture-preview", "status": "done", "result": {
                 "audio_url": "/api/fixture/audio", "from": 0, "duration": 3, "problems": []}})
+        if route == '/api/jobs/fixture-keyboard':
+            return self.reply({'id':'fixture-keyboard','status':'done','result':{
+                'audio_url':'/api/fixture/keyboard','from':0,'duration':26,'problems':[],
+                'keyboard':[{'note':note,'offset':i*2,'duration':2} for i,note in enumerate(self.server.keyboard_notes)]}})
         if route.startswith("/api/edit/splice/"):
             return self.reply({"word": EVIL, "phones": ["K","AE","T"], "exact_total": 0,
                 "plan": [{"phones": ["K","AE","T"], "from": EVIL, "start_time": .1, "end_time": .9}],
@@ -184,11 +199,25 @@ class Handler(BaseHTTPRequestHandler):
                 "source": 'Synthetic source recording'})
         if route == "/api/ytpmv/preview": return self.reply({"audio_url": "/api/fixture/audio"})
         if route == "/api/ytpmv/render": return self.reply({"id": "fixture-render", "status": "queued"}, 202)
-        if route == "/api/ytpmv/preview-mix": return self.reply({"id": "fixture-preview", "status": "queued"}, 202)
+        if route == "/api/ytpmv/preview-mix":
+            if data.get('notes'):
+                self.server.keyboard_notes = data['notes']
+                return self.reply({'id':'fixture-keyboard','status':'queued'},202)
+            return self.reply({"id": "fixture-preview", "status": "queued"}, 202)
         return self.reply({"detail":"fixture write not implemented"},400)
 
     def do_DELETE(self):
+        if self.path.startswith('/api/ytpmv/midi/'):
+            mid = self.path.rsplit('/', 1)[-1]
+            self.server.midi_titles.pop(mid, None)
+            return self.reply({'midi_id': mid, 'deleted': True})
         return self.reply({'cancelled': True, 'status': 'cancelled'})
+
+    def do_PATCH(self):
+        body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))))
+        mid = self.path.rsplit('/', 1)[-1]
+        self.server.midi_titles[mid] = body['title']
+        return self.reply({'midi_id': mid, 'title': body['title']})
 
 
 def main():
@@ -206,6 +235,14 @@ def main():
         subprocess.run(["ffmpeg","-v","error","-y","-f","lavfi","-i","color=c=gray:s=480x270:r=25:d=3",
             "-i",str(wavpath),"-c:v","libx264","-preset","ultrafast","-c:a","aac","-shortest",str(media)],check=True)
         server=ThreadingHTTPServer(("127.0.0.1",args.port),Handler);server.samples=samples;server.media=media;server.audio=wavpath
+        server.midi_titles = {MIDI_ID: 'Synthetic trio.mid', 'fixture-second': 'Second song.mid'}
+        server.keyboard_notes = list(range(60,73));server.keyboard = directory / 'keyboard.wav'
+        with wave.open(str(server.keyboard),'wb') as wav:
+            wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+            for note in server.keyboard_notes:
+                clock=np.arange(32000)/16000
+                sound=.2*np.sin(2*np.pi*440*2**((note-69)/12)*clock)*np.minimum(1,clock*100)*np.maximum(0,1-clock)
+                wav.writeframes((sound*32767).astype('<i2').tobytes())
         timer = threading.Timer(args.seconds, server.shutdown) if args.seconds > 0 else None
         if timer:
             timer.daemon = True

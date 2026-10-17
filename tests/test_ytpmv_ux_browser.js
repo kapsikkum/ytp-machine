@@ -23,8 +23,7 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
     document.querySelector(`.part[data-id="${id}"] [data-k="${key}"]`)?.value === expected,
     {id,key,expected});
   const openSong = async id => {
-    if (!(await page.locator('#library').getAttribute('open')))
-      await page.locator('#library').evaluate(el => { el.open = true; });
+    await page.locator('#open-midi-library').click();
     await page.locator(`.lib-row[data-mid="${id}"]`).click();
     await page.waitForFunction(id => JSON.parse(localStorage.getItem('ytpmv-last-midi')) === id, id);
     await idle();
@@ -97,7 +96,7 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
     await page.locator('#opt-draft').check();
     const previewRequest = page.waitForRequest(r => r.url().endsWith('/api/ytpmv/preview-mix'));
     await page.locator('#preview-mix').click(); await previewRequest;
-    await page.locator('#player').waitFor({state:'visible'});
+    await page.waitForFunction(()=>document.getElementById('player').getAttribute('src'));
     const mix = latest('/api/ytpmv/preview-mix');
     assert.equal(mix.options.speed, 1.25); assert.equal(mix.options.transpose, 3);
     assert.equal(mix.options.chip, 'md-voice');
@@ -117,11 +116,11 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
       return route.fulfill({json:{status:'queued'}});
     });
     await page.locator('#preview-mix').click();
-    await page.locator('#preview-status').getByText('Preview queued',{exact:true}).waitFor();
+    await page.locator('#preview-status').getByText('Audio queued',{exact:true}).waitFor();
     await page.locator('#stop-preview').click();
     await page.locator('#preview-status').getByText(/could not confirm cancellation/).waitFor();
     await page.locator('#stop-preview').click();
-    await page.locator('#preview-status').getByText('Preview stopped.',{exact:true}).waitFor();
+    await page.locator('#preview-status').getByText('Playback stopped.',{exact:true}).waitFor();
     assert.equal(previewCancelled,true);
     await page.unroute('**/api/ytpmv/preview-mix'); await page.unroute('**/api/jobs/slow-preview');
 

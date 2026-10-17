@@ -203,11 +203,12 @@ jobs:
         # a full queue, and writes from another site. The HTTP half runs the
         # real app, so it needs what serving it needs.
         run: |
-          pip install --quiet httpx python-multipart
+          pip install --quiet httpx python-multipart uvicorn
           python tests/test_hardening.py
           python tests/test_security_api.py
           python tests/test_job_resources.py
           python tests/test_ytpmv_corpora.py
+          python tests/test_ytpmv_library.py
           python tests/test_editor_audio.py
           node tests/test_frontend.js
 
@@ -226,6 +227,11 @@ jobs:
           node tests/test_ytpmv_browser.js
           node tests/test_ytpmv_ux_browser.js
           node tests/test_ytpmv_workbench_browser.js
+          node tests/test_ytpmv_timeline_browser.js
+          node tests/test_ytpmv_studio_browser.js
+          node tests/test_ytpmv_simple_browser.js
+          node tests/test_ytpmv_keyboard_browser.js
+          node tests/test_ytpmv_library_browser.js
 
       - name: Matrix commands
         # What the bot hears in a message. Plain string handling, and where

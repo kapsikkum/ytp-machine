@@ -38,7 +38,7 @@ async function run(chromium, origin = 'http://127.0.0.1:8877') {
   try {
     await page.goto(origin + '/ytpmv.html');
     await page.locator('#voice-select option[value="fixture-other"]').waitFor({state: 'attached'});
-    await page.locator('#library summary').click();
+    await page.locator('#open-midi-library').click();
     await page.locator('.lib-row[data-mid="fixture-song"]').click();
     await selectPart('lead');
     await part('lead').waitFor();

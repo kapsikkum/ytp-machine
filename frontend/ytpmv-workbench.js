@@ -5,15 +5,29 @@ window.createYtpmvWorkbench = function (editor) {
   const node = (tag, id, html = '') => { const n = document.createElement(tag); if (id) n.id = id; n.innerHTML = html; return n; };
   let selected = null, analysis = null, tab = 'part';
   const workspace = el('parts-card');
+  // Keep project sound defaults in view alongside the arrangement, regardless
+  // of which inspector tab is open. Reuse the original controls and handlers.
+  const sound = node('section', 'song-sound'); sound.className = 'card';
+  sound.setAttribute('aria-label', 'Song sound defaults');
+  const soundTitle = node('div', 'sound-title', '<b>Song sound</b><small>Used unless a track overrides</small>');
+  const voiceLabel = el('voice-select').closest('label');
+  voiceLabel.firstChild.textContent = 'Default voice ';
+  voiceLabel.title = 'The voice inherited by tracks using the song default. Individual track voices stay as chosen.';
+  const help = node('details', 'sound-help', '<summary>About defaults</summary><p>Tracks set to Auto follow the global chip. Choose an instrument in the selected track to override it. Voice menus let each track follow the default voice or use another installed voice.</p>');
+  help.append(el('chip-about'));
+  sound.append(soundTitle, voiceLabel, el('machine'), el('voice-note'), help);
+  el('transport').before(sound);
   const tools = node('details', 'track-tools', '<summary>Find & manage tracks</summary>');
   tools.append(el('parts-tools')); workspace.prepend(tools);
   const timeline = node('div', 'track-lanes');
   timeline.setAttribute('role', 'group'); timeline.setAttribute('aria-label', 'MIDI arrangement');
   workspace.append(timeline);
+  const timelineView = createYtpmvTimeline(timeline, {speed:editor.speed, mount:updateTrack,
+    select:id=>select(id), stop:editor.stop, preview:editor.preview, notes:editor.notes});
   const tabs = node('div', 'editor-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Workbench controls');
   const dock = node('div', 'workbench-dock');
   const panels = {};
-  for (const [key, title] of [['part','Part'], ['song','Song & render'], ['video','Video preview']]) {
+  for (const [key, title] of [['part','Track'], ['song','Song & render'], ['video','Video preview']]) {
     const button = node('button', `tab-${key}`, title); button.type = 'button'; button.dataset.tab = key;
     button.setAttribute('role', 'tab'); button.setAttribute('aria-controls', `panel-${key}`);
     button.addEventListener('click', () => setTab(key)); tabs.append(button);
@@ -22,24 +36,46 @@ window.createYtpmvWorkbench = function (editor) {
   }
   panels.part.append(el('parts'));
   const empty = node('div', 'no-track', 'Select a track to edit its voice or chip instrument.'); panels.part.append(empty);
-  panels.song.append(el('machine'), el('options'), el('bulk-tools'), el('how'));
+  panels.song.append(el('options'), el('bulk-tools'), el('how'));
   const composition = node('div', 'composition-preview');
-  const caption = node('div', 'composition-heading', '<b>Video composition</b><span>16:9 · fill frame · centred crop</span>');
-  panels.video.append(caption, composition, el('render-card'));
+  const caption = node('div', 'composition-heading', '<b>Video composition</b><span>16:9 · fill frame</span>');
+  caption.append(el('video-layout-controls'));
+  const compositionStatus=node('p','composition-status','Drag tiles to arrange · Alt + ← / → moves the focused tile');
+  compositionStatus.setAttribute('role','status');
+  panels.video.append(caption, composition, compositionStatus, el('render-card'));
   workspace.append(tabs, dock);
   const footer = node('div', 'workbench-footer'); footer.append(el('save-state')); workspace.append(footer);
   // The loaded project replaces the upload area; choosing a file remains one click.
   document.querySelector('body > .card')?.setAttribute('id', 'midi-import');
   const projectTools = node('div', 'project-tools');
   const upload = node('button', 'change-midi', 'Import MIDI'); upload.type = 'button'; upload.addEventListener('click', () => el('file').click());
-  const library = node('button', 'open-midi-library', 'MIDI library'); library.type = 'button';
-  library.setAttribute('aria-controls', 'library'); library.setAttribute('aria-expanded', 'false');
-  library.addEventListener('click', () => { el('library').open = !el('library').open; library.setAttribute('aria-expanded', String(el('library').open)); });
-  projectTools.append(upload, library); el('song').append(projectTools);
+  projectTools.append(upload); el('song').append(projectTools);
   el('song-desc').hidden = true;
   const renderButton = el('render-btn'); projectTools.append(renderButton);
   el('expand-parts').textContent = 'Expand part settings';
   el('expand-parts').hidden = true; // The selected part still has its settings button.
+  const views = node('div', 'project-tabs'); views.setAttribute('role','tablist'); views.setAttribute('aria-label','YTPMV views');
+  const editorButton = node('button','open-editor','Editor'), library = node('button','open-midi-library','MIDI library');
+  const editorView = node('section','view-editor'), libraryView = node('section','view-library');
+  for(const [button,panel] of [[editorButton,editorView],[library,libraryView]]) {
+    button.type='button'; button.setAttribute('role','tab');button.setAttribute('aria-controls',panel.id);
+    panel.setAttribute('role','tabpanel');panel.setAttribute('aria-labelledby',button.id);
+    views.append(button);
+  }
+  el('midi-import').before(views,libraryView,editorView);
+  libraryView.append(el('midi-import'),el('library'));el('library').hidden=false;
+  editorView.append(el('song'),sound,el('transport'),workspace);
+  function setView(name) {
+    editorView.hidden=name!=='editor';libraryView.hidden=name!=='library';
+    editorButton.disabled=!editor.song();
+    editorButton.setAttribute('aria-selected',String(name==='editor'));
+    library.setAttribute('aria-selected',String(name==='library'));
+    if(name==='library')instrument?.close();
+  }
+  const instrument = createYtpmvInstrument(editor);
+  editorButton.addEventListener('click',()=>setView('editor'));
+  library.addEventListener('click',()=>setView('library'));
+  setView('library');
 
   function setTab(key) {
     tab = key;
@@ -55,24 +91,12 @@ window.createYtpmvWorkbench = function (editor) {
     if (focus) el('tab-part').focus();
   }
   function drawTimeline(song) {
-    const duration = Math.max(.001, song.duration);
-    const ruler = `<div class="track-ruler"><span>Tracks</span><button type="button" class="time-ruler" aria-label="Set preview start on the song ruler">${[0,.25,.5,.75,1].map(f => `<span>${formatTime(f * duration / editor.speed())}</span>`).join('')}</button></div>`;
-    timeline.innerHTML = ruler + song.parts.map(p => {
-      const activity = p.activity || [];
-      const pitches = activity.map(n => n[2]);
-      const low = Math.min(...pitches, 48), high = Math.max(...pitches, 72);
-      const marks = activity.map(([start, length, pitch]) => `<rect x="${Math.max(0,start / duration * 1000).toFixed(2)}" y="${(8 + (high-pitch) / Math.max(1,high-low) * 24).toFixed(2)}" width="${Math.max(1,Math.min(duration-start,length) / duration * 1000).toFixed(2)}" height="3" rx=".5"/>`).join('');
-      return `<div class="track" data-track="${safe(p.id)}" style="--track-color:var(${p.is_drums?'--green':p.role==='bass'?'--amber':p.role==='chords'?'--violet':'--blue'})">
-        <div class="track-head"><button type="button" data-select="${safe(p.id)}" class="track-name"><b>${safe(p.instrument)}</b><small data-track-source></small></button>
-        <div class="track-cast"><select data-track-corpus="${safe(p.id)}" aria-label="Corpus for ${safe(p.instrument)} track"></select><button type="button" data-select="${safe(p.id)}" class="track-tone" hidden></button></div>
-        <div class="track-switches"><button type="button" data-track-flag="mute" aria-label="Mute ${safe(p.instrument)}">M</button><button type="button" data-track-flag="solo" aria-label="Solo ${safe(p.instrument)}">S</button></div></div>
-        <button type="button" class="track-region" data-select="${safe(p.id)}" aria-label="Select ${safe(p.instrument)} MIDI part"><span data-track-caption></span><svg viewBox="0 0 1000 44" preserveAspectRatio="none" role="img" aria-label="${safe(p.instrument)} MIDI activity overview">${marks}</svg></button></div>`;
-    }).join('');
+    timelineView.setSong(song);
   }
   function updateTrack(id) {
     const song = editor.song(); if (!song) return;
     const p = song.parts.find(p => p.id === id), s = editor.parts()[id], r = editor.row(id);
-    const track = [...timeline.querySelectorAll('.track')].find(t => t.dataset.track === id);
+    const track = timelineView.track(id);
     if (!track || !p || !r) return;
     const synth = editor.onChip(p, s), source = r.querySelector('[data-el=source-note]').textContent;
     track.classList.toggle('muted', !!s.mute); track.classList.toggle('solo', !!s.solo);
@@ -80,71 +104,131 @@ window.createYtpmvWorkbench = function (editor) {
     track.querySelector('[data-track-caption]').textContent = synth ? editor.toneName(p,s) : (s.text || 'Choose a sample');
     track.querySelector('.track-tone').textContent = editor.toneName(p,s);
     track.querySelector('.track-tone').hidden = !synth;
+    const sample=track.querySelector('.track-sample');sample.hidden=synth;
+    sample.textContent=`${s.text||'Choose sound'} · take ${Number(s.take||0)+1}`;
+    sample.title=`Edit sound: ${s.text||'no sample'} · take ${Number(s.take||0)+1}`;
     const select = track.querySelector('select'), original = r.querySelector('[data-k=corpus]');
     select.hidden = synth || editor.synth();
-    const options = [...original.options].map(o => `<option value="${safe(o.value)}">${safe(o.value ? o.textContent.replace(/ \(\d+ words\)$/, '') : 'Page voice')}</option>`).join('');
+    // Preserve the inheritance choice, but show the performer rather than a
+    // placeholder. Menu groups explain default versus explicit track casting.
+    const options = original.innerHTML;
     if (select.innerHTML !== options) select.innerHTML = options;
     select.value = original.value; select.disabled = r.getAttribute('aria-busy') === 'true';
+    select.title = s.corpus ? `Track voice: ${editor.corpusName(s)}` : `Follows default voice: ${editor.corpusName(s)}`;
     track.querySelectorAll('[data-track-flag]').forEach(b => { b.setAttribute('aria-pressed', String(!!s[b.dataset.trackFlag])); b.disabled = select.disabled; });
     track.querySelector('.track-name').title = `${p.instrument} · ${source}`;
+    if(synth)track.querySelector('.track-tone').style.gridColumn='1 / -1';
   }
   function refresh() {
     const song = editor.song(); if (!song) return;
     if (song !== analysis) {
       analysis = song; selected = song.parts[0]?.id; drawTimeline(song);
-      el('library').open = false; library.setAttribute('aria-expanded','false');
+      setView('editor');
     }
     const shown = song.parts.filter(p => editor.row(p.id)?.dataset.filtered !== 'true');
     if (!shown.some(p => p.id === selected)) selected = shown[0]?.id;
     for (const p of song.parts) {
-      const r = editor.row(p.id), track = [...timeline.querySelectorAll('.track')].find(t => t.dataset.track === p.id);
-      if (!r || !track) continue;
-      r.hidden = p.id !== selected; track.hidden = r.dataset.filtered === 'true';
-      if (r.hidden) r.querySelectorAll('video').forEach(video => video.pause());
-      track.classList.toggle('selected', p.id === selected);
-      track.querySelectorAll('[data-select]').forEach(b => b.setAttribute('aria-pressed', String(p.id === selected)));
-      updateTrack(p.id);
+      const r = editor.row(p.id); if (!r) continue;
+      if (!r.hidden && p.id !== selected) r.querySelectorAll('video').forEach(video => video.pause());
+      r.hidden = p.id !== selected;
     }
+    timelineView.refresh(shown,selected);
+    for (const id of timelineView.mounted()) updateTrack(id);
     empty.hidden = !!selected;
-    const songSeconds = Math.max(.001, song.duration / editor.speed());
-    timeline.style.setProperty('--playhead', `${Math.min(100,Number(el('preview-from').value)/songSeconds*100)}%`);
-    timeline.querySelectorAll('.time-ruler span').forEach((span,i) => span.textContent = formatTime(i/4*songSeconds));
+    timelineView.sync();
     el('render-card').hidden = false;
-    el('library').classList.add('loaded-project');
-    drawComposition();
+    if (tab === 'video') drawComposition();
+    instrument.refresh();
+  }
+  let tileDrag=null, tileCells=[];
+  function tileOrder(){
+    const ids=editor.song().parts.map(p=>p.id);let saved=[];
+    try{saved=JSON.parse(el('opt-tile-order').value);}catch{}
+    return [...new Set([...(Array.isArray(saved)?saved:[]),...ids])].filter(id=>ids.includes(id));
+  }
+  function gridCells(n,w=1920,h=1080,layout=el('opt-layout').value){
+    if(layout==='featured'&&n>1){const split=Math.floor(w*2/3);return [[0,0,split,h],...gridCells(n-1,w-split,h,'sidebar').map(([x,y,a,b])=>[x+split,y,a,b])];}
+    const count=Math.max(1,n),rows=layout==='two-rows'?Math.min(count,2):layout==='two-columns'?Math.ceil(count/2):layout==='strips'?1:layout==='sidebar'?Math.min(count,Math.max(1,Math.round(Math.sqrt(count*h/w)))):Math.ceil(count/Math.ceil(Math.sqrt(count)));
+    const cells=[];for(let r=0;r<rows;r++){
+      const columns=Math.floor(count/rows)+(r<count%rows?1:0),y=Math.floor(r*h/rows),bottom=Math.floor((r+1)*h/rows);
+      for(let c=0;c<columns;c++){const x=Math.floor(c*w/columns);cells.push([x,y,Math.floor((c+1)*w/columns)-x,bottom-y]);}
+    }return cells;
   }
   function drawComposition() {
     const song = editor.song(); if (!song) return;
     let parts = song.parts.filter(p => editor.parts()[p.id].visible && (editor.onChip(p,editor.parts()[p.id]) || editor.parts()[p.id].text));
     if (!parts.length) parts = song.parts.filter(p => !editor.parts()[p.id].mute).slice(0,1);
-    const rows = Math.ceil(parts.length / Math.ceil(Math.sqrt(parts.length || 1)));
-    let index = 0;
-    composition.innerHTML = Array.from({length:rows}, (_,r) => {
-      const count = Math.floor(parts.length/rows)+(r<parts.length%rows?1:0);
-      return `<div class="composition-row">${parts.slice(index,index+=count).map(p=>{
-        const s=editor.parts()[p.id]; return `<button type="button" data-composition-part="${safe(p.id)}"><b>${safe(editor.onChip(p,s)?editor.toneName(p,s):s.text)}</b><span>${safe(p.instrument)}</span></button>`;
-      }).join('')}</div>`;
-    }).join('') || '<span class="composition-empty">No visible tiles</span>';
+    const order=tileDrag?.order||tileOrder();parts.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
+    tileCells=gridCells(parts.length);
+    const present=new Set(parts.map(p=>p.id));
+    for(const button of composition.children)if(!present.has(button.dataset.compositionPart))button.remove();
+    parts.forEach((p,i)=>{
+      let button=composition.querySelector(`[data-composition-part="${CSS.escape(p.id)}"]`);
+      if(!button){button=node('button');button.type='button';button.className='composition-tile';button.dataset.compositionPart=p.id;composition.append(button);}
+      const s=editor.parts()[p.id],[x,y,w,h]=tileCells[i];
+      const url=editor.onChip(p,s)?null:editor.sampleInfo(p.id)?.url;
+      const html=`${url?`<video src="${safe(url)}" muted playsinline preload="metadata" aria-hidden="true"></video>`:''}<b>${safe(editor.onChip(p,s)?editor.toneName(p,s):s.text)}</b><span>${safe(p.instrument)}</span><small>⠿ ${i+1}</small>`;
+      if(button.dataset.content!==html){button.innerHTML=html;button.dataset.content=html;}
+      button.setAttribute('aria-label',`Tile ${i+1}: ${p.instrument}. Drag to rearrange.`);
+      Object.assign(button.style,{left:x/1920*100+'%',top:y/1080*100+'%',width:w/1920*100+'%',height:h/1080*100+'%'});
+      button.dataset.slot=i;
+    });
   }
   timeline.addEventListener('click', event => {
     const pick = event.target.closest('[data-select]'); if (pick) select(pick.dataset.select);
+    const sound=event.target.closest('[data-track-sound]');if(sound){select(sound.dataset.trackSound);instrument.open(sound.dataset.trackSound,sound);}
     const flag = event.target.closest('[data-track-flag]'); if (flag) {
       const id = flag.closest('.track').dataset.track; select(id);
       const control = editor.row(id).querySelector(`[data-k=${flag.dataset.trackFlag}]`);
       control.checked = !control.checked; control.dispatchEvent(new Event('input',{bubbles:true}));
     }
-    const ruler = event.target.closest('.time-ruler'); if (ruler) {
-      const rect=ruler.getBoundingClientRect(), song=editor.song();
-      const fraction = Math.max(0, Math.min(1, (event.clientX-rect.left) / rect.width));
-      el('preview-from').value = Math.round(fraction * song.duration / editor.speed());
-      el('preview-from').dispatchEvent(new Event('change',{bubbles:true})); refresh();
-    }
   });
   timeline.addEventListener('change', event => { if(event.target.matches('[data-track-corpus]')) editor.selectCorpus(event.target.dataset.trackCorpus,event.target.value); });
-  composition.addEventListener('click', event => { const b=event.target.closest('[data-composition-part]'); if(b)select(b.dataset.compositionPart); });
-  el('preview-from').addEventListener('input',refresh);
+  composition.addEventListener('pointerdown',event=>{
+    const button=event.target.closest('[data-composition-part]');if(!button||event.button!==0)return;
+    event.preventDefault();button.focus({preventScroll:true});
+    const rect=button.getBoundingClientRect();
+    tileDrag={id:button.dataset.compositionPart,pointer:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,order:tileOrder(),moved:false,button};
+    button.setPointerCapture(event.pointerId);button.classList.add('dragging');
+  });
+  composition.addEventListener('pointermove',event=>{
+    if(!tileDrag||event.pointerId!==tileDrag.pointer)return;
+    const dx=event.clientX-tileDrag.x,dy=event.clientY-tileDrag.y;
+    if(Math.hypot(dx,dy)<6&&!tileDrag.moved)return;tileDrag.moved=true;
+    const rect=composition.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*1920,y=(event.clientY-rect.top)/rect.height*1080;
+    const index=tileCells.findIndex(([a,b,w,h])=>x>=a&&x<a+w&&y>=b&&y<b+h);
+    const buttons=[...composition.children].sort((a,b)=>Number(a.dataset.slot)-Number(b.dataset.slot)),target=buttons[index]?.dataset.compositionPart;
+    if(target&&target!==tileDrag.id){
+      const from=tileDrag.order.indexOf(tileDrag.id),to=tileDrag.order.indexOf(target);
+      tileDrag.order.splice(from,1);tileDrag.order.splice(to,0,tileDrag.id);drawComposition();
+    }
+    const left=parseFloat(tileDrag.button.style.left)/100*rect.width+rect.left,top=parseFloat(tileDrag.button.style.top)/100*rect.height+rect.top;
+    tileDrag.button.style.transform=`translate(${dx+tileDrag.left-left}px,${dy+tileDrag.top-top}px) scale(1.025)`;
+  });
+  function finishTileDrag(event,cancel=false){
+    if(!tileDrag||event.pointerId!==tileDrag.pointer)return;
+    const current=tileDrag;tileDrag=null;current.button.classList.remove('dragging');current.button.style.transform='';
+    if(current.button.hasPointerCapture(event.pointerId))current.button.releasePointerCapture(event.pointerId);
+    if(current.moved&&!cancel){el('opt-tile-order').value=JSON.stringify(current.order);el('opt-tile-order').dispatchEvent(new Event('change',{bubbles:true}));compositionStatus.textContent='Tile order saved · used in the rendered video';}
+    else if(!current.moved&&!cancel)select(current.id);
+    drawComposition();
+  }
+  composition.addEventListener('pointerup',event=>finishTileDrag(event));
+  composition.addEventListener('pointercancel',event=>finishTileDrag(event,true));
+  composition.addEventListener('keydown',event=>{
+    const button=event.target.closest('[data-composition-part]');if(!button)return;
+    if(event.altKey&&['ArrowLeft','ArrowRight'].includes(event.code)){
+      event.preventDefault();const order=tileOrder(),from=order.indexOf(button.dataset.compositionPart),to=Math.max(0,Math.min(order.length-1,from+(event.code==='ArrowLeft'?-1:1)));
+      order.splice(from,1);order.splice(to,0,button.dataset.compositionPart);el('opt-tile-order').value=JSON.stringify(order);el('opt-tile-order').dispatchEvent(new Event('change',{bubbles:true}));
+    }else if(event.code==='Enter')select(button.dataset.compositionPart);
+  });
+  el('opt-layout').addEventListener('change',drawComposition);
   el('opt-speed').addEventListener('change',refresh);
-  function formatTime(seconds) { return `${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`; }
   setTab('part');
-  return {refresh, updateTrack, select, setTab, get selected(){return selected;}, get tab(){return tab;}};
+  return {refresh, updateTrack, select, setTab, previewReady:timelineView.ready,
+    instrumentPreparing:instrument.preparing,instrumentReady:instrument.ready,
+    stopInstrument:instrument.stop,
+    sampleChanged(id){updateTrack(id);instrument.refresh();if(tab==='video')drawComposition();},
+    clearSong(){analysis=null;selected=null;setView('library');},
+    get selected(){return selected;}, get tab(){return tab;}};
 };
