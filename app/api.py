@@ -718,8 +718,10 @@ class YtpmvRenderRequest(BaseModel):
 
 class YtpmvMixPreviewRequest(YtpmvRenderRequest):
     start: float = 0
-    seconds: float = 10
+    seconds: float | None = 10  # null plays through to the song end
     part_id: str | None = None
+    note: int | None = None      # instrument audition: one MIDI note, not the song pattern
+    notes: list[int] | None = None  # prepare the visible keyboard as one audio bank
 
 
 def _ytpmv_call(fn, *args, **kwargs):
@@ -760,6 +762,25 @@ def ytpmv_describe(midi_id: str):
     return _ytpmv_call(render.analyse, midi_id)
 
 
+class YtpmvRenameRequest(BaseModel):
+    title: str
+
+
+@router.patch("/ytpmv/midi/{midi_id}")
+def ytpmv_rename(midi_id: str, req: YtpmvRenameRequest):
+    from app.ytpmv import render
+    return _ytpmv_call(render.rename_midi, midi_id, req.title)
+
+
+@router.delete("/ytpmv/midi/{midi_id}")
+def ytpmv_delete(midi_id: str):
+    from app.ytpmv import render
+    with jobs.corpus_guard():
+        if jobs.midi_in_use(midi_id):
+            raise HTTPException(409, "This MIDI is in use. Stop its playback preparation or cancel its render before deleting it.")
+        return _ytpmv_call(render.delete_midi, midi_id)
+
+
 @router.post("/ytpmv/sample")
 def ytpmv_sample(req: YtpmvSampleRequest):
     """What a word sounds like as an instrument: the clip, and the note it is on."""
@@ -773,6 +794,15 @@ def ytpmv_part_voice(midi_id: str, part_id: str, corpus: str | None = None):
     """Refresh one part's recommendations and sounds for the chosen voice."""
     from app.ytpmv import render
     return _ytpmv_call(render.recommend_part, midi_id, part_id, corpus)
+
+
+@router.get("/ytpmv/midi/{midi_id}/notes")
+def ytpmv_timeline_notes(midi_id: str, start: float = 0, end: float | None = None, parts: str = ""):
+    """Bounded, accurate note detail for the visible timeline tracks and range."""
+    from app.ytpmv import render
+    if len(parts) > 4096:
+        raise HTTPException(400, "Too many timeline parts.")
+    return _ytpmv_call(render.timeline_notes, midi_id, start, end, parts.split(",") if parts else [])
 
 
 @router.post("/ytpmv/preview")
@@ -800,24 +830,34 @@ def ytpmv_render(req: YtpmvRenderRequest):
 
 @router.post("/ytpmv/preview-mix")
 def ytpmv_preview_mix(req: YtpmvMixPreviewRequest):
-    """Queue a short audio audition, with the same settings as the final mix."""
+    """Queue audio playback of a selection, or the remaining song when seconds is null."""
     from app.ytpmv import render
     song = _ytpmv_call(render.load_song, req.midi_id)
     parts = _ytpmv_call(render.prepare_parts, req.parts, bool(req.options.get("synth", False)))
     start = render._num(req.start, 0, 0, render.MAX_SECONDS)
+    if req.note is not None and (not req.part_id or not 0 <= req.note <= 127):
+        raise HTTPException(400, "Choose a track and a MIDI note from 0 to 127.")
+    if req.notes is not None and (not req.part_id or req.note is not None or not 1 <= len(req.notes) <= 24
+                                 or len(set(req.notes)) != len(req.notes)
+                                 or any(not 0 <= note <= 127 for note in req.notes)):
+        raise HTTPException(400, "Choose a track and 1–24 distinct keyboard notes from 0 to 127.")
     if req.part_id:
         part = song.part(req.part_id)
         if part is None:
             raise HTTPException(status_code=400, detail="No such part.")
         speed = render._num(req.options.get("speed", 1), 1, .25, 4)
         start = max(0, (part.notes[0].start / speed if part.notes else 0) - .05)
+        if req.note is not None or req.notes is not None:
+            start = 0
         given = {p.get("id"): p for p in parts}
         parts = [{**given.get(p.id, {"id": p.id}), "mute": p.id != req.part_id,
                   "visible": False} for p in song.parts]
         parts = _ytpmv_call(render.prepare_parts, parts, bool(req.options.get("synth", False)))
-    seconds = render._num(req.seconds, 10, 1, 15)
+    seconds = (render._num(req.seconds, 10, 1, 15) if req.part_id else
+               None if req.seconds is None else render._num(req.seconds, 10, 1, render.MAX_SECONDS))
     job = _queued(lambda: jobs.submit_ytpmv({"midi_id": req.midi_id, "parts": parts,
-        "options": req.options, "audio_preview": True, "start": start, "seconds": seconds},
+        "options": req.options, "audio_preview": True, "start": start, "seconds": seconds,
+        "part_id": req.part_id, "note": req.note, "keyboard_notes": req.notes},
         label="Preview: " + (song.title or req.midi_id)))
     return JSONResponse(status_code=202, content={"id": job.id, "status": job.status,
                                                 "position": jobs.position(job.id)})

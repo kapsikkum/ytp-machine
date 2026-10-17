@@ -122,6 +122,13 @@ def has_live_jobs() -> bool:
         return any(job.status in ("queued", "running") for job in _jobs.values())
 
 
+def midi_in_use(midi_id: str) -> bool:
+    """Call inside corpus_guard before deleting a queued/running job's source."""
+    with _lock:
+        return any(job.kind == "ytpmv" and job.params.get("midi_id") == midi_id
+                   and job.status in ("queued", "running") for job in _jobs.values())
+
+
 def maintenance_in_progress() -> bool:
     with corpus_guard():
         return _maintenance

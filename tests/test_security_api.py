@@ -143,6 +143,12 @@ class ApiSecurityTests(unittest.TestCase):
             self.assertEqual(self.web.post("/api/reload", headers=headers).status_code, 403)
         self.assertEqual(self.web.post("/api/reload", headers={"origin": "http://testserver"}).status_code, 200)
 
+    def test_midi_library_mutations_reject_foreign_origins(self):
+        path = '/api/ytpmv/midi/000000000000'
+        for method, kwargs in ((self.web.patch, {'json': {'title': 'Renamed'}}), (self.web.delete, {})):
+            self.assertEqual(method(path, headers={'origin': 'https://foreign.example'}, **kwargs).status_code, 403)
+            self.assertEqual(method(path, headers={'origin': 'http://testserver'}, **kwargs).status_code, 400)
+
     def test_https_writes_behind_explicitly_trusted_proxy(self):
         from fastapi.testclient import TestClient
         from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware

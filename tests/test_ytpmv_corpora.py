@@ -94,6 +94,106 @@ class YtpmvCorpusTests(unittest.TestCase):
                     last_y = y + row[0][3]
                 self.assertEqual(last_y, height)
 
+    def test_timeline_detail_keeps_sustained_notes_and_bounds_large_windows(self):
+        self.parts[0].notes = [Note(0, 4, 60, 100), Note(2, .2, 64, 100), Note(9, .2, 67, 100)]
+        got = render.timeline_notes('midi', 1, 3, ['alpha'])
+        self.assertEqual(got['parts']['alpha'], [[0,4,60],[2,.2,64]])
+        self.assertFalse(got['sampled'])
+        for a,b,ids in [(float('nan'),3,['alpha']), (3,2,['alpha']), (0,3,['missing']), (0,3,[])]:
+            with self.assertRaises(render.YtpmvError): render.timeline_notes('midi',a,b,ids)
+        self.parts[0].notes = [Note(i*.001,.01,60,100) for i in range(50000)]
+        got = render.timeline_notes('midi',0,100,['alpha'])
+        self.assertLessEqual(len(got['parts']['alpha']),24000)
+        self.assertEqual(got['counts']['alpha'],50000)
+        self.assertTrue(got['sampled'])
+
+    def test_every_grid_preset_partitions_the_canvas(self):
+        for layout in render.GRID_LAYOUTS:
+            for count in range(1, 18):
+                with self.subTest(layout=layout, count=count):
+                    pixels = np.zeros((90, 160), dtype=np.uint8)
+                    cells = render.grid_cells(count, 160, 90, layout)
+                    self.assertEqual(len(cells), count)
+                    for x,y,w,h in cells:
+                        self.assertGreater(min(w,h), 0)
+                        pixels[y:y+h,x:x+w] += 1
+                    self.assertTrue(np.all(pixels == 1))
+        parts = render.ordered_tiles(self.parts, ['missing', 'beta', 'beta', 'alpha'])
+        self.assertEqual([p.id for p in parts], ['beta','alpha'])
+
+    def test_instrument_note_audition_is_isolated_and_does_not_mutate_cached_score(self):
+        self.song.duration = 30
+        self.parts[0].notes = [Note(20, .1, 40, 100)]
+        before = list(self.parts[0].notes)
+        result = render.preview_mix({'midi_id':'midi', 'part_id':'alpha', 'note':72,
+            'parts':[{'id':'alpha'}, {'id':'beta', 'mute':True, 'visible':False}],
+            'options':{'synth':True,'chip':'sms','balance':False}, 'seconds':2})
+        self.assertEqual([p['id'] for p in result['parts']], ['alpha'])
+        self.assertEqual(result['from'], 0)
+        self.assertLess(result['duration'], 2)
+        self.assertEqual(self.song.duration, 30)
+        self.assertEqual(self.parts[0].notes, before)
+        with wave.open(str(self.root / result['audio_url'].lstrip('/'))) as wav:
+            pcm = np.frombuffer(wav.readframes(wav.getnframes()), dtype='<i2')
+        self.assertGreater(int(np.abs(pcm.astype(np.int32)).max()), 100)
+
+    def test_note_audition_keeps_auto_instrument_from_the_original_arrangement(self):
+        self.parts[0].role = self.parts[1].role = 'rhythm'
+        self.parts[0].notes = [Note(0, .1, 40, 100)]
+        self.parts[1].notes = [Note(0, .1, 48, 100)]
+        with patch.object(render, '_play', wraps=render._play) as play:
+            render.preview_mix({'midi_id':'midi','part_id':'alpha','note':72,
+                'parts':[{'id':'alpha'},{'id':'beta','mute':True,'visible':False}],
+                'options':{'synth':True,'chip':'nes','balance':False},'seconds':2})
+        self.assertEqual(play.call_args.args[1]['tone'], render.chip_tone(self.parts[0], 'nes', as_bass=True))
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg is required for layout validation')
+    def test_render_uses_featured_preset_and_reordered_tiles(self):
+        self.stub_media()
+        def frames(sample, w, h, **kwargs):
+            colour = (220, 20, 20) if sample.corpus == 'alpha' else (20, 20, 220)
+            return np.full((1,h,w,3), colour, dtype=np.uint8)
+        with patch.object(samples.Sample, 'frames', frames), \
+                patch.object(render, '_OUT_W', 320), patch.object(render, '_OUT_H', 180):
+            result = render.render_ytpmv({'midi_id':'midi', 'parts':[
+                {'id':'alpha','text':'hello','corpus':'alpha'},
+                {'id':'beta','text':'hello','corpus':'beta'}],
+                'options':{'balance':False,'flip':False,'flash':False,'dim':False,
+                           'layout':'featured','tile_order':['beta','alpha']}})
+        raw = subprocess.run(['ffmpeg','-v','error','-i',str(self.root/result['video_url'].lstrip('/')),
+                              '-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],
+                             check=True,capture_output=True).stdout
+        image = np.frombuffer(raw,dtype=np.uint8).reshape(180,320,3)
+        self.assertGreater(int(image[90,100,2]), 170)
+        self.assertLess(int(image[90,100,0]), 60)
+        self.assertGreater(int(image[90,280,0]), 170)
+        self.assertEqual(result['options']['tile_order'], ['beta','alpha'])
+
+    def test_keyboard_bank_renders_all_pitches_together_once(self):
+        notes = list(range(60,73))
+        before = list(self.parts[0].notes)
+        with patch.object(render, '_play', wraps=render._play) as play:
+            result = render.preview_mix({'midi_id':'midi','part_id':'alpha','keyboard_notes':notes,
+                'parts':[{'id':'alpha'},{'id':'beta','mute':True,'visible':False}],
+                'options':{'synth':True,'chip':'sms','balance':False},'seconds':2})
+        self.assertEqual(play.call_count,1)
+        self.assertEqual([n.pitch for n in play.call_args.args[0].notes],notes)
+        self.assertEqual(self.parts[0].notes,before)
+        self.assertEqual([s['note'] for s in result['keyboard']],notes)
+        with wave.open(str(self.root/result['audio_url'].lstrip('/'))) as wav:
+            pcm=np.frombuffer(wav.readframes(wav.getnframes()),dtype='<i2').reshape(-1,2).astype(float)
+        self.assertGreater(len(pcm)/SR,25)
+        for segment in result['keyboard']:
+            start=round((segment['offset']+.1)*SR)
+            clip=pcm[start:start+SR//4,0]
+            spectrum=np.abs(np.fft.rfft(clip*np.hanning(len(clip))))
+            frequency=np.fft.rfftfreq(len(clip),1/SR)[np.argmax(spectrum)]
+            expected=440*2**((segment['note']-69)/12)
+            self.assertAlmostEqual(frequency,expected,delta=8)
+        for notes in [[],[60,60],list(range(25)),[128]]:
+            with self.subTest(notes=notes),self.assertRaises(render.YtpmvError):
+                render.preview_mix({'midi_id':'midi','part_id':'alpha','keyboard_notes':notes})
+
     def test_chip_parts_play_without_corpus_samples_in_a_voice_project(self):
         with patch.object(samples, 'build', side_effect=AssertionError('chip requested a corpus sample')), \
                 patch.object(render.recommend, 'recommend', side_effect=AssertionError('chip requested a word')):
@@ -226,6 +326,29 @@ class YtpmvCorpusTests(unittest.TestCase):
             'options': {'balance': False}, 'seconds': 50})
         self.assertEqual(result['parts'], [{'id': 'alpha', 'corpus': 'beta', 'volume': .5, 'pan': -.3}])
         self.assertLessEqual(result['duration'], 15)
+
+    def test_whole_song_audio_reaches_notes_beyond_short_audition_limit(self):
+        self.song.duration = 24
+        self.parts[0].notes = [Note(20, .3, 60, 100)]
+        result = render.preview_mix({'midi_id': 'midi', 'parts': [
+            {'id': 'alpha'}, {'id': 'beta', 'mute': True, 'visible': False}],
+            'options': {'synth': True, 'chip': 'sms', 'balance': False}, 'seconds': None})
+        self.assertGreater(result['duration'], 24)
+        with wave.open(str(Path(self.root, result['audio_url'].lstrip('/')))) as wav:
+            self.assertGreater(wav.getnframes(), 24 * SR)
+            wav.setpos(20 * SR)
+            self.assertGreater(np.abs(np.frombuffer(wav.readframes(SR), dtype='<i2')).max(), 100)
+
+    def test_whole_song_playback_request_preserves_unbounded_selection(self):
+        from app import api, jobs
+        request = api.YtpmvMixPreviewRequest(midi_id='midi', parts=[],
+            options={'synth': True, 'chip': 'sms'}, seconds=None)
+        with patch.object(jobs, '_ensure_worker'):
+            response = api.ytpmv_preview_mix(request)
+        import json
+        job = jobs.get(json.loads(response.body)['id'])
+        self.addCleanup(lambda: jobs.cancel(job.id))
+        self.assertIsNone(job.params['seconds'])
 
     def test_seek_includes_held_notes_and_matches_full_mix_with_haas_and_variety(self):
         self.stub_media()

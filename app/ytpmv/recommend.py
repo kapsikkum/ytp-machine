@@ -74,7 +74,7 @@ UNITS["rhythm"] = UNITS["chords"] = UNITS["lead"]
 
 _FALLBACK_WORDS = 30     # most frequent words tried when too few preferred exist
 _TAKES_PER_WORD = 4
-_ALTERNATIVES = 5
+_ALTERNATIVES = 12
 _ROTATE = 3              # takes of the chosen word to play round-robin
 _POOL = 6                # words good enough for the ultra mode to throw about
 _SING_TRIES = 6          # suggestions built and checked before a pitched part settles

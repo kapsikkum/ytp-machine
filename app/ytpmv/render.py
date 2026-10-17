@@ -26,7 +26,7 @@ import subprocess
 import tempfile
 import uuid
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextlib import ExitStack
 
 import numpy as np
@@ -97,6 +97,54 @@ def save_midi(data: bytes, filename: str = "") -> str:
 
 
 _songs: dict = {}
+
+
+def _midi_path(midi_id: str) -> str:
+    if not _ID_RE.fullmatch(midi_id or ""):
+        raise YtpmvError("No such MIDI file.")
+    path = os.path.join(MIDI_DIR, f"{midi_id}.mid")
+    if not os.path.isfile(path):
+        raise YtpmvError("That MIDI file has gone -- upload it again.")
+    return path
+
+
+def _forget_midi(midi_id: str) -> None:
+    for key in list(_songs):
+        if key[0] == midi_id:
+            _songs.pop(key, None)
+
+
+def rename_midi(midi_id: str, title: str) -> dict:
+    path = _midi_path(midi_id)
+    title = title.strip()
+    if not title or len(title) > 80 or any(ord(c) < 32 for c in title):
+        raise YtpmvError("Use a MIDI title of 1–80 characters on one line.")
+    temporary = path + ".title." + uuid.uuid4().hex + ".tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as fh:
+            fh.write(title)
+        os.replace(temporary, path + ".title")
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+    try:
+        os.remove(path + ".info.json")
+    except FileNotFoundError:
+        pass
+    _forget_midi(midi_id)
+    return {"midi_id": midi_id, "title": title}
+
+
+def delete_midi(midi_id: str) -> dict:
+    path = _midi_path(midi_id)
+    os.remove(path)
+    for suffix in (".title", ".info.json"):
+        try:
+            os.remove(path + suffix)
+        except FileNotFoundError:
+            pass
+    _forget_midi(midi_id)
+    return {"midi_id": midi_id, "deleted": True}
 
 
 def load_song(midi_id: str) -> music.Song:
@@ -217,6 +265,24 @@ def analyse(midi_id: str, progress=None) -> dict:
                 for program in range(len(music.GM_PROGRAMS))]
             for c in CHIPS if not part.is_drums and not c.endswith("-voice")}
     return out
+
+
+def timeline_notes(midi_id: str, start: float, end: float | None, part_ids: list[str]) -> dict:
+    """Read-only viewport detail, independent of voice recommendations or ML."""
+    song = load_song(midi_id)
+    end = song.duration if end is None else end
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        raise YtpmvError("Choose a finite timeline range with its end after its start.")
+    if not part_ids or len(part_ids) > 64 or any(song.part(pid) is None for pid in part_ids):
+        raise YtpmvError("Choose between one and 64 installed MIDI parts.")
+    limit = max(1, 24000 // len(part_ids))
+    out, counts = {}, {}
+    for pid in dict.fromkeys(part_ids):
+        notes = [n for n in song.part(pid).notes if n.start < end and n.start + n.dur >= start]
+        counts[pid] = len(notes)
+        stride = max(1, math.ceil(len(notes) / limit))
+        out[pid] = [[round(n.start, 5), round(n.dur, 5), n.pitch] for n in notes[::stride]]
+    return {"parts": out, "counts": counts, "sampled": any(counts[p] > len(out[p]) for p in out)}
 
 
 def recommend_part(midi_id: str, part_id: str, corpus: str | None = None) -> dict:
@@ -510,7 +576,11 @@ def grid(n: int) -> tuple[int, int, int, int]:
     return cols, rows, _OUT_W // cols, _OUT_H // rows
 
 
-def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H) -> list[tuple[int, int, int, int]]:
+GRID_LAYOUTS = ("balanced", "two-rows", "two-columns", "strips", "featured")
+
+
+def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H,
+               layout: str = "balanced") -> list[tuple[int, int, int, int]]:
     """(x, y, width, height), covering the canvas without empty grid slots.
 
     Balance the row counts, putting the extra cells in the upper rows. Three
@@ -518,7 +588,12 @@ def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H) -> list[tuple[
     boundaries partition every pixel, including console-sized canvases.
     """
     n = max(1, n)
-    rows = grid(n)[1]
+    if layout == "featured" and n > 1:
+        split = width * 2 // 3
+        return [(0, 0, split, height)] + [(x + split, y, w, h)
+            for x, y, w, h in grid_cells(n - 1, width - split, height, "sidebar")]
+    rows = {"two-rows": min(n, 2), "two-columns": math.ceil(n / 2),
+            "strips": 1, "sidebar": min(n, max(1, round(math.sqrt(n * height / width))))}.get(layout, grid(n)[1])
     cells = []
     for row_index in range(rows):
         count = n // rows + (row_index < n % rows)
@@ -527,6 +602,14 @@ def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H) -> list[tuple[
             x0, x1 = col * width // count, (col + 1) * width // count
             cells.append((x0, y0, x1 - x0, y1 - y0))
     return cells
+
+
+def ordered_tiles(tiles: list, order) -> list:
+    """Ignore stale/duplicate IDs; unspecified visible tracks keep MIDI order."""
+    if not isinstance(order, list):
+        return tiles
+    ranks = {pid: i for i, pid in reversed(list(enumerate(order))) if isinstance(pid, str)}
+    return sorted(tiles, key=lambda p: ranks.get(p.id, len(order)))
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -624,17 +707,34 @@ def render_ytpmv(params: dict, progress=None) -> dict:
 
 
 def preview_mix(params: dict, progress=None) -> dict:
-    """Audition a bounded section through the same mixer as the video render."""
+    """Play a selection or the remaining song through the video render's mixer."""
     options = dict(params.get("options") or {})
-    options["max_seconds"] = _num(params.get("seconds", 10), 10, 1, 15)
+    length = params.get("seconds", 10)
+    options["max_seconds"] = MAX_SECONDS if length is None else _num(length, 10, 1, MAX_SECONDS)
     options["flip"] = False
+    keyboard = params.get("keyboard_notes")
+    if keyboard is not None:
+        if (not isinstance(keyboard, list) or not 1 <= len(keyboard) <= 24
+                or any(type(note) is not int or not 0 <= note <= 127 for note in keyboard)
+                or len(set(keyboard)) != len(keyboard)):
+            raise YtpmvError("Choose 1–24 distinct MIDI notes for the keyboard.")
+        options["max_seconds"] = len(keyboard) * 2
     with ExitStack() as resources:
-        return _render_ytpmv({**params, "options": options}, progress, resources,
-                            audio_only=True, start_seconds=params.get("start", 0))
+        result = _render_ytpmv({**params, "options": options}, progress, resources,
+                            audio_only=True, start_seconds=params.get("start", 0),
+                            audition_note=params.get("note"), audition_part=params.get("part_id"),
+                            audition_notes=keyboard)
+    if keyboard is not None:
+        result["keyboard"] = [{"note": note, "offset": i * 2,
+                               "duration": min(2, result["duration"] - i * 2)}
+                              for i, note in enumerate(keyboard)]
+    return result
 
 
 def _render_ytpmv(params: dict, progress, resources: ExitStack,
-                  audio_only: bool = False, start_seconds: float = 0) -> dict:
+                  audio_only: bool = False, start_seconds: float = 0,
+                  audition_note: int | None = None, audition_part: str | None = None,
+                  audition_notes: list[int] | None = None) -> dict:
     """Render a song. *params* is what POST /api/ytpmv/render was given:
 
         midi_id   from save_midi
@@ -648,9 +748,20 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
             progress(stage, done, total)
 
     song = load_song(params.get("midi_id", ""))
+    source_song = song
     opts = params.get("options") or {}
     max_s = _num(opts.get("max_seconds", MAX_SECONDS), MAX_SECONDS, 1.0, MAX_SECONDS)
     speed = _num(opts.get("speed", 1.0), 1.0, 0.25, 4.0)
+    if audition_note is not None or audition_notes is not None:
+        part = song.part(audition_part)
+        if part is None:
+            raise YtpmvError("No such instrument to audition.")
+        # A private one-note score; never mutate the cached MIDI or its parts.
+        pitches = audition_notes if audition_notes is not None else [audition_note]
+        part = replace(part, notes=[music.Note(i * 2 * speed, .65 * speed, int(note), 100)
+                                    for i, note in enumerate(pitches)])
+        song = replace(song, parts=[part], duration=((len(pitches) - 1) * 2 + .65) * speed)
+        start_seconds = 0
     g_transpose = _num(opts.get("transpose", 0), 0, -24, 24, int)
     flip = bool(opts.get("flip", True))
     flash = bool(opts.get("flash", True))
@@ -711,7 +822,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                 pool=samples.corpus_pool()))
     settings = {p.id: _merge(_default_settings_for(p, recs.get(p.id, {})), given.get(p.id))
                 for p in song.parts}
-    _through_chip(song, settings, given, chip, g_transpose, synth)
+    _through_chip(source_song, settings, given, chip, g_transpose, synth)
     chip_parts = {p.id for p in song.parts if settings[p.id]["tone"] in tones.SYNTH}
 
     t_from = _num(start_seconds, 0, 0, max(0, song.duration / speed)) if audio_only else 0.0
@@ -783,6 +894,10 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     tiles = [p for p in shown if p.id in sample_of]
     if not tiles and not synth:
         tiles = [p for p in playing if p.id in sample_of][:1]
+    tiles = ordered_tiles(tiles, opts.get("tile_order"))
+    layout = opts.get("layout", "balanced")
+    if layout not in GRID_LAYOUTS:
+        layout = "balanced"
     W, H = _OUT_W, _OUT_H
     draft = bool(opts.get("draft", False))
     is_retro = screen in screens.SIZES
@@ -796,7 +911,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
         ch = max(2, int(cw * H / W) // 2 * 2)
         if draft:
             cw, ch = max(2, cw // 4 * 2), max(2, ch // 4 * 2)
-    cells = dict(zip((p.id for p in tiles), grid_cells(len(tiles), cw, ch)))
+    cells = dict(zip((p.id for p in tiles), grid_cells(len(tiles), cw, ch, layout)))
     traces: dict[str, np.ndarray] = {}
     scratch = np.zeros_like(mix) if balance or chip_parts else None
     levels: dict[str, dict] = {}
@@ -921,7 +1036,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     src_w, src_h = cw, ch
     font = g.subtitle_font() if labels else None
     if font:
-        for p, (x, y, label_tw, label_th) in zip(tiles, grid_cells(len(tiles), W, H)):
+        for p, (x, y, label_tw, label_th) in zip(tiles, grid_cells(len(tiles), W, H, layout)):
             text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
             f = font.replace("\\", "/").replace(":", "\\:")
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
@@ -1004,7 +1119,8 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
         "options": {"vary": vary, "jitter": jitter, "speed": speed, "balance": balance,
                     "accurate": accurate,
                     "screen": screen, "synth": synth, "chip": chip,
-                    "transpose": g_transpose, "max_seconds": max_s},
+                    "transpose": g_transpose, "max_seconds": max_s,
+                    "layout": layout, "tile_order": [p.id for p in tiles]},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("corpus", "text", "take", "octave", "transpose", "mode",
                                                    "tone", "program", "mute", "visible", "pan", "haas")},
