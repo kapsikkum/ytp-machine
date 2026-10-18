@@ -14,6 +14,10 @@ async function run(chromium,origin='http://127.0.0.1:8877') {
   assert.equal(await page.locator('#project-tabs').count(),0);
   assert.equal(await page.locator('#opt-chip').isVisible(),true);
   assert.equal(await page.locator('#options').isVisible(),true);
+  await page.getByLabel('Video grid preset',{exact:true}).selectOption('classic');
+  assert.equal(await page.getByLabel('Center tiles',{exact:true}).isVisible(),true);
+  await page.getByLabel('Media framing',{exact:true}).selectOption('cover');
+  await page.getByLabel('Center tiles',{exact:true}).uncheck();
   assert.equal(await page.locator('#render-btn').isVisible(),true);
   assert.equal(await page.locator('#advanced-style').getAttribute('media'),'not all');
   assert.equal(await page.locator('#interface-mode [data-interface=simple]').getAttribute('aria-current'),'page');
@@ -24,6 +28,9 @@ async function run(chromium,origin='http://127.0.0.1:8877') {
   await page.screenshot({path:path.resolve('output/ytpmv-smoke/simple-desktop.png'),fullPage:true});
   await page.locator('#interface-mode [data-interface=advanced]').click();
   await page.locator('.track').first().waitFor();
+  assert.equal(await page.getByLabel('Video grid preset',{exact:true}).inputValue(),'classic');
+  assert.equal(await page.getByLabel('Media framing',{exact:true}).inputValue(),'cover');
+  assert.equal(await page.getByLabel('Center tiles',{exact:true}).isChecked(),false);
   assert.equal(await page.locator('.part[data-id=lead] [data-k=volume]').inputValue(),'0.65');
   assert.equal(await page.locator('.part[data-id=bass] [data-k=corpus]').inputValue(),'fixture-other');
   await page.locator('#interface-mode [data-interface=simple]').click();

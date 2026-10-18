@@ -134,7 +134,8 @@
 
 
 /* Keep the original surface while the shared engine retains current fixes. */
-#transport,#parts-tools,#bulk-tools,#video-layout-controls,#lib-status,.lib-actions,.lib-edit,.lib-confirm { display:none !important; }
+#transport,#parts-tools,#bulk-tools,#lib-status,.lib-actions,.lib-edit,.lib-confirm { display:none !important; }
+#video-layout-controls { margin:0 0 1rem; font-size:.75rem; }
 #simple-library > summary { cursor:pointer; display:flex; align-items:center; gap:.6rem; font-size:.85rem; }
 #simple-library #library { border:0; padding:0; margin:.7rem 0 0; max-width:none; width:100%; background:transparent; }
 #simple-library #library h2 { display:none; }

@@ -478,13 +478,19 @@ the sample and choose a numbered take inline. Bulk voice controls live with
 the song settings.
 If browser storage fills or is blocked, the save indicator reports the failure.
 
-Video exports fill a 1920×1080 (16:9) canvas. Rows share the available space;
-three visible parts place two across the top and one across the full lower
-row. Source pictures are cropped centrally to fill each cell without stretching.
-**Video preview** offers Balanced grid, Two rows, Two columns, Vertical strips
-and Featured track presets. Drag tiles to reorder them with animated movement,
-or use Alt + left/right on a focused tile. Source thumbnails show the crop;
-the selected preset and order persist per MIDI and are used by the renderer.
+Video exports use a 1920×1080 (16:9) canvas. **Video preview** offers Classic
+grid, Balanced grid, Two rows, Two columns, Vertical strips and Featured track.
+**Classic grid** restores equal 16:9 tiles using the original grid arrangement.
+**Center tiles** centers the grid and incomplete rows by default: three streams
+have two on top and one centered below. Turn it off for top-left alignment.
+Unused space stays black. The other layouts share the full available space.
+
+**Framing → Fit whole clip** preserves the entire picture, centered inside each
+tile with black bars where needed. **Fill tile (crop)** covers the tile with a
+center crop. Neither stretches the source. The preview and actual video use
+the same framing. Drag tiles to reorder them with animated movement, or use
+Alt + left/right on a focused tile. Layout, alignment, framing and order persist
+per MIDI and work in both Simple and Advanced interfaces.
 
 Rendering keeps the last successful export visible. **Cancel render** stops a
 queued or running job; a refresh reconnects to an acknowledged job, and

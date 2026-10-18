@@ -38,7 +38,7 @@ window.createYtpmvWorkbench = function (editor) {
   const empty = node('div', 'no-track', 'Select a track to edit its voice or chip instrument.'); panels.part.append(empty);
   panels.song.append(el('options'), el('bulk-tools'), el('how'));
   const composition = node('div', 'composition-preview');
-  const caption = node('div', 'composition-heading', '<b>Video composition</b><span>16:9 · fill frame</span>');
+  const caption = node('div', 'composition-heading', '<b>Video composition</b><span id="composition-framing">16:9 · whole clips</span>');
   caption.append(el('video-layout-controls'));
   const compositionStatus=node('p','composition-status','Drag tiles to arrange · Alt + ← / → moves the focused tile');
   compositionStatus.setAttribute('role','status');
@@ -147,6 +147,12 @@ window.createYtpmvWorkbench = function (editor) {
     return [...new Set([...(Array.isArray(saved)?saved:[]),...ids])].filter(id=>ids.includes(id));
   }
   function gridCells(n,w=1920,h=1080,layout=el('opt-layout').value){
+    if(layout==='classic'){
+      const count=Math.max(1,n);let cols=1,rows=count,cost=Infinity;
+      for(let c=1;c<=count;c++){const r=Math.ceil(count/c),score=Math.abs(Math.log(c/r))+.3*(c*r-count);if(score<cost){cols=c;rows=r;cost=score;}}
+      const scale=Math.min(w/(cols*16),h/(rows*9)),tw=Math.max(1,Math.floor(16*scale)),th=Math.max(1,Math.floor(9*scale)),center=el('opt-center-tiles').checked;
+      return Array.from({length:count},(_,i)=>{const r=Math.floor(i/cols),columns=Math.min(cols,count-r*cols);return [(center?Math.floor((w-columns*tw)/2):0)+(i%cols)*tw,(center?Math.floor((h-rows*th)/2):0)+r*th,tw,th];});
+    }
     if(layout==='featured'&&n>1){const split=Math.floor(w*2/3);return [[0,0,split,h],...gridCells(n-1,w-split,h,'sidebar').map(([x,y,a,b])=>[x+split,y,a,b])];}
     const count=Math.max(1,n),rows=layout==='two-rows'?Math.min(count,2):layout==='two-columns'?Math.ceil(count/2):layout==='strips'?1:layout==='sidebar'?Math.min(count,Math.max(1,Math.round(Math.sqrt(count*h/w)))):Math.ceil(count/Math.ceil(Math.sqrt(count)));
     const cells=[];for(let r=0;r<rows;r++){
@@ -156,6 +162,10 @@ window.createYtpmvWorkbench = function (editor) {
   }
   function drawComposition() {
     const song = editor.song(); if (!song) return;
+    const fit=el('opt-media-fit').value,classic=el('opt-layout').value==='classic';
+    composition.dataset.mediaFit=fit;
+    el('center-tiles-control').hidden=!classic;
+    el('composition-framing').textContent=`16:9 · ${classic?'equal tiles · ':''}${fit==='cover'?'cropped to fill':'whole clips'}`;
     let parts = song.parts.filter(p => editor.parts()[p.id].visible && (editor.onChip(p,editor.parts()[p.id]) || editor.parts()[p.id].text));
     if (!parts.length) parts = song.parts.filter(p => !editor.parts()[p.id].mute).slice(0,1);
     const order=tileDrag?.order||tileOrder();parts.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
@@ -168,7 +178,13 @@ window.createYtpmvWorkbench = function (editor) {
       const s=editor.parts()[p.id],[x,y,w,h]=tileCells[i];
       const url=editor.onChip(p,s)?null:editor.sampleInfo(p.id)?.url;
       const html=`${url?`<video src="${safe(url)}" muted playsinline preload="metadata" aria-hidden="true"></video>`:''}<b>${safe(editor.onChip(p,s)?editor.toneName(p,s):s.text)}</b><span>${safe(p.instrument)}</span><small>⠿ ${i+1}</small>`;
-      if(button.dataset.content!==html){button.innerHTML=html;button.dataset.content=html;}
+      if(button.dataset.content!==html){
+        button.innerHTML=html;button.dataset.content=html;
+        // Metadata-only preload can leave a paused video black. Seek just
+        // inside the clip so a real frame shows its fit/crop in the preview.
+        const video=button.querySelector('video');
+        video?.addEventListener('loadedmetadata',()=>{if(Number.isFinite(video.duration)&&video.duration>0)video.currentTime=Math.min(.05,video.duration/2);},{once:true});
+      }
       button.setAttribute('aria-label',`Tile ${i+1}: ${p.instrument}. Drag to rearrange.`);
       Object.assign(button.style,{left:x/1920*100+'%',top:y/1080*100+'%',width:w/1920*100+'%',height:h/1080*100+'%'});
       button.dataset.slot=i;
@@ -223,6 +239,8 @@ window.createYtpmvWorkbench = function (editor) {
     }else if(event.code==='Enter')select(button.dataset.compositionPart);
   });
   el('opt-layout').addEventListener('change',drawComposition);
+  el('opt-media-fit').addEventListener('change',drawComposition);
+  el('opt-center-tiles').addEventListener('change',drawComposition);
   el('opt-speed').addEventListener('change',refresh);
   setTab('part');
   return {refresh, updateTrack, select, setTab, previewReady:timelineView.ready,

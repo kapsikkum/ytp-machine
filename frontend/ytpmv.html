@@ -303,7 +303,7 @@
 </div>
 
 <div class="card" id="parts-card" hidden>
-  <div id="video-layout-controls"><label>Grid <select id="opt-layout" aria-label="Video grid preset"><option value="balanced">Balanced grid</option><option value="two-rows">Two rows</option><option value="two-columns">Two columns</option><option value="strips">Vertical strips</option><option value="featured">Featured track</option></select></label><input type="hidden" id="opt-tile-order" value="[]"></div>
+  <div id="video-layout-controls"><label>Grid <select id="opt-layout" aria-label="Video grid preset"><option value="balanced">Balanced grid</option><option value="classic">Classic grid</option><option value="two-rows">Two rows</option><option value="two-columns">Two columns</option><option value="strips">Vertical strips</option><option value="featured">Featured track</option></select></label><label>Framing <select id="opt-media-fit" aria-label="Media framing" title="Fit shows the whole clip, centered with black bars where needed. Fill crops the edges to cover its tile."><option value="contain">Fit whole clip</option><option value="cover">Fill tile (crop)</option></select></label><label id="center-tiles-control" title="Center the classic grid and incomplete rows. Turn off to align them top-left."><input type="checkbox" id="opt-center-tiles" checked> Center tiles</label><input type="hidden" id="opt-tile-order" value="[]"></div>
   <div id="machine">
     <label title="Choose the console for the whole song. Auto tracks follow this choice; individual instrument overrides stay as chosen. Console settings also affect the video's resolution and colours.">Global chip
       <select id="opt-chip" aria-label="Global chip">
@@ -551,17 +551,21 @@
   }
 
   const OPTION_IDS = ['chip', 'len', 'speed', 'transpose', 'vary', 'balance', 'accurate',
-    'jitter', 'flip', 'flash', 'dim', 'labels', 'draft', 'layout', 'tile-order'];
+    'jitter', 'flip', 'flash', 'dim', 'labels', 'draft', 'layout', 'media-fit', 'center-tiles', 'tile-order'];
   const captureOptions = () => Object.fromEntries(OPTION_IDS.map(key => {
     const el = $('opt-' + key); return [key, el.type === 'checkbox' ? el.checked : el.value];
   }));
   const defaultOptions = captureOptions();
+  function updateGridControls() { $('center-tiles-control').hidden = $('opt-layout').value !== 'classic'; }
+  $('opt-layout').addEventListener('change', updateGridControls);
+  updateGridControls();
   function applyOptions(options = {}) {
     for (const key of OPTION_IDS) {
       const el = $('opt-' + key), value = options[key] ?? defaultOptions[key];
       if (el.type === 'checkbox') el.checked = !!value;
       else if (!el.options || Array.from(el.options).some(o => o.value === String(value))) el.value = String(value);
     }
+    updateGridControls();
   }
   function captureState(defaults = false) {
     const state = {parts, options: captureOptions(), voice: liveVoice, synth: synthMode};
@@ -1289,6 +1293,7 @@
       flip: $('opt-flip').checked, flash: $('opt-flash').checked, dim: $('opt-dim').checked,
       labels: $('opt-labels').checked, draft: $('opt-draft').checked, synth: synthMode,
       layout: $('opt-layout').value,
+      media_fit: $('opt-media-fit').value, center_tiles: $('opt-center-tiles').checked,
       tile_order: JSON.parse($('opt-tile-order').value || '[]'),
     };
     if (Number($('opt-len').value)) options.max_seconds = Number($('opt-len').value);
@@ -1319,7 +1324,7 @@
   function keyboardState(id) {
     const p = song?.parts.find(p => p.id === id); if (!p) return null;
     const sound = {...sendable(p), mute:false, visible:false}, options = renderOptions();
-    for (const key of ['max_seconds','layout','tile_order','draft','flip','flash','dim','labels']) delete options[key];
+    for (const key of ['max_seconds','layout','media_fit','center_tiles','tile_order','draft','flip','flash','dim','labels']) delete options[key];
     const data = {midi_id:song.midi_id, part_id:id, parts:[sound], options};
     return {key:JSON.stringify(data), data};
   }

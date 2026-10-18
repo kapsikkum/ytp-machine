@@ -576,18 +576,37 @@ def grid(n: int) -> tuple[int, int, int, int]:
     return cols, rows, _OUT_W // cols, _OUT_H // rows
 
 
-GRID_LAYOUTS = ("balanced", "two-rows", "two-columns", "strips", "featured")
+GRID_LAYOUTS = ("balanced", "classic", "two-rows", "two-columns", "strips", "featured")
+
+
+def classic_grid_shape(n: int) -> tuple[int, int]:
+    """The original grid's row/column choice, with equal widescreen tiles."""
+    n = max(1, n)
+    return min(((cols, math.ceil(n / cols)) for cols in range(1, n + 1)),
+               key=lambda shape: abs(math.log(shape[0] / shape[1])) + .3 * (shape[0] * shape[1] - n))
 
 
 def grid_cells(n: int, width: int = _OUT_W, height: int = _OUT_H,
-               layout: str = "balanced") -> list[tuple[int, int, int, int]]:
-    """(x, y, width, height), covering the canvas without empty grid slots.
+               layout: str = "balanced", centered: bool = True) -> list[tuple[int, int, int, int]]:
+    """(x, y, width, height) in the widescreen canvas.
 
     Balance the row counts, putting the extra cells in the upper rows. Three
-    parts are two on top and one centred across the full lower row. Integer
-    boundaries partition every pixel, including console-sized canvases.
+    parts are two on top and one centred across the full lower row. Fill layouts
+    partition every pixel, including console-sized canvases. Classic keeps equal
+    16:9 cells, leaving unused space black and optionally centering incomplete rows.
     """
     n = max(1, n)
+    if layout == "classic":
+        cols, rows = classic_grid_shape(n)
+        scale = min(width / (cols * 16), height / (rows * 9))
+        tw, th = max(1, math.floor(16 * scale)), max(1, math.floor(9 * scale))
+        top = (height - rows * th) // 2 if centered else 0
+        cells = []
+        for r in range(rows):
+            count = min(cols, n - r * cols)
+            left = (width - count * tw) // 2 if centered else 0
+            cells.extend((left + c * tw, top + r * th, tw, th) for c in range(count))
+        return cells
     if layout == "featured" and n > 1:
         split = width * 2 // 3
         return [(0, 0, split, height)] + [(x + split, y, w, h)
@@ -898,6 +917,8 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     layout = opts.get("layout", "balanced")
     if layout not in GRID_LAYOUTS:
         layout = "balanced"
+    media_fit = "cover" if opts.get("media_fit") == "cover" else "contain"
+    center_tiles = bool(opts.get("center_tiles", True))
     W, H = _OUT_W, _OUT_H
     draft = bool(opts.get("draft", False))
     is_retro = screen in screens.SIZES
@@ -911,7 +932,9 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
         ch = max(2, int(cw * H / W) // 2 * 2)
         if draft:
             cw, ch = max(2, cw // 4 * 2), max(2, ch // 4 * 2)
-    cells = dict(zip((p.id for p in tiles), grid_cells(len(tiles), cw, ch, layout)))
+    output_cells = grid_cells(len(tiles), W, H, layout, center_tiles)
+    cells = {p.id: (x*cw//W, y*ch//H, (x+w)*cw//W-x*cw//W, (y+h)*ch//H-y*ch//H)
+             for p, (x,y,w,h) in zip(tiles, output_cells)}
     traces: dict[str, np.ndarray] = {}
     scratch = np.zeros_like(mix) if balance or chip_parts else None
     levels: dict[str, dict] = {}
@@ -1013,10 +1036,11 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                            "volume": settings[p.id]["volume"], "pan": settings[p.id]["pan"]}
                           for p in playing if p.id in sample_of]}
 
-    frames_of = {p.id: [smp.frames(cells[p.id][2], cells[p.id][3],
+    frames_of = {p.id: [smp.frames(cells[p.id][2], cells[p.id][3], fit=media_fit,
+                                 pixel_aspect=(output_cells[i][2]/cells[p.id][2])/(output_cells[i][3]/cells[p.id][3]),
                                                  check_cancel=lambda: say("frames", 0, n_frames))
                                        for smp in sample_of[p.id]]
-                                  for p in tiles if p.id not in chip_parts}
+                                  for i, p in enumerate(tiles) if p.id not in chip_parts}
     starts_of = {p.id: [h.start for h in hits.get(p.id, [])] for p in tiles}
 
     run_id = uuid.uuid4().hex[:10]
@@ -1036,7 +1060,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
     src_w, src_h = cw, ch
     font = g.subtitle_font() if labels else None
     if font:
-        for p, (x, y, label_tw, label_th) in zip(tiles, grid_cells(len(tiles), W, H, layout)):
+        for p, (x, y, label_tw, label_th) in zip(tiles, output_cells):
             text = settings[p.id]["text"].replace("\\", "\\\\").replace("'", "’").replace(":", "\\:")
             f = font.replace("\\", "/").replace(":", "\\:")
             vf.insert(0, f"drawtext=fontfile='{f}':text='{text}':expansion=none:fontcolor=white"
@@ -1120,7 +1144,8 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
                     "accurate": accurate,
                     "screen": screen, "synth": synth, "chip": chip,
                     "transpose": g_transpose, "max_seconds": max_s,
-                    "layout": layout, "tile_order": [p.id for p in tiles]},
+                    "layout": layout, "media_fit": media_fit, "center_tiles": center_tiles,
+                    "tile_order": [p.id for p in tiles]},
         "parts": [{"id": p.id, "name": p.name, "role": p.role,
                    **{k: settings[p.id][k] for k in ("corpus", "text", "take", "octave", "transpose", "mode",
                                                    "tone", "program", "mute", "visible", "pan", "haas")},

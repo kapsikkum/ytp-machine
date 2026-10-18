@@ -108,7 +108,7 @@ class YtpmvCorpusTests(unittest.TestCase):
         self.assertTrue(got['sampled'])
 
     def test_every_grid_preset_partitions_the_canvas(self):
-        for layout in render.GRID_LAYOUTS:
+        for layout in (layout for layout in render.GRID_LAYOUTS if layout != 'classic'):
             for count in range(1, 18):
                 with self.subTest(layout=layout, count=count):
                     pixels = np.zeros((90, 160), dtype=np.uint8)
@@ -120,6 +120,26 @@ class YtpmvCorpusTests(unittest.TestCase):
                     self.assertTrue(np.all(pixels == 1))
         parts = render.ordered_tiles(self.parts, ['missing', 'beta', 'beta', 'alpha'])
         self.assertEqual([p.id for p in parts], ['beta','alpha'])
+
+    def test_classic_grid_keeps_equal_widescreen_tiles_and_centers_incomplete_rows(self):
+        self.assertEqual(render.grid_cells(3, layout='classic'),
+                         [(0,0,960,540),(960,0,960,540),(480,540,960,540)])
+        self.assertEqual(render.grid_cells(3, layout='classic', centered=False)[-1], (0,540,960,540))
+        self.assertEqual(render.grid_cells(2, layout='classic')[0][0], 480)
+        for width,height in [(1920,1080),(256,224),(160,144)]:
+            for count in range(1,33):
+                cells = render.grid_cells(count,width,height,'classic')
+                pixels = np.zeros((height,width),dtype=np.uint8)
+                self.assertEqual(len(cells),count)
+                self.assertEqual(len({(w,h) for x,y,w,h in cells}),1)
+                for x,y,w,h in cells:
+                    self.assertTrue(0 <= x < x+w <= width and 0 <= y < y+h <= height)
+                    self.assertLessEqual(abs(w-h*16/9),2)
+                    pixels[y:y+h,x:x+w] += 1
+                self.assertLessEqual(int(pixels.max()),1)
+                for y in {y for x,y,w,h in cells}:
+                    row=[c for c in cells if c[1]==y]
+                    self.assertLessEqual(abs(row[0][0]-(width-row[-1][0]-row[-1][2])),1)
 
     def test_instrument_note_audition_is_isolated_and_does_not_mutate_cached_score(self):
         self.song.duration = 30
@@ -168,6 +188,30 @@ class YtpmvCorpusTests(unittest.TestCase):
         self.assertLess(int(image[90,100,0]), 60)
         self.assertGreater(int(image[90,280,0]), 170)
         self.assertEqual(result['options']['tile_order'], ['beta','alpha'])
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg is required for layout validation')
+    def test_classic_export_centers_last_tile_and_passes_framing_to_decoder(self):
+        self.stub_media()
+        self.song.parts.append(Part(id='gamma',name='third',track=2,channel=2,program=0,
+                                   notes=[Note(0,.1,67,100)],role='chords'))
+        fits=[]
+        def frames(sample,w,h,**kwargs):
+            fits.append(kwargs['fit'])
+            return np.full((1,h,w,3),(220,20,20),dtype=np.uint8)
+        with patch.object(samples.Sample,'frames',frames),patch.object(render,'_OUT_W',320),patch.object(render,'_OUT_H',180):
+            result=render.render_ytpmv({'midi_id':'midi','parts':[
+                {'id':p.id,'text':'hello','corpus':'alpha'} for p in self.song.parts],
+                'options':{'balance':False,'flip':False,'flash':False,'dim':False,
+                           'layout':'classic','media_fit':'cover','center_tiles':True}})
+        raw=subprocess.run(['ffmpeg','-v','error','-i',str(self.root/result['video_url'].lstrip('/')),
+                            '-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],check=True,capture_output=True).stdout
+        image=np.frombuffer(raw,dtype=np.uint8).reshape(180,320,3)
+        self.assertLess(int(image[135,20].max()),10)
+        self.assertGreater(int(image[135,160,0]),170)
+        self.assertLess(int(image[135,300].max()),10)
+        self.assertEqual(fits,['cover']*3)
+        self.assertEqual(result['options']['media_fit'],'cover')
+        self.assertTrue(result['options']['center_tiles'])
 
     def test_keyboard_bank_renders_all_pitches_together_once(self):
         notes = list(range(60,73))
@@ -484,10 +528,15 @@ class YtpmvCorpusTests(unittest.TestCase):
                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                              check=True, capture_output=True).stdout
         pixels = np.frombuffer(raw, dtype=np.uint8).reshape(1080, 1920, 3).astype(np.int16)
-        # Two top cells, one full-width bottom cell, with no empty corners.
+        # Fit keeps the complete 16:9 picture centered even in the wide
+        # bottom cell, rather than zooming it until its sides disappear.
         for (x,y,w,h), channel in zip(render.grid_cells(3), [0,2,0]):
             tile = pixels[y:y+h, x:x+w]
-            self.assertGreater(np.mean(tile[:,:,channel] > 150), .98)
+            scale = min(w/16,h/9)
+            expected_area = (16*scale)*(9*scale)/(w*h)
+            self.assertAlmostEqual(float(np.mean(tile[:,:,channel] > 150)), expected_area, delta=.015)
+            self.assertGreater(int(tile[h//2,w//2,channel]),150)
+        self.assertEqual(result['options']['media_fit'],'contain')
         self.assertEqual(db.active()["slug"], "alpha")
 
 

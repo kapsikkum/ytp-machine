@@ -114,6 +114,7 @@ body.has-song #song { margin-top:1rem; padding:.7rem 1rem; display:flex; flex-wr
 .composition-tile small { position:absolute; top:.4rem; left:.5rem; font-size:.6rem; color:var(--muted); }
 .composition-tile.dragging { z-index:3; opacity:.88; cursor:grabbing; box-shadow:0 8px 30px #0008; border-color:var(--yellow); transition:box-shadow .2s; }
 #composition-status { color:var(--muted); font-size:.66rem; margin:.7rem 0; }
+#video-layout-controls { display:flex; align-items:center; flex-wrap:wrap; gap:.6rem 1rem; }
 #video-layout-controls label { display:flex; align-items:center; gap:.5rem; }
 #video-layout-controls select { font-size:.72rem; }
 .composition-empty { margin:auto; color:var(--muted); font-size:.75rem; }
@@ -153,7 +154,9 @@ body.has-song #song { margin-top:1rem; padding:.7rem 1rem; display:flex; flex-wr
 #track-lanes .track-name { overflow:hidden; }
 #track-lanes .track-name b,#track-lanes .track-name small { display:block; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #track-lanes .track-head .track-name small { display:none; }
-.composition-tile video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.45; pointer-events:none; }
+.composition-tile:has(video) { background:#000; }
+.composition-tile video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:.45; pointer-events:none; }
+#composition-preview[data-media-fit=cover] video { object-fit:cover; }
 .composition-tile b,.composition-tile span,.composition-tile small { z-index:1; text-shadow:0 1px 4px #000; pointer-events:none; }
 #track-lanes .time-ruler { display:block; position:relative; padding:0; overflow:hidden; cursor:crosshair; touch-action:none; }
 .timeline-ticks { display:block; position:absolute; inset:0; pointer-events:none; }

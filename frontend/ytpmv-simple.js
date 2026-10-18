@@ -8,7 +8,7 @@ window.createYtpmvSimple = function(editor) {
   el('library').before(library);library.append(summary,el('library'));el('library').hidden=false;
   const actions=document.createElement('div');actions.id='actions';
   actions.append(el('render-btn'),el('cancel-render'),el('reconnect-render'));
-  el('render-card').prepend(el('options'),actions,el('status'),el('progress'));
+  el('render-card').prepend(el('video-layout-controls'),el('options'),actions,el('status'),el('progress'));
   const refresh=()=>{
     const song=editor.song();if(!song)return;
     for(const part of song.parts){const row=editor.row(part.id);if(row)row.hidden=row.dataset.filtered==='true';}

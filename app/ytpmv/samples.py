@@ -131,19 +131,28 @@ class Sample:
     def duration(self) -> float:
         return self.voice.duration
 
-    def frames(self, w: int, h: int, check_cancel=None) -> np.ndarray:
+    def frames(self, w: int, h: int, check_cancel=None, *, fit: str = "contain", pixel_aspect: float = 1) -> np.ndarray:
         """The picture at w x h, one frame per 1/FPS s from the trimmed start."""
         if check_cancel:
             check_cancel()
-        key = (self.mp4, self.offset, self.duration, w, h)
+        fit = "cover" if fit == "cover" else "contain"
+        key = (self.mp4, self.offset, self.duration, w, h, fit, pixel_aspect)
         with _lock:
             got = _frame_cache.get(key)
             if got is not None:
                 _frame_cache.move_to_end(key)
                 return got
+        # Retro canvases can have non-square display pixels. Fit against the
+        # final picture's aspect, including any source sample-aspect metadata,
+        # so the eventual canvas upscale does not stretch the video again.
+        bound = "max" if fit == "cover" else "min"
+        framing = (f"scale=w='max(1,{bound}({w},{h}*dar/{pixel_aspect:.12g}))'"
+                   f":h='max(1,{bound}({h},{w}*{pixel_aspect:.12g}/dar))'")
+        framing += (f",crop={w}:{h}:exact=1" if fit == "cover" else
+                    f",pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
         cmd = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{self.offset:.3f}",
                "-i", self.mp4, "-t", f"{self.duration + 0.1:.3f}",
-               "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}:exact=1,setsar=1,fps={FPS}",
+               "-vf", f"format=rgb24,{framing},setsar=1,fps={FPS}",
                "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
         from app.media_process import run
         proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)

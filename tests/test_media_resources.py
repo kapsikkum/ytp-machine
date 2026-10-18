@@ -1,6 +1,7 @@
 """Media cancellation, cleanup and cache budgets without corpus/model writes."""
 
 import os
+import shutil
 import contextlib
 import subprocess
 import sys
@@ -23,6 +24,33 @@ from app.ytpmv import recommend
 
 
 class MediaResourcesTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'ffmpeg required for real framing checks')
+    def test_fit_preserves_whole_picture_cover_crops_and_cache_keeps_them_separate(self):
+        samples.clear_cache()
+        self.addCleanup(samples.clear_cache)
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory,'edges.mp4')
+            subprocess.run(['ffmpeg','-y','-v','error','-f','lavfi','-i',
+                'color=red:s=160x90:r=25:d=0.3,drawbox=x=0:y=0:w=8:h=ih:color=blue:t=fill,drawbox=x=iw-8:y=0:w=8:h=ih:color=green:t=fill',
+                '-c:v','libx264','-pix_fmt','yuv420p',str(source)],check=True,capture_output=True)
+            sample=samples.Sample('edges',0,1,None,str(source),0,SimpleNamespace(duration=.2))
+            fitted=sample.frames(90,90)
+            cropped=sample.frames(90,90,fit='cover')
+            self.assertLess(int(fitted[0,5].max()),5)
+            self.assertGreater(int(fitted[0,45,1,2]),150,'left blue edge is retained')
+            self.assertGreater(int(fitted[0,45,88,1]),70,'right green edge is retained')
+            self.assertGreater(int(cropped[0,5,45,0]),200)
+            self.assertLess(int(cropped[0,:,:,2].max()),30,'cover removes the blue edge')
+            self.assertIs(sample.frames(90,90),fitted)
+            self.assertIs(sample.frames(90,90,fit='cover'),cropped)
+            retro=sample.frames(90,90,pixel_aspect=2)
+            self.assertLess(int(retro[0,:,1].max()),5,'fit accounts for the final canvas upscale')
+            self.assertGreater(int(retro[0,5,45,0]),200)
+            self.assertGreater(int(retro[0,45,6,2]),150)
+            for width,height in [(181,41),(91,93),(1,1)]:
+                frames=sample.frames(width,height)
+                self.assertEqual(frames.shape[1:],(height,width,3),'odd tile sizes must remain exact')
+
     def test_process_output_is_byte_identical_with_cancellation_checks(self):
         cmd = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(bytes(range(256))*1024); sys.stderr.buffer.write(b'error'*4096)"]
         before = subprocess.run(cmd, capture_output=True, timeout=10)
