@@ -1,0 +1,2 @@
+# Optional benchmark dependency only; not part of the application or its image.
+av==19.0.1
