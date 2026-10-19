@@ -1,0 +1,3 @@
+# Optional experimental decoders: MRS_AUDIO_DECODER=pyav and/or
+# MRS_VIDEO_DECODER=pyav. Both default to ffmpeg; final encoding stays FFmpeg.
+av==19.0.1

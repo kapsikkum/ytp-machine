@@ -1,0 +1,4009 @@
+{
+  "reports": [
+    {
+      "mode": "lazy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-uhz_w21j/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 3.2555715710041113,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.0194196549418848
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 3.183460802945774
+            },
+            "cli_audio": {
+              "calls": 16,
+              "seconds_inclusive": 3.1841232650040183
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 3.1844402050192
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.5419409129826818
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0011736519809346646,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.6558367789839394,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.00033851098851300776
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.11786014298559166
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.11794128199107945
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.1179801209946163
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.022682924987748265
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006403534905984998
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007575671013910323
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013232358993263915,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.00026213197270408273
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013426139776129276
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.4800490140041802,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.00045317798503674567
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.11650163200101815
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.11654245998943225
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.11656175900134258
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.03066718700574711
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07094232601230033
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07219627598533407
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.23487844000919722,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 9.279692312702537e-05
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0012788570020347834
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.5331739200046286,
+          "stages": {
+            "process_spawn": {
+              "calls": 4,
+              "seconds_inclusive": 0.001377771026454866
+            },
+            "media_subprocess": {
+              "calls": 4,
+              "seconds_inclusive": 0.39513359501142986
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.39531778503442183
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.39540729398140684
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05446931699407287
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01737648801645264
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02203097997698933
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.0551485370087903,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.00107241453952156
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005636580986902118
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.770659670990426,
+          "stages": {
+            "process_spawn": {
+              "calls": 20,
+              "seconds_inclusive": 0.008893554972019047
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 1.9889938140113372
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.9469565949693788
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.7907090879743919
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.7909401770157274
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05195931697380729
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01822698413161561
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.023190341977169737
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4509021709964145
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4511093509790953
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.550910258985823,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0013074571907054633
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.0069153539661783725
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.0001046340330503881
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0006534179847221822
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "mode": "lazy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-hvaaiqz5/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.913120788987726,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.02489814706495963
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 2.757375657063676
+            },
+            "cli_audio": {
+              "calls": 16,
+              "seconds_inclusive": 2.7580125680251513
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 2.7583101560012437
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.5368851969833486
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0012080850137863308,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.6379887399962172,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.00031740000122226775
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.10109719500178471
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.10114439099561423
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.10116126699722372
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.01688880199799314
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006480747077148408
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007762999011902139
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013183117989683524,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.00028321295394562185
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0014833589957561344
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.42227626699605025,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.00033039800473488867
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.10477427401929162
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.10482199798570946
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.10483817200292833
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.016017092973925173
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07134497704100795
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07263178398716263
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.2027108460024465,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00012938291183672845
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0014137709804344922
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.5431851589819416,
+          "stages": {
+            "process_spawn": {
+              "calls": 4,
+              "seconds_inclusive": 0.001458400976844132
+            },
+            "media_subprocess": {
+              "calls": 4,
+              "seconds_inclusive": 0.403020882018609
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.4031749310088344
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4032319019897841
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05802808402222581
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.017882345855468884
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.022565653023775667
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05254827401950024,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0009777441446203738
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005019122967496514
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.6260230019979645,
+          "stages": {
+            "process_spawn": {
+              "calls": 20,
+              "seconds_inclusive": 0.007739775930531323
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 1.9349640290020034
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.8995936940191314
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.810590784996748
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.8107970549608581
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06986619500094093
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.02217183797620237
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.027682549000019208
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4280964220233727
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4283579559996724
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.4279875299835112,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0012338712404016405
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.006402290018741041
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 9.859696729108691e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0007614770147483796
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "legacy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-hx1pks4v/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 4.491341356013436,
+          "stages": {
+            "process_spawn": {
+              "calls": 26,
+              "seconds_inclusive": 0.020859513082541525
+            },
+            "media_subprocess": {
+              "calls": 24,
+              "seconds_inclusive": 4.5480097759573255
+            },
+            "cli_audio": {
+              "calls": 20,
+              "seconds_inclusive": 3.6737296289938968
+            },
+            "audio_decode": {
+              "calls": 20,
+              "seconds_inclusive": 3.6742244259803556
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.45430681394645944
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 1.1004921019775793
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0009582689963281155,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.9254514329950325,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0012326000141911209
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.38338191801449284
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.1628431649878621
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.22107645196956582
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.22113566601183265
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.01916679597343318
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006525352946482599
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007714853010838851
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013602627004729584,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0003223039966542274
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0015620369813404977
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.6900048519892152,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0009593690047040582
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.36574090700014494
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.16657240301719867
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.19966835802188143
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.19970788399223238
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.02014401400811039
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.08145705802598968
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.08299958700081334
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.19763558302656747,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 9.563806816004217e-05
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013141949893906713
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 1.646786493016407,
+          "stages": {
+            "process_spawn": {
+              "calls": 12,
+              "seconds_inclusive": 0.004421895078849047
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.481973292073235
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.6794544910080731
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.807544417999452
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.8076995150768198
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06215090799378231
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.022603803081437945
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02831850099028088
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05789647300844081,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.001262878970010206
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.006287262978730723
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.6447240409906954,
+          "stages": {
+            "process_spawn": {
+              "calls": 18,
+              "seconds_inclusive": 0.008443939965218306
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 2.018885032972321
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.748277695995057
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.839712221029913
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.8398862769827247
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.049486802017781883
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.020506665954599157
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02628756398917176
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4333111320156604
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.43354653200367466
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.3875812379992567,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0013410038081929088
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.006833779974840581
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 5.3849013056606054e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0008196109847631305
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "lazy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-i83n82y_/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 3.012730037997244,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.024280965008074418
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 2.963112867932068
+            },
+            "cli_audio": {
+              "calls": 16,
+              "seconds_inclusive": 2.9639014410495292
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 2.9651904130587354
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.517367536056554
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0012607440003193915,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.6665646129986271,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.0004480280040297657
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.10234415298327804
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.10238184500485659
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.10240107399295084
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.019635489996289834
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.007306733168661594
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.008485723024932668
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013593771000159904,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.00029570984770543873
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.001580523996381089
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.45481207099510357,
+          "stages": {
+            "process_spawn": {
+              "calls": 1,
+              "seconds_inclusive": 0.00031191599555313587
+            },
+            "media_subprocess": {
+              "calls": 1,
+              "seconds_inclusive": 0.11530290398513898
+            },
+            "cli_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.11534231100813486
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.11535881902091205
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.01607489597517997
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07558763900306076
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07700836498406716
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.20368038001470268,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00010630700853653252
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013508209958672523
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.5498467449797317,
+          "stages": {
+            "process_spawn": {
+              "calls": 4,
+              "seconds_inclusive": 0.0015647939871996641
+            },
+            "media_subprocess": {
+              "calls": 4,
+              "seconds_inclusive": 0.3978570409817621
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.39803963401936926
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.3981369470129721
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06188976002158597
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.019585700909374282
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02440895402105525
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05709534001653083,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0011194008402526379
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.00603506198967807
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.9410763359919656,
+          "stages": {
+            "process_spawn": {
+              "calls": 20,
+              "seconds_inclusive": 0.008366043999558315
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 1.9477849540126044
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.843168857973069
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.8428639269841369
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.8430527750460897
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05312701896764338
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.023385607812087983
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.028520719992229715
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.46166918298695236
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4619198850123212
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.3805841909779701,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0012943287438247353
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.007839897007215768
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 5.848999717272818e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0006966970104258507
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "pyav",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-6cgbkop9/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.240778904990293,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.6929199350997806
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0028495620063040406
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 0.9982975739403628
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.4080044549773447
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.30222600998240523
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.30229421600233763
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0007693939842283726,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.5722859829838853,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005487901013111696
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.005546144995605573
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.01797759800683707
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.005896673072129488
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007085273013217375
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.01390842700493522,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.00033047597389668226
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0017035079945344478
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.3734595760179218,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.008158862008713186
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.009698937006760389
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.024645247991429642
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.09429763694060966
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.09599043399794027
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.21921253099571913,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00016059199697338045
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.002088462992105633
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.16790207001031376,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.024593368027126417
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.02483282602042891
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05550399096682668
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.019639858131995425
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.024820119026117027
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05683122400660068,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0012219519703648984
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.006401442020433024
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.7810034769936465,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.007146758085582405
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.5829895850038156
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.9422262710286304
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.037866289960220456
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.39150595501996577
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.7020760759769473
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05622580699855462
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.019899881299352273
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.024630860018078238
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4423560239956714
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4426173359679524
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 2.8194582299911417,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0011515430232975632
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005816261982545257
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 5.8147968957200646e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0007942999945953488
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "pyav",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-n281l_91/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.3041172059893142,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.5920740000437945
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0059713159571401775
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 0.9690226279490162
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.4300912389589939
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.374650294019375
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.3747371529752854
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.000906783010577783,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.5483408069994766,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.004989282984752208
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.005044671997893602
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.017622515006223693
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.007406407967209816
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.008653063996462151
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013506452000001445,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0002837718930095434
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0014622719900216907
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.31360120899626054,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005313961999490857
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.0064694409957155585
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.015972410008544102
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07547377300215885
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07691089800209738
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.1933705999981612,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00014786201063543558
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0017149579944089055
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.17015448500751518,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.025794068002142012
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.026010553003288805
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.051104444020893425
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01984787709079683
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.024892809975426644
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.0548010710044764,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010280019778292626
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005399526009568945
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.705149136018008,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.008609378972323611
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.5512677810329478
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.9323615290049929
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.0392976010334678
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.4113179649866652
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.724943806999363
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06154292798601091
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.02118209979380481
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.026741270994534716
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4319448380265385
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4322195760323666
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.557849333010381,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0012038499698974192
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.006630940013565123
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 8.653197437524796e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0008705040090717375
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "mode": "pyav-video",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-dkwaa9d0/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.302006457000971,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.5054348930425476
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.004715043993201107
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 0.9461693129851483
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.4715943999181036
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.43861547397682443
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.4386781839712057
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0008028589945752174,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.5262871999875642,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005766378017142415
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.0058289599837735295
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.016930454003158957
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006726920051733032
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007886626000981778
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.012918355001602322,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.00025270803598687053
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0012365730071906
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.3290560170134995,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005210292001720518
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.00641571800224483
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.018195715005276725
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.06983652300550602
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07113132299855351
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.1856832859921269,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00012998699094168842
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013646060251630843
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.1534816810162738,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.02411466499324888
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.024331288994289935
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.047687952959677204
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.018710375123191625
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.023255261970916763
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05372999401879497,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0009778271487448364
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005508573987754062
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.8163198129914235,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.006153927039122209
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.4494264799868688
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.8436441060039215
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.034136955975554883
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.3904385119967628
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.6817980460473336
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05776040902128443
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.020279125979868695
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.025043528992682695
+            },
+            "native_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.006874619022710249
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4045010319969151
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4119595800002571
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.8300588080019224,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.000998110102955252
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005464293964905664
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 6.923297769390047e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0007404569769278169
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "mode": "pyav-video",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-215kqrzf/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.083948790008435,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.5843079440237489
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0024080430157482624
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 1.0044065410038456
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.5006158910691738
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.4178230610268656
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.4178944129962474
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0007790250238031149,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.560229007009184,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005198078986722976
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.005245370994089171
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.017760688991984352
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006166694976855069
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007650457002455369
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.01365799899213016,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0002616739657241851
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0012946210044901818
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.31708064902340993,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005160780012374744
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.00637175899464637
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.015034226991701871
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.0722419050289318
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07365877102711238
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.19587407397921197,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.0001383759663440287
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0015834769874345511
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.1758460830023978,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.025028862990438938
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.025301710033090785
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05254828301258385
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.023116648226277903
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.029462459991918877
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05443633897812106,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0011320511403027922
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.0058294449700042605
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.973536353005329,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.006471921980846673
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.4346562750288285
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.8115691260027234
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.034256299055414274
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.3801064130384475
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.6872262330434751
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05276753002544865
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01742254610871896
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.022286466002697125
+            },
+            "native_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.006958165002288297
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4298874960222747
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.437421325041214
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.5664316400070675,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010926700779236853
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005950847000349313
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 6.10490096732974e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.000845241971546784
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "legacy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-y3syylob/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 4.128534896008205,
+          "stages": {
+            "process_spawn": {
+              "calls": 26,
+              "seconds_inclusive": 0.01622934386250563
+            },
+            "media_subprocess": {
+              "calls": 24,
+              "seconds_inclusive": 3.8465764350548852
+            },
+            "cli_audio": {
+              "calls": 20,
+              "seconds_inclusive": 3.140503333939705
+            },
+            "audio_decode": {
+              "calls": 20,
+              "seconds_inclusive": 3.140927079919493
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.41235548196709715
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.9115790100186132
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0010528340062592179,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.892016814003,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0011403519893065095
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.3611938480171375
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.1508931569987908
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.21085053199203685
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.2108920700266026
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.0179372469719965
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.005421761889010668
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.006758036994142458
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013147846009815112,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0002673309645615518
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013687220052815974
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.6679556269955356,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0011576329707168043
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.3696115109778475
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.1654205670056399
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.20475181299843825
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.20480116200633347
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.015292560012312606
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07281672299723141
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07428972897469066
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.19155894199502654,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00014966499293223023
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.001196779980091378
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 1.5870477280113846,
+          "stages": {
+            "process_spawn": {
+              "calls": 12,
+              "seconds_inclusive": 0.004757411981699988
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.4404853160958737
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.6651097210124135
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.777831731014885
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.7780624010483734
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06261470098979771
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.017550426069647074
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.022376720036845654
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.05228241201257333,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010161821264773607
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.0052946730284020305
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 4.144225991010899,
+          "stages": {
+            "process_spawn": {
+              "calls": 18,
+              "seconds_inclusive": 0.007522511063143611
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 1.8592494159238413
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.6451329030096531
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.7602928649866953
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.7604881519800983
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.06091055599972606
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.019790846039541066
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.0247816180344671
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.4561552589875646
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.45644219100358896
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.6861396800086368,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.001621361094294116
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.009564771986333653
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 6.996697629801929e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0008432500180788338
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 1
+    },
+    {
+      "mode": "legacy",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-nhx917_l/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 4.279388438008027,
+          "stages": {
+            "process_spawn": {
+              "calls": 26,
+              "seconds_inclusive": 0.020590807922417298
+            },
+            "media_subprocess": {
+              "calls": 24,
+              "seconds_inclusive": 4.000859246007167
+            },
+            "cli_audio": {
+              "calls": 20,
+              "seconds_inclusive": 3.2963669571036007
+            },
+            "audio_decode": {
+              "calls": 20,
+              "seconds_inclusive": 3.2968129799119197
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.4253974460880272
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.9077603480254766
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0012632269936148077,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.8970315030019265,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0009837260004132986
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.3542834960098844
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.16030089801643044
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.19458252700860612
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.19462196898530237
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.01846225798362866
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006629145937040448
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.00808496301760897
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013358666998101398,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0003544508945196867
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0016038320027291775
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.6208262260188349,
+          "stages": {
+            "process_spawn": {
+              "calls": 3,
+              "seconds_inclusive": 0.0012425639724824578
+            },
+            "media_subprocess": {
+              "calls": 3,
+              "seconds_inclusive": 0.33663733504363336
+            },
+            "sample_video_encode": {
+              "calls": 1,
+              "seconds_inclusive": 0.15260151898837648
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.18455528499907814
+            },
+            "audio_decode": {
+              "calls": 2,
+              "seconds_inclusive": 0.1846029270091094
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.013935662980657071
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07002570800250396
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07130912999855354
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.18981356301810592,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00011601398000493646
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.001445028989110142
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 1.6464460429851897,
+          "stages": {
+            "process_spawn": {
+              "calls": 12,
+              "seconds_inclusive": 0.004673732997616753
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.5034607479756232
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.716367535002064
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.7893553920148406
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.7895586549711879
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05349842199939303
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01935481486725621
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02464307501213625
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.0567237289797049,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010539187060203403
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005593339999904856
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.753245895000873,
+          "stages": {
+            "process_spawn": {
+              "calls": 18,
+              "seconds_inclusive": 0.007431143021676689
+            },
+            "media_subprocess": {
+              "calls": 16,
+              "seconds_inclusive": 2.0923315090185497
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.6723720480222255
+            },
+            "cli_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.8087742829520721
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.8090425159898587
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.053093861031811684
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.018867296050302684
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.023801616014679894
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.613575158000458
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.613867703039432
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.7912655670079403,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0012707651185337454
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.00772065794444643
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 5.89560077060014e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0007737069972790778
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 0
+    },
+    {
+      "mode": "pyav-video",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-olajx8r7/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.112347682006657,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.6535034820262808
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.001679384004091844
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 0.9425127439608332
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.38468291494064033
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.2868132820003666
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.2868801220029127
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0007348719809670001,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.5184349089977331,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.0053761249873787165
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.00542594600119628
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.017188240977702662
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.006574960018042475
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.007732732978183776
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.013182069000322372,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0003056769783142954
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0016415840073022991
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.29722448499524035,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.0051923700084444135
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.006473479006672278
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.014489746012259275
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.07012178798322566
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.07148143701488152
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.19541259997640736,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 9.775892249308527e-05
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0013545670080929995
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.166390202997718,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.02550857499591075
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.025763812969671562
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.05152775297756307
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.01960140495793894
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.02493336101179011
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.053055247000884265,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010111492883879691
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.0053688400075770915
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.738685892021749,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.006703733932226896
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.4441332649148535
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.8757417240121868
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.033666865987470374
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.3812620229437016
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.6940010550024454
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.052888541016727686
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.018639811867615208
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.023247563047334552
+            },
+            "native_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.006409853987861425
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.410231963993283
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.4172112910018768
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 1.7053323459986132,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.001087815238861367
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005740686028730124
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 5.512501229532063e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0007188899908214808
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 2
+    },
+    {
+      "mode": "pyav",
+      "notes": 192,
+      "source": "/tmp/ytp-workflow-n69k82bk/corpora/profile/downloads/source.mp4",
+      "python": "3.12.15 (main, Oct  6 2026, 02:02:22) [GCC 14.2.0]",
+      "platform": "Linux-6.18.41-x86_64-with-glibc2.41",
+      "app_source_sha256": {
+        "app/clip_cache.py": "3d9b84257b7c7c15420dc731372d22c558a126700a1a7fb82c59bc27c2436ce6",
+        "app/matrix_commands.py": "ff4f79c7e3175c9f2b14a9266a12ef7d249e902524159e9a2a9ad6607420f064",
+        "app/media_decode.py": "bfe15f00f341749f7d5cb7ee99e7e5b0df8cac642740601d792788f15515b3cf",
+        "app/sing.py": "e26a8b09a3efd2a252b4ed439aac49bc1f0fdfd0e8553b03b25466e9ace57071",
+        "app/editor.py": "14b1ca1c4007f3e67a490dc8478f744d46741ae386e58f05f1a88c515344bc7e",
+        "app/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "app/forced_align.py": "07d770103ba59cc3c23de2c323b1c3f5e89e770f549f268ae648e54d2a2c518f",
+        "app/api.py": "bc120308561017b32123bd8f9f80113a082cb4f11881ae16b68c775b8047a5d6",
+        "app/jobs.py": "5d9bf7b4c0d1245bf2c5ebc1f5d0439dfe349319305a61d390af9b01e8ef6191",
+        "app/phonemes.py": "387e4906b9df3c210fddc41d9c1d229aa9d311e18397b59d741a2132bbbd1369",
+        "app/database.py": "19f1638743b206d5f23284d4c5ea57b44a05ad5ae2c5067ecbfdb88d1f8dc2ef",
+        "app/webhooks.py": "8911a64e12343c875285898782771cb5a4cc96114aa112349d43238d401806a6",
+        "app/device.py": "6d8fce2767b11d35664c1c6d2515f3a09ee1769c6033bb3a4036e4cc370abfdb",
+        "app/media_process.py": "3a5c5ebaa1dde9313549161d722522968f15e1bb5c505cdba361046011902cb0",
+        "app/matrix_bot.py": "988f2a8d6c531c2351ad635e4305e702bb2d32ee9d2196bb2a529cfc06479705",
+        "app/generate.py": "1c80a026a8c8eee621127fcee9803e0d98e374f9ac055acf80ecdd5f45d081b4",
+        "app/phone_align.py": "3b4f976ae1cc8e75095eb028983cfdc18b087f3a9195c81ac23e19026fb9dd89",
+        "app/ytpmv/scope.py": "14d27b13d2737b2657fc13c7ac8ca88111de4eb88768781be9756076a5184331",
+        "app/ytpmv/sms.py": "6a2bce994ba528d27a23135b8106f8c7990349dc34bfa72b1fa5ec70e73b491a",
+        "app/ytpmv/dsp.py": "861b10ed53896780e92118ae69d71be2ee015d72f02acc2c94d0bdfb59259680",
+        "app/ytpmv/tone.py": "7945f17e9f91d0283dc0b667ceee4202b4d2e4e63d4a9751419aaf976e7f7ddc",
+        "app/ytpmv/__init__.py": "d785af7ce1ae8869df3f012aa2e7cc4839f39c01975439195d1c44d89f686a0b",
+        "app/ytpmv/music.py": "d54b5f2f88d07e6deebe922fa871641a79a8adf1faaed2df085b4e8160fd72de",
+        "app/ytpmv/sid.py": "e49040404a4d4257079c1c4fca5a98ffac189cd2871b1cf06862aa4a77a891c8",
+        "app/ytpmv/render.py": "cbe14f47e3bdcfbdbb2d000883b506053199b38bd2ba21afc9312cdabbef1148",
+        "app/ytpmv/pitch.py": "098e5a5b16ce991b29b68f619e23a71885e4aa2376e58b3ba1b250360596a499",
+        "app/ytpmv/drums.py": "c5676ed5227b90f4f8df76954739952738df2f7a6d55f836349e83fe6e6ada40",
+        "app/ytpmv/opl.py": "cab72a6c94f175262509617eb9389861f459f0e923882f117550be593b33f1db",
+        "app/ytpmv/master.py": "0686439a97257d7d8eb0d040052187b6a77c40a1705bbb94bdcb706b4230e272",
+        "app/ytpmv/screen.py": "e86f2de8078e4c188abbccb826ce49733d1c8037d3b4adf85e68a566232690a2",
+        "app/ytpmv/samples.py": "91aa5c629b5e3295c1fb126f158acabf1b9f4f709b2fcbfef4e3353c9d3797b7",
+        "app/ytpmv/ym2612.py": "e792f628e9c96bf1f49a6c5bed2db05808bfd1f48e361b50427696009fabe4e5",
+        "app/ytpmv/nes.py": "d4418a20e86936b9742af659824268979cef216891a52794156915a2c6b2726a",
+        "app/ytpmv/gb.py": "24c4e6100decc6b06f08fc41a0ead6c6700070b03b549b90b4172c248f369e97",
+        "app/ytpmv/recommend.py": "23f56b1947ba3615c4b24519269a0e37c954dab3d373f7d09544a74052562bda",
+        "app/ytpmv/snes.py": "3990e5b56544e710f61a7eaf1924dd56feece03af544975e8694bc33b622c988"
+      },
+      "source_sha256": "459d75b290ccce2c82ca31a8952d870e3bb33246ae978d51c0912476f0171a37",
+      "measurements": [
+        {
+          "workload": "recommendation",
+          "cache": "cold",
+          "seconds": 2.0832624480244704,
+          "stages": {
+            "native_audio": {
+              "calls": 16,
+              "seconds_inclusive": 0.44914034102112055
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.004329974006395787
+            },
+            "audio_decode": {
+              "calls": 16,
+              "seconds_inclusive": 0.818858472048305
+            },
+            "pitch_tracking": {
+              "calls": 16,
+              "seconds_inclusive": 0.5055354950018227
+            },
+            "media_subprocess": {
+              "calls": 2,
+              "seconds_inclusive": 0.3556174469704274
+            },
+            "cli_audio": {
+              "calls": 2,
+              "seconds_inclusive": 0.35571060999063775
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "recommendation",
+          "cache": "warm",
+          "seconds": 0.0008432670147158206,
+          "stages": {},
+          "sampled_peak_process_tree": null,
+          "output_sha256": "4706880c7ff987292b88ad10fd2fddfe2c739cd597119c8e4213756ba5a11916",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "cold",
+          "seconds": 0.6330016640131362,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.005957895016763359
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.006029618991306052
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.017464784992625937
+            },
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.007806076144333929
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.009268068009987473
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "part_audition",
+          "cache": "warm",
+          "seconds": 0.022394416999304667,
+          "stages": {
+            "note_synthesis": {
+              "calls": 48,
+              "seconds_inclusive": 0.0007315149414353073
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.004353828000603244
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "3a05e2da6a445d00b80c8e1bcf49c7939a2e3b790610ca1cd2e7c12417727f23",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "cold",
+          "seconds": 0.5032960540265776,
+          "stages": {
+            "native_audio": {
+              "calls": 1,
+              "seconds_inclusive": 0.007951445004437119
+            },
+            "audio_decode": {
+              "calls": 1,
+              "seconds_inclusive": 0.010013595019700006
+            },
+            "pitch_tracking": {
+              "calls": 1,
+              "seconds_inclusive": 0.021698745986213908
+            },
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.13743007500306703
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.13976615297724493
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "keyboard_bank",
+          "cache": "warm",
+          "seconds": 0.243867760989815,
+          "stages": {
+            "note_synthesis": {
+              "calls": 13,
+              "seconds_inclusive": 0.00021289996220730245
+            },
+            "play_and_mix": {
+              "calls": 1,
+              "seconds_inclusive": 0.0025551639846526086
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "a486a419495f10d567437009a5ab48726c266e2c20027f5dee2dc320761e1360",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "cold",
+          "seconds": 0.1666267910040915,
+          "stages": {
+            "native_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.02673353996942751
+            },
+            "audio_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.027014438033802435
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.0519946480053477
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.019956231873948127
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.025361698993947357
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "dense_mix",
+          "cache": "warm",
+          "seconds": 0.056687966018216684,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0010707287874538451
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.005556648975471035
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "1e4d617d16b6f2472937b68b718634c3c929fff71eabcb6afac40a0bf3baf719",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "cold",
+          "seconds": 3.6146752529894,
+          "stages": {
+            "process_spawn": {
+              "calls": 16,
+              "seconds_inclusive": 0.009539244056213647
+            },
+            "media_subprocess": {
+              "calls": 12,
+              "seconds_inclusive": 1.5100077210518066
+            },
+            "sample_video_encode": {
+              "calls": 4,
+              "seconds_inclusive": 0.8917647999478504
+            },
+            "native_audio": {
+              "calls": 8,
+              "seconds_inclusive": 0.0321302639786154
+            },
+            "cli_audio": {
+              "calls": 4,
+              "seconds_inclusive": 0.3874477180070244
+            },
+            "audio_decode": {
+              "calls": 8,
+              "seconds_inclusive": 0.675653295009397
+            },
+            "pitch_tracking": {
+              "calls": 4,
+              "seconds_inclusive": 0.04730319700320251
+            },
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.0195140247233212
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.024238425015937537
+            },
+            "cli_video": {
+              "calls": 4,
+              "seconds_inclusive": 0.447455444955267
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 0.44769843100220896
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        },
+        {
+          "workload": "video_render",
+          "cache": "warm",
+          "seconds": 2.261340224009473,
+          "stages": {
+            "note_synthesis": {
+              "calls": 192,
+              "seconds_inclusive": 0.001538437936687842
+            },
+            "play_and_mix": {
+              "calls": 4,
+              "seconds_inclusive": 0.007542301987996325
+            },
+            "frame_decode": {
+              "calls": 4,
+              "seconds_inclusive": 7.809104863554239e-05
+            },
+            "process_spawn": {
+              "calls": 2,
+              "seconds_inclusive": 0.0009167130046989769
+            }
+          },
+          "sampled_peak_process_tree": null,
+          "output_sha256": "6ea740282498a2ffaf41b6a6fd48c962fdb30ad8453e57c30c6ab6dc9e969720",
+          "matches_legacy_output": true
+        }
+      ],
+      "repeat": 1
+    }
+  ],
+  "median_seconds": {
+    "legacy": {
+      "recommendation-cold": 4.279388438008027,
+      "recommendation-warm": 0.0010528340062592179,
+      "part_audition-cold": 0.8970315030019265,
+      "part_audition-warm": 0.013358666998101398,
+      "keyboard_bank-cold": 0.6679556269955356,
+      "keyboard_bank-warm": 0.19155894199502654,
+      "dense_mix-cold": 1.6464460429851897,
+      "dense_mix-warm": 0.0567237289797049,
+      "video_render-cold": 3.753245895000873,
+      "video_render-warm": 1.6861396800086368
+    },
+    "lazy": {
+      "recommendation-cold": 3.012730037997244,
+      "recommendation-warm": 0.0012080850137863308,
+      "part_audition-cold": 0.6558367789839394,
+      "part_audition-warm": 0.013232358993263915,
+      "keyboard_bank-cold": 0.45481207099510357,
+      "keyboard_bank-warm": 0.20368038001470268,
+      "dense_mix-cold": 0.5431851589819416,
+      "dense_mix-warm": 0.0551485370087903,
+      "video_render-cold": 3.770659670990426,
+      "video_render-warm": 1.4279875299835112
+    },
+    "pyav": {
+      "recommendation-cold": 2.240778904990293,
+      "recommendation-warm": 0.0008432670147158206,
+      "part_audition-cold": 0.5722859829838853,
+      "part_audition-warm": 0.01390842700493522,
+      "keyboard_bank-cold": 0.3734595760179218,
+      "keyboard_bank-warm": 0.21921253099571913,
+      "dense_mix-cold": 0.16790207001031376,
+      "dense_mix-warm": 0.056687966018216684,
+      "video_render-cold": 3.705149136018008,
+      "video_render-warm": 2.261340224009473
+    },
+    "pyav-video": {
+      "recommendation-cold": 2.112347682006657,
+      "recommendation-warm": 0.0007790250238031149,
+      "part_audition-cold": 0.5262871999875642,
+      "part_audition-warm": 0.013182069000322372,
+      "keyboard_bank-cold": 0.31708064902340993,
+      "keyboard_bank-warm": 0.19541259997640736,
+      "dense_mix-cold": 0.166390202997718,
+      "dense_mix-warm": 0.05372999401879497,
+      "video_render-cold": 3.8163198129914235,
+      "video_render-warm": 1.7053323459986132
+    }
+  },
+  "limitations": [
+    "Modes shuffled across repetitions; one cold/warm pair per fresh worker.",
+    "RSS/threads and cProfile are opt-in separate runs; both perturb timing.",
+    "RSS/threads sampled at 10ms when enabled, includes child processes and may miss short peaks.",
+    "Inclusive stages overlap and must not be summed.",
+    "OS file cache is not flushed; cold means app sample/measurement caches."
+  ]
+}

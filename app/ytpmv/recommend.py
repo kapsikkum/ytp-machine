@@ -344,6 +344,7 @@ def recommend(song: Song, progress=None, pool: dict | None = None) -> dict[str, 
         if (word, take) not in heard:
             try:
                 heard[word, take] = samples.build(word, take,
+                    audio_only=True,
                     check_cancel=(lambda: progress("samples", 0, len(song.parts))) if progress else None
                 ).voice.info.f0 is not None
             except samples.SampleError:

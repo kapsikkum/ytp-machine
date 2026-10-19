@@ -881,6 +881,7 @@ def _render_ytpmv(params: dict, progress, resources: ExitStack,
             try:
                 got.append(samples.build(text, take, _hit(part, s),
                                          corpus=s["corpus"],
+                                         audio_only=audio_only,
                                          check_cancel=lambda: say("samples", i, len(wanted))))
             except samples.SampleError as exc:
                 failed = exc
@@ -1329,7 +1330,8 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
         if not s["text"]:
             raise YtpmvError("Give the part a word first.")
         try:
-            sample = samples.build(s["text"], s["take"], _hit(part, s), corpus=s["corpus"])
+            sample = samples.build(s["text"], s["take"], _hit(part, s), corpus=s["corpus"],
+                                   audio_only=True)
         except samples.SampleError as exc:
             raise YtpmvError(str(exc)) from None
     s["volume"], s["pan"] = 1.0, 0.0
@@ -1344,7 +1346,7 @@ def preview_part(midi_id: str, part_settings: dict, seconds: float = 6.0,
     _write_wav(path, _finish_mix(mix))
     return {"audio_url": "/output/" + os.path.basename(path),
             "from": round(t_from, 2), "settings": s,
-            "sample": sample.describe() if sample else None}
+            "sample": sample.describe(include_video=False) if sample else None}
 
 
 def _encoder_for_ytpmv() -> list[str]:

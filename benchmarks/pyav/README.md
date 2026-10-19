@@ -1,9 +1,10 @@
 # PyAV decoding benchmark
 
-This branch contains a standalone experiment, not an application backend change.
-Production remains on the FFmpeg implementation released in `225df9d`.
-PyAV is an optional benchmark dependency and is absent from the app requirements
-and release image changes.
+This branch includes optional application audio/video decoders, lazy audio-only
+sample preparation and a full-workflow profiler. Both decoders still default to
+the FFmpeg CLI. PyAV is installed separately with `requirements-pyav.txt`; the
+production dependency list and image remain unchanged. See
+[integration status](INTEGRATION.md) for switches, compatibility limits and gates.
 
 ## Initial measurements
 
@@ -117,7 +118,7 @@ This installs PyAV into the disposable container's `/tmp`, leaving the image
 and the application container unchanged. Use `--cpus=2 --memory=2g --pids-limit=256`
 to reproduce the limits of the recorded server run.
 
-## Next integration gates
+## Original integration gates
 
 The measurements justify trying an optional audio decoder first, followed by
 sample-frame decoding. Before enabling either in the app, measure complete cold
@@ -127,3 +128,34 @@ the existing cache/context isolation. Pitch synthesis, chip emulation, compositi
 and final encoding have not been sped up by this experiment.
 
 PyAV's upstream API references are in its [source documentation](https://github.com/PyAV-Org/PyAV/tree/main/docs).
+
+## Integration workflow measurements
+
+Median seconds from three randomized repetitions per mode, with resource
+sampling disabled. Four tracks, 192 MIDI notes, three-second preview/video
+and a 13-note bank. Eager CLI uses the current bounded worker settings.
+All 120 workflow outputs per platform matched the eager reference:
+recommendation JSON, WAV bytes, and decoded audiovisual frame hashes.
+
+| Platform / cold workload | Eager CLI | Lazy CLI | PyAV audio | PyAV audio + video |
+| --- | ---: | ---: | ---: | ---: |
+| Windows / recommendation | 5.531 | 4.226 | 3.961 | 3.707 |
+| Windows / part audition | 0.900 | 0.706 | 0.653 | 0.667 |
+| Windows / keyboard bank | 0.583 | 0.380 | 0.322 | 0.322 |
+| Windows / dense mix | 1.171 | 0.480 | 0.213 | 0.204 |
+| Windows / video render | 2.512 | 2.382 | 2.514 | 2.031 |
+| Linux (2 CPUs) / recommendation | 4.279 | 3.013 | 2.241 | 2.112 |
+| Linux (2 CPUs) / part audition | 0.897 | 0.656 | 0.572 | 0.526 |
+| Linux (2 CPUs) / keyboard bank | 0.668 | 0.455 | 0.373 | 0.317 |
+| Linux (2 CPUs) / dense mix | 1.646 | 0.543 | 0.168 | 0.166 |
+| Linux (2 CPUs) / video render | 3.753 | 3.771 | 3.705 | 3.816 |
+
+Warm dense mixes stayed close to the existing cache-hit baseline. Full
+video rendering did not improve consistently across platforms; its PyAV
+backend remains opt-in. These fixture results are not universal speedups
+for large songs or all corpora. CPU quotas constrain scheduling, not host
+load; individual timings and outliers are retained in the raw reports.
+
+- [Windows workflow results](results/workflow-windows.json)
+- [Linux workflow results](results/workflow-linux.json)
+- [Backend switches and remaining rollout gates](INTEGRATION.md)

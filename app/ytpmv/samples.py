@@ -122,9 +122,23 @@ class Sample:
     source: str = ""
     corpus: str = ""
     _sources: tuple = field(default_factory=tuple, repr=False)
+    _segments: tuple = field(default_factory=tuple, repr=False)
+
+    def ensure_video(self, check_cancel=None) -> None:
+        """Materialize a single-clip picture only when a caller needs it."""
+        if check_cancel:
+            check_cancel()
+        if os.path.exists(self.mp4):
+            return
+        if self._segments:
+            if not all(_source_stamp(stamp[0]) == stamp for stamp in self._sources):
+                raise SampleError("The recording changed; select the sound again.")
+            with corpus_context(self.corpus):
+                _ensure_video(self.mp4, self._segments, check_cancel)
 
     @property
     def url(self) -> str:
+        self.ensure_video()
         return "/output/" + os.path.basename(self.mp4)
 
     @property
@@ -135,6 +149,7 @@ class Sample:
         """The picture at w x h, one frame per 1/FPS s from the trimmed start."""
         if check_cancel:
             check_cancel()
+        self.ensure_video(check_cancel)
         fit = "cover" if fit == "cover" else "contain"
         key = (self.mp4, self.offset, self.duration, w, h, fit, pixel_aspect)
         with _lock:
@@ -142,6 +157,13 @@ class Sample:
             if got is not None:
                 _frame_cache.move_to_end(key)
                 return got
+        from app.media_decode import video
+        arr = video(self.mp4, self.offset, self.duration, w, h, fit, pixel_aspect, FPS,
+                    check_cancel, lambda: self._frames_ffmpeg(w, h, check_cancel, fit, pixel_aspect))
+        _store_frames(key, arr)
+        return arr
+
+    def _frames_ffmpeg(self, w, h, check_cancel, fit, pixel_aspect):
         # Retro canvases can have non-square display pixels. Fit against the
         # final picture's aspect, including any source sample-aspect metadata,
         # so the eventual canvas upscale does not stretch the video again.
@@ -150,10 +172,11 @@ class Sample:
                    f":h='max(1,{bound}({h},{w}*{pixel_aspect:.12g}/dar))'")
         framing += (f",crop={w}:{h}:exact=1" if fit == "cover" else
                     f",pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
-        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{self.offset:.3f}",
+        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-threads", "2", "-filter_threads", "2",
+               "-ss", f"{self.offset:.3f}",
                "-i", self.mp4, "-t", f"{self.duration + 0.1:.3f}",
                "-vf", f"format=rgb24,{framing},setsar=1,fps={FPS}",
-               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+               "-threads", "2", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
         from app.media_process import run
         proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)
         if proc.returncode != 0:
@@ -164,13 +187,12 @@ class Sample:
             arr = np.zeros((1, h, w, 3), dtype=np.uint8)
         else:
             arr = arr[: n * w * h * 3].reshape(n, h, w, 3)
-        _store_frames(key, arr)
         return arr
 
-    def describe(self) -> dict:
+    def describe(self, *, include_video: bool = True) -> dict:
         return {"text": self.text, "take": self.take, "takes": self.takes, "hit": self.hit,
                 "corpus": self.corpus,
-                "sample_url": self.url, "source": self.source,
+                "sample_url": self.url if include_video else None, "source": self.source,
                 **self.voice.info.as_dict()}
 
 
@@ -337,13 +359,14 @@ def _trim(x: np.ndarray) -> tuple[int, int]:
 
 
 def build(text: str, take: int = 0, hit: str | None = None, check_cancel=None,
-          corpus: str | None = None) -> Sample:
+          corpus: str | None = None, *, audio_only: bool = False) -> Sample:
     """Build a playable word in an installed corpus, or the operation's voice."""
     with corpus_context(corpus):
-        return _build(text, take, hit, check_cancel)
+        return _build(text, take, hit, check_cancel, audio_only=audio_only)
 
 
-def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) -> Sample:
+def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None,
+           *, audio_only: bool = False) -> Sample:
     """The corpus saying *text* (take *take*, for a single word) as a Sample.
 
     *hit* names a drum (kick, snare, hats...) to cut the word down into, the
@@ -364,10 +387,15 @@ def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) 
     with _lock:
         cached = _cache.get(key)
         # The output sweep may have taken the mp4 since; then build it again.
-        if (cached is not None and os.path.exists(cached.mp4)
+        if (cached is not None and (cached._segments or os.path.exists(cached.mp4))
                 and cached._sources and all(_source_stamp(stamp[0]) == stamp for stamp in cached._sources)):
             _cache.move_to_end(key)
-            return cached
+        else:
+            cached = None
+    if cached is not None:
+        if not audio_only:
+            cached.ensure_video(check_cancel)
+        return cached
 
     unit = _UNIT.match(text)
     noise = None if unit else _NOISE.match(text)
@@ -414,12 +442,27 @@ def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) 
     digest = hashlib.sha1(repr((corpus, text, take, ident, source_stamps)).encode()).hexdigest()[:12]
     os.makedirs("output", exist_ok=True)
     mp4 = os.path.join("output", f"ytpmv_sample_{digest}.mp4")
+    x = None
+    if word_takes and audio_only:
+        try:
+            s, e = g.extract_window(clip)
+            x = decode_audio(clip["source_file"], s, e - s, **decode_options)
+            if not len(x):
+                x = None
+        except RuntimeError:
+            if check_cancel:
+                check_cancel()
+    if x is not None:
+        # The video recipe is retained below; frames()/url will build it if
+        # this same sample is subsequently used for a video preview/export.
+        return _finish_sample(text, take, n_takes, hit, mp4, x, source, corpus,
+                              source_stamps, key, segments, check_cancel)
     # One build per file at a time, written aside and moved into place. The
     # page asks for every part's sample at once, and two parts suggested the
     # same word and take: both requests saw no file, both encoded into the
     # same path, and the interleaved result was a file ffmpeg could not
     # decode -- which then sat there answering every later request with 500.
-    with _build_lock(digest):
+    with _build_lock(mp4):
         x = None
         if os.path.exists(mp4):
             try:
@@ -473,6 +516,32 @@ def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) 
             raise SampleError(f'"{text}" has no sound in its recording')
     if check_cancel:
         check_cancel()
+    return _finish_sample(text, take, n_takes, hit, mp4, x, source, corpus,
+                          source_stamps, key, segments if word_takes else (), check_cancel)
+
+
+def _ensure_video(mp4, segments, check_cancel):
+    with _build_lock(mp4):
+        if check_cancel:
+            check_cancel()
+        if os.path.exists(mp4):
+            return
+        tmp = f"{mp4[:-4]}.{os.getpid()}.{threading.get_ident()}.tmp.mp4"
+        try:
+            g._build_video(list(segments), tmp,
+                           progress=(lambda *_: check_cancel()) if check_cancel else None)
+            if check_cancel:
+                check_cancel()
+            os.replace(tmp, mp4)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
+def _finish_sample(text, take, n_takes, hit, mp4, x, source, corpus,
+                   source_stamps, key, segments, check_cancel):
+    if check_cancel:
+        check_cancel()
     a, b = _trim(x)
     b = min(b, a + int(_MAX_SAMPLE * SR))
     audio = x[a:b]
@@ -481,7 +550,7 @@ def _build(text: str, take: int = 0, hit: str | None = None, check_cancel=None) 
         a += start
     sample = Sample(text=text, take=int(take) % n_takes, takes=n_takes, hit=hit, mp4=mp4,
                     offset=a / SR, voice=Voice(audio), source=source, corpus=corpus,
-                    _sources=source_stamps)
+                    _sources=source_stamps, _segments=tuple(dict(sg) for sg in segments))
     with _lock:
         _cache[key] = sample
         while len(_cache) > _CACHE_MAX:

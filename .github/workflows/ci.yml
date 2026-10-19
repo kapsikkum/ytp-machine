@@ -182,6 +182,13 @@ jobs:
           python tests/test_sample_pitch.py
           python tests/test_hold.py
 
+      - name: Optional PyAV decoder parity, cancellation and native resources
+        run: |
+          pip install --quiet -r requirements-pyav.txt psutil
+          python tests/test_media_decode.py
+          MRS_AUDIO_DECODER=pyav python tests/test_sample_pitch.py
+          MRS_AUDIO_DECODER=pyav MRS_VIDEO_DECODER=pyav python tests/test_ytpmv_corpora.py
+
       - name: Glitches
         # The YTP effects: markup, the seeded chaos sprinkler, the boomerang,
         # and every effect rendered through ffmpeg in one chunk -- a filter

@@ -69,12 +69,20 @@ def decode_audio(path: str, start: float | None = None,
     stereo 3 dB quieter that way than to float, and levels measured against
     a fixed threshold were tuned on it.
     """
-    cmd = ["ffmpeg", "-v", "error", "-nostdin"]
+    from app.media_decode import audio
+    return audio(path, start, duration, sr, pcm, check_cancel,
+                 lambda: _decode_audio_ffmpeg(path, start, duration, sr, pcm, check_cancel))
+
+
+def _decode_audio_ffmpeg(path, start, duration, sr, pcm, check_cancel):
+    # FFmpeg otherwise sizes filter pools from the host CPU count, even in
+    # a two-CPU container. Concurrent recommendations can exhaust its PID cap.
+    cmd = ["ffmpeg", "-v", "error", "-nostdin", "-threads", "2", "-filter_threads", "2"]
     if start is not None:
         cmd += ["-ss", f"{max(start, 0.0):.4f}"]
     if duration is not None:
         cmd += ["-t", f"{duration:.4f}"]
-    cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-f", pcm, "-"]
+    cmd += ["-i", path, "-vn", "-ac", "1", "-ar", str(sr), "-threads", "2", "-f", pcm, "-"]
     from app.media_process import run
     proc = run(cmd, capture_output=True, timeout=30, check_cancel=check_cancel)
     if proc.returncode != 0:
