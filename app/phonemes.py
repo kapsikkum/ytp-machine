@@ -117,16 +117,21 @@ def _load_cmudict() -> dict[str, list[list[str]]]:
     """Return all pronunciations per word (list of phoneme lists)."""
     try:
         from nltk.corpus import cmudict
-        raw = cmudict.dict()
+        entries = cmudict.entries()
     except LookupError:
         import nltk
         nltk.download("cmudict", quiet=True)
         from nltk.corpus import cmudict
-        raw = cmudict.dict()
-    return {
-        word: [[re.sub(r"\d+", "", p) for p in pron] for pron in prons]
-        for word, prons in raw.items()
-    }
+        entries = cmudict.entries()
+    # Keep the same pronunciations and ordering without constructing a second
+    # dictionary or running the same regex hundreds of thousands of times.
+    @lru_cache(maxsize=None)
+    def unstressed(phone):
+        return re.sub(r"\d+", "", phone)
+    out = {}
+    for word, pronunciation in entries:
+        out.setdefault(word, []).append([unstressed(phone) for phone in pronunciation])
+    return out
 
 
 _DICT: dict[str, list[str]] | None = None

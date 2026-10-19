@@ -1,0 +1,41 @@
+         60847 function calls (60807 primitive calls) in 1.166 seconds
+
+   Ordered by: cumulative time
+   List reduced from 454 to 35 due to restriction <35>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    1.166    1.166 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:213(<lambda>)
+        1    0.000    0.000    1.166    1.166 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:730(render_ytpmv)
+        1    0.017    0.017    1.165    1.165 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:760(_render_ytpmv)
+       75    0.070    0.001    0.461    0.006 E:\code\ml\michael-rosen-says\app\ytpmv\screen.py:210(apply)
+    47/10    0.001    0.000    0.352    0.035 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:101(wrapped)
+       75    0.167    0.002    0.344    0.005 E:\code\ml\michael-rosen-says\app\ytpmv\screen.py:185(_shrink)
+        4    0.006    0.002    0.321    0.080 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1177(_play)
+      192    0.001    0.000    0.313    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\tone.py:251(apply)
+       36    0.003    0.000    0.309    0.009 E:\code\ml\michael-rosen-says\app\ytpmv\tone.py:273(apply)
+       36    0.013    0.000    0.305    0.008 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:313(render_note)
+       72    0.032    0.000    0.233    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:238(_render_voice)
+      150    0.169    0.001    0.169    0.001 {method 'reduceat' of 'numpy.ufunc' objects}
+      522    0.133    0.000    0.138    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:158(_wave)
+        1    0.000    0.000    0.132    0.132 E:\code\ml\michael-rosen-says\app\media_process.py:51(wait)
+        3    0.000    0.000    0.132    0.044 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\subprocess.py:1275(wait)
+        3    0.000    0.000    0.132    0.044 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\subprocess.py:1596(_wait)
+        1    0.132    0.132    0.132    0.132 {built-in method _winapi.WaitForSingleObject}
+      300    0.002    0.000    0.095    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1388(_scope_tile)
+      300    0.070    0.000    0.093    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\scope.py:65(draw)
+       79    0.065    0.001    0.065    0.001 {method 'write' of '_io.BufferedWriter' objects}
+     1771    0.002    0.000    0.051    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:48(_wrapfunc)
+      720    0.002    0.000    0.045    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:2207(clip)
+      720    0.001    0.000    0.042    0.000 {method 'clip' of 'numpy.ndarray' objects}
+      720    0.041    0.000    0.042    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\_methods.py:96(_clip)
+      144    0.038    0.000    0.040    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:196(_envelope)
+      144    0.034    0.000    0.035    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\fft\_pocketfft.py:58(_raw_fft)
+       36    0.007    0.000    0.028    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:305(_highpass)
+     1995    0.026    0.000    0.026    0.000 {method 'astype' of 'numpy.ndarray' objects}
+       36    0.010    0.000    0.026    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\opl.py:297(_lowpass)
+        5    0.004    0.001    0.020    0.004 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:174(block_power)
+       72    0.000    0.000    0.018    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\fft\_pocketfft.py:324(rfft)
+       72    0.000    0.000    0.017    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\fft\_pocketfft.py:421(irfft)
+      940    0.014    0.000    0.014    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        6    0.000    0.000    0.011    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:167(k_weight)
+        6    0.000    0.000    0.011    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\dsp.py:75(biquad_k_weight)

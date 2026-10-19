@@ -74,22 +74,26 @@ def worker(args):
                                                json.dumps([["AH", start+.03, start+.25]])))
 
         midi = mido.MidiFile()
-        for channel in range(4):
+        for track_index in range(args.tracks):
+            channel = track_index % 15
+            if channel >= 9:
+                channel += 1
             track = mido.MidiTrack()
             midi.tracks.append(track)
-            track.append(mido.Message("program_change", program=channel*16, channel=channel))
-            for i in range(48):
-                note = 48 + channel*5 + i % 9
+            track.append(mido.Message("program_change", program=(track_index*16)%128, channel=channel))
+            for i in range(args.notes):
+                note = 48 + (track_index % 8)*5 + i % 9
                 track.append(mido.Message("note_on", note=note, velocity=90, time=0, channel=channel))
                 track.append(mido.Message("note_off", note=note, velocity=0, time=60, channel=channel))
         buffer = io.BytesIO()
         midi.save(file=buffer)
         midi_id = render.save_midi(buffer.getvalue(), "Profile dense MIDI.mid")
         song = render.load_song(midi_id)
-        parts = [{"id": p.id, "text": ("ah", "oh", "me", "no")[i], "corpus": "profile"}
+        parts = [{"id": p.id, "text": ("ah", "oh", "me", "no")[i % 4], "corpus": "profile"}
                  for i, p in enumerate(song.parts)]
         params = {"midi_id": midi_id, "parts": parts,
-                  "options": {"balance": True, "max_seconds": 3, "flip": False}}
+                  "options": {"balance": True, "max_seconds": args.seconds, "flip": False,
+                              **({"chip":args.chip,"synth":True} if args.chip else {})}}
 
         totals = defaultdict(lambda: [0, 0.])
         lock = threading.Lock()
@@ -122,6 +126,9 @@ def worker(args):
                     (samples.Sample, "_frames_ffmpeg", "cli_video"),
                     (media_decode, "_audio_pyav", "native_audio"),
                     (media_decode, "_video_pyav", "native_video"),
+                    (render.mastering, "block_power", "loudness_blocks"),
+                    (render.mastering, "finish", "master_finish"),
+                    (render.tones, "apply", "chip_processing"),
                     (samples.Sample, "frames", "frame_decode"), (render, "_play", "play_and_mix"),
                     (media_process, "run", "media_subprocess"), (subprocess, "Popen", "process_spawn")):
                 stack.enter_context(patch.object(module, attr, instrument(name, getattr(module, attr))))
@@ -198,10 +205,11 @@ def worker(args):
                 print(f"{args.worker} {name} {row['cache']}: {elapsed:.3f}s", flush=True)
 
             tasks = [("recommendation", lambda: recommend.recommend(song, pool=samples.corpus_pool())),
-                     ("part_audition", lambda: render.preview_part(midi_id, parts[0], seconds=3)),
+                     ("part_audition", lambda: render.preview_part(midi_id, parts[0], seconds=args.seconds,
+                            chip=args.chip, synth=bool(args.chip))),
                      ("keyboard_bank", lambda: render.preview_mix({**params, "part_id": parts[0]["id"],
                           "keyboard_notes": list(range(60,73))})),
-                     ("dense_mix", lambda: render.preview_mix({**params, "seconds": 3})),
+                     ("dense_mix", lambda: render.preview_mix({**params, "seconds": args.seconds})),
                      ("video_render", lambda: render.render_ytpmv(params))]
             for name, function in tasks:
                 if args.workload and name not in args.workload:
@@ -211,7 +219,8 @@ def worker(args):
         if any(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != value
                for name, value in source_hashes.items()):
             raise RuntimeError("Application source changed during profiling; rerun against a fixed checkout")
-        destination.write_text(json.dumps({"mode": args.worker, "notes": 192, "source": str(source),
+        destination.write_text(json.dumps({"mode": args.worker, "notes": args.tracks*args.notes,
+            "tracks":args.tracks, "seconds":args.seconds, "chip":args.chip, "source": str(source),
             "python": sys.version, "platform": platform.platform(), "app_source_sha256": source_hashes,
             "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "measurements": measurements}, indent=2), encoding="utf-8")
@@ -227,6 +236,10 @@ def main():
     parser.add_argument("--profile", action="store_true", help="Extra cProfile reports; affects timing")
     parser.add_argument("--resources", action="store_true", help="Sample native RSS/threads; affects timing")
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--tracks", type=int, default=4)
+    parser.add_argument("--notes", type=int, default=48, help="Notes per track")
+    parser.add_argument("--seconds", type=float, default=3)
+    parser.add_argument("--chip", choices=("md", "nes", "opl3", "snes", "sid", "gb"))
     args = parser.parse_args()
     if args.worker:
         worker(args)
@@ -240,6 +253,9 @@ def main():
     for repeat, mode in modes:
         path = output.with_name(output.stem + f"-{repeat}-" + mode + ".json")
         cmd = [sys.executable, str(Path(__file__).resolve()), "--worker", mode, "--output", str(path)]
+        cmd += ["--tracks",str(args.tracks),"--notes",str(args.notes),"--seconds",str(args.seconds)]
+        if args.chip:
+            cmd += ["--chip",args.chip]
         if args.source:
             cmd += ["--source", str(Path(args.source).resolve())]
         for workload in args.workload or []:

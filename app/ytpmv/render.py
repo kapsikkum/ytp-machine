@@ -247,6 +247,7 @@ def analyse(midi_id: str, progress=None) -> dict:
     # if left alone, so the page can say so before anything is rendered.
     out["instruments"] = {**tones.catalogue(), "programs": music.GM_PROGRAMS, "chips": CHIPS}
     low = bass_line(song)
+    program_tables = {}
     for p in out["parts"]:
         rec = recs.get(p["id"], {})
         part = song.part(p["id"])
@@ -260,10 +261,13 @@ def analyse(midi_id: str, progress=None) -> dict:
         stride = max(1, math.ceil(len(part.notes) / 1024))
         p["activity"] = [[round(n.start, 4), round(n.dur, 4), n.pitch]
                          for n in part.notes[::stride]]
-        p["program_tones"] = {
-            c: [chip_tone(part, c, as_bass=(part.id == low), program=program)
-                for program in range(len(music.GM_PROGRAMS))]
-            for c in CHIPS if not part.is_drums and not c.endswith("-voice")}
+        table_key = (part.role, part.is_drums, part.id == low)
+        if table_key not in program_tables:
+            program_tables[table_key] = {
+                c: [chip_tone(part, c, as_bass=(part.id == low), program=program)
+                    for program in range(len(music.GM_PROGRAMS))]
+                for c in CHIPS if not part.is_drums and not c.endswith("-voice")}
+        p["program_tones"] = {c: list(values) for c, values in program_tables[table_key].items()}
     return out
 
 
@@ -304,12 +308,15 @@ def recommend_part(midi_id: str, part_id: str, corpus: str | None = None) -> dic
 def prepare_parts(parts: list[dict], synth: bool = False) -> list[dict]:
     """Validate voice choices before queueing, and pin omitted choices now."""
     result = []
+    installed = None
     for part in parts:
         if not isinstance(part, dict):
             continue
         chosen = dict(part)
         if not synth:
-            with samples.corpus_context(chosen.get("corpus")) as corpus:
+            if chosen.get("corpus") is not None and installed is None:
+                installed = {c["slug"]: c for c in samples.list_corpora()}
+            with samples.corpus_context(chosen.get("corpus"), installed=installed) as corpus:
                 chosen["corpus"] = corpus["slug"]
         result.append(chosen)
     return result
@@ -1189,6 +1196,7 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
     # Seeded on the part, so a render is the same twice: "random" here means
     # unpatterned, not different every time you press the button.
     rng = random.Random(f"{part.id}|{len(takes)}|{s['text']}")
+    chip_notes = tones.SynthCache()
     notes = sorted(part.notes, key=lambda n: (n.start, n.pitch))
     starts = sorted({n.start for n in notes})
     beat_index = {start: i for i, start in enumerate(starts)}
@@ -1256,7 +1264,7 @@ def _play(part: music.Part, s: dict, takes: list, mix: np.ndarray | None, t_from
             # of that any more. Drums have no note, and say so.
             # OPL picks its patch from the GM instrument, or for drums the key;
             # the SID needs to know which of its two chips it is.
-            y = tones.apply(y, s["tone"], hz=None if part.is_drums else midi_to_hz(midi),
+            y = chip_notes.apply(y, s["tone"], hz=None if part.is_drums else midi_to_hz(midi),
                             level=max(0.2, n.velocity / 127.0), program=s.get("program", part.program),
                             key=n.pitch if part.is_drums else None,
                             model="8580" if str(s.get("chip") or "").startswith("sid8580")

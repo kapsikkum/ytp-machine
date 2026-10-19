@@ -179,6 +179,7 @@ jobs:
           python tests/test_source_formats.py
           python tests/test_clip_cache.py
           python tests/test_media_resources.py
+          python tests/test_performance_parity.py
           python tests/test_sample_pitch.py
           python tests/test_hold.py
 

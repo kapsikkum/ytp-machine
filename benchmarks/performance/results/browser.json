@@ -1,0 +1,61 @@
+{
+  "fixture": {
+    "tracks": 300,
+    "notes": 153600,
+    "viewport": [
+      1280,
+      1000
+    ]
+  },
+  "payloadBytes": 2454292,
+  "responseAndHydrationMs": 667.5,
+  "scrollTwoFramesMs": [
+    143.60000002384186,
+    375.10000002384186,
+    94.89999997615814,
+    108,
+    122,
+    101.30000001192093
+  ],
+  "visibleTimelineRows": 10,
+  "partEditors": 300,
+  "totalElements": 36328,
+  "longTasks": [
+    {
+      "start": 1347,
+      "duration": 340
+    },
+    {
+      "start": 1687.6000000238419,
+      "duration": 65
+    },
+    {
+      "start": 1930.699999988079,
+      "duration": 86
+    },
+    {
+      "start": 2323.800000011921,
+      "duration": 84
+    },
+    {
+      "start": 2473.600000023842,
+      "duration": 74
+    },
+    {
+      "start": 2601.199999988079,
+      "duration": 72
+    },
+    {
+      "start": 2773.899999976158,
+      "duration": 63
+    },
+    {
+      "start": 2912.600000023842,
+      "duration": 54
+    }
+  ],
+  "limitations": [
+    "One exploratory browser run; includes fixture response serialization and browser scheduling.",
+    "Two-frame scroll duration includes the display frame interval; not pure handler CPU time."
+  ]
+}

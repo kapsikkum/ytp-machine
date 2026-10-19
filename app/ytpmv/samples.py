@@ -92,11 +92,12 @@ class SampleError(ValueError):
 
 
 @contextmanager
-def corpus_context(corpus: str | None = None):
+def corpus_context(corpus: str | None = None, *, installed: dict | None = None):
     """Use an installed voice for this operation, preserving the user's selection."""
     if corpus is not None and (not isinstance(corpus, str) or not corpus.strip()):
         raise SampleError("Choose an installed corpus for this voice.")
-    entry = (next((c for c in list_corpora() if c["slug"] == corpus), None)
+    entry = ((installed.get(corpus) if installed is not None else
+              next((c for c in list_corpora() if c["slug"] == corpus), None))
              if corpus is not None else active())
     if entry is None:
         raise SampleError(f"The corpus '{corpus}' is not installed. Choose another voice.")

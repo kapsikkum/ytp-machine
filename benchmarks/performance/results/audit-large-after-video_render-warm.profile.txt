@@ -1,0 +1,41 @@
+         430048 function calls (428220 primitive calls) in 2.343 seconds
+
+   Ordered by: cumulative time
+   List reduced from 408 to 35 due to restriction <35>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    2.343    2.343 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:213(<lambda>)
+        1    0.001    0.001    2.343    2.343 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:730(render_ytpmv)
+        1    0.205    0.205    2.340    2.340 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:760(_render_ytpmv)
+     1760    0.003    0.000    1.129    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1421(_draw_tile)
+     1760    0.947    0.001    1.126    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1372(_scale)
+  1635/98    0.009    0.000    0.277    0.003 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:101(wrapped)
+       79    0.245    0.003    0.245    0.003 {method 'write' of '_io.BufferedWriter' objects}
+     1894    0.210    0.000    0.210    0.000 {method 'astype' of 'numpy.ndarray' objects}
+       33    0.025    0.001    0.160    0.005 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:174(block_power)
+        1    0.000    0.000    0.112    0.112 E:\code\ml\michael-rosen-says\app\media_process.py:51(wait)
+        3    0.000    0.000    0.112    0.037 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\subprocess.py:1275(wait)
+        3    0.000    0.000    0.112    0.037 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\subprocess.py:1596(_wait)
+        1    0.112    0.112    0.112    0.112 {built-in method _winapi.WaitForSingleObject}
+       32    0.053    0.002    0.100    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1177(_play)
+       34    0.002    0.000    0.089    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:167(k_weight)
+       34    0.000    0.000    0.087    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\dsp.py:75(biquad_k_weight)
+       68    0.070    0.001    0.086    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\dsp.py:53(biquad_df2)
+       32    0.001    0.000    0.083    0.003 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\lib\_format_impl.py:890(open_memmap)
+       96    0.031    0.000    0.079    0.001 E:\code\ml\michael-rosen-says\app\ytpmv\music.py:141(polyphony)
+       32    0.003    0.000    0.066    0.002 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\memmap.py:216(__new__)
+      560    0.064    0.000    0.065    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+      290    0.037    0.000    0.056    0.000 {built-in method builtins.sorted}
+        1    0.000    0.000    0.056    0.056 E:\code\ml\michael-rosen-says\app\ytpmv\music.py:210(summary)
+       32    0.001    0.000    0.056    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\music.py:157(summary)
+       69    0.055    0.001    0.055    0.001 {built-in method _io.open}
+       32    0.000    0.000    0.053    0.002 {method 'sum' of 'numpy.ndarray' objects}
+       32    0.005    0.000    0.053    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:282(envelope)
+       32    0.000    0.000    0.053    0.002 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\_methods.py:47(_sum)
+       32    0.000    0.000    0.037    0.001 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\lib\_function_base_impl.py:1538(interp)
+       32    0.037    0.001    0.037    0.001 {built-in method numpy._core._multiarray_umath.interp}
+       64    0.001    0.000    0.025    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\music.py:125(median_pitch)
+      100    0.000    0.000    0.023    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:48(_wrapfunc)
+       34    0.000    0.000    0.022    0.001 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:2838(cumsum)
+       34    0.022    0.001    0.022    0.001 {method 'cumsum' of 'numpy.ndarray' objects}
+   104234    0.018    0.000    0.020    0.000 {built-in method builtins.max}

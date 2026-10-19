@@ -1,0 +1,41 @@
+         117177 function calls (115350 primitive calls) in 0.795 seconds
+
+   Ordered by: cumulative time
+   List reduced from 339 to 35 due to restriction <35>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.795    0.795 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:212(<lambda>)
+        1    0.001    0.001    0.795    0.795 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:735(preview_mix)
+        1    0.171    0.171    0.794    0.794 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:760(_render_ytpmv)
+  1602/65    0.011    0.000    0.331    0.005 E:\code\ml\michael-rosen-says\benchmarks\pyav\workflow.py:101(wrapped)
+       33    0.039    0.001    0.214    0.006 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:174(block_power)
+       34    0.004    0.000    0.117    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:167(k_weight)
+       34    0.001    0.000    0.113    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\dsp.py:75(biquad_k_weight)
+       68    0.083    0.001    0.112    0.002 E:\code\ml\michael-rosen-says\app\ytpmv\dsp.py:53(biquad_df2)
+       32    0.055    0.002    0.104    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:1177(_play)
+       32    0.001    0.000    0.088    0.003 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\lib\_format_impl.py:890(open_memmap)
+       32    0.008    0.000    0.081    0.003 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:282(envelope)
+       32    0.003    0.000    0.072    0.002 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\memmap.py:216(__new__)
+      560    0.069    0.000    0.070    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+       69    0.064    0.001    0.064    0.001 {built-in method _io.open}
+       32    0.000    0.000    0.057    0.002 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\lib\_function_base_impl.py:1538(interp)
+       32    0.056    0.002    0.056    0.002 {built-in method numpy._core._multiarray_umath.interp}
+       32    0.000    0.000    0.056    0.002 {method 'sum' of 'numpy.ndarray' objects}
+       32    0.000    0.000    0.055    0.002 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\_methods.py:47(_sum)
+      134    0.045    0.000    0.045    0.000 {method 'astype' of 'numpy.ndarray' objects}
+      100    0.000    0.000    0.029    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:48(_wrapfunc)
+       34    0.000    0.000    0.028    0.001 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:2838(cumsum)
+       34    0.028    0.001    0.028    0.001 {method 'cumsum' of 'numpy.ndarray' objects}
+       32    0.021    0.001    0.021    0.001 {method 'flush' of '_io.BufferedRandom' objects}
+      102    0.021    0.000    0.021    0.000 {built-in method numpy.ascontiguousarray}
+        1    0.000    0.000    0.019    0.019 E:\code\ml\michael-rosen-says\app\ytpmv\render.py:664(_finish_mix)
+        1    0.000    0.000    0.019    0.019 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:327(finish)
+      161    0.010    0.000    0.016    0.000 {built-in method builtins.sorted}
+       32    0.001    0.000    0.015    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\music.py:125(median_pitch)
+     1536    0.006    0.000    0.013    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\pitch.py:481(render)
+        1    0.001    0.001    0.013    0.013 E:\code\ml\michael-rosen-says\app\ytpmv\master.py:288(balance)
+       32    0.000    0.000    0.012    0.000 E:\code\ml\michael-rosen-says\app\ytpmv\samples.py:362(build)
+       98    0.012    0.000    0.012    0.000 {built-in method numpy.arange}
+        1    0.000    0.000    0.009    0.009 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\shutil.py:230(copyfile)
+       98    0.000    0.000    0.009    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:2436(any)
+       98    0.000    0.000    0.009    0.000 C:\Users\kapsikkum\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\_core\fromnumeric.py:86(_wrapreduction_any_all)

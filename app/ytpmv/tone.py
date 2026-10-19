@@ -29,6 +29,8 @@ The chip itself is app/ytpmv/ym2612.py; this is only the routing.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import numpy as np
 
 from app.ytpmv import gb, nes, opl, sid, sms, snes, ym2612
@@ -233,6 +235,39 @@ def catalogue() -> dict:
             "voice": [["voice", "the voice, as recorded, whatever the chip"]]
                      + [[t, TONES[t]] for t in sampled],
             "synth": sorted(SYNTH)}
+
+
+class SynthCache:
+    """One part's chip notes, with exact keys and a byte limit.
+
+    Waveform-dependent sampled effects bypass this cache. Copies protect
+    retained notes from later channel cuts and fades.
+    """
+    def __init__(self, budget: int = 8 * 1024 * 1024):
+        self.budget = budget
+        self.bytes = 0
+        self.notes = OrderedDict()
+
+    def apply(self, y, tone, sr=SR, hz=None, level=1.0, program=None, key=None, model="6581"):
+        resolved = resolve(tone) or "clean"
+        if resolved not in SYNTH or not len(y):
+            return apply(y, tone, sr, hz, level, program, key, model)
+        peak = float(np.abs(y).max(initial=0.0))
+        if not np.isfinite(peak) or peak <= 0:
+            return apply(y, tone, sr, hz, level, program, key, model)
+        cache_key = (resolved, len(y), peak, sr, hz, level, program, key, model)
+        got = self.notes.get(cache_key)
+        if got is not None:
+            self.notes.move_to_end(cache_key)
+            return got.copy()
+        result = apply(y, tone, sr, hz, level, program, key, model)
+        if 0 < result.nbytes <= self.budget:
+            while self.notes and (self.bytes + result.nbytes > self.budget or len(self.notes) >= 256):
+                _, previous = self.notes.popitem(last=False)
+                self.bytes -= previous.nbytes
+            self.notes[cache_key] = result.copy()
+            self.bytes += result.nbytes
+        return result
 
 
 def apply(y: np.ndarray, tone: str, sr: int = SR, hz: float | None = None,
