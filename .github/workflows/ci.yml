@@ -184,7 +184,7 @@ jobs:
 
       - name: Optional PyAV decoder parity, cancellation and native resources
         run: |
-          pip install --quiet -r requirements-pyav.txt psutil
+          pip install --quiet -r requirements-pyav.txt psutil python-multipart
           python tests/test_media_decode.py
           MRS_AUDIO_DECODER=pyav python tests/test_sample_pitch.py
           MRS_AUDIO_DECODER=pyav MRS_VIDEO_DECODER=pyav python tests/test_ytpmv_corpora.py
