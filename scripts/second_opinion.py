@@ -355,7 +355,15 @@ def main() -> None:
     totals: dict[str, int] = {}
     for n, sid in enumerate(ids, 1):
         print(f"  [{n}/{len(ids)}] source {sid}", flush=True)
-        for k, v in check_source(model, sid, args.apply, not args.quiet).items():
+        # One source that will not decode is no reason to lose the rest; it
+        # is not marked checked, so the next run tries it again.
+        try:
+            counts = check_source(model, sid, args.apply, not args.quiet)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"    skipped: {exc}")
+            totals["skipped"] = totals.get("skipped", 0) + 1
+            continue
+        for k, v in counts.items():
             totals[k] = totals.get(k, 0) + v
     print("  " + (", ".join(f"{v} {k}" for k, v in totals.items()) or "nothing to change")
           + ("" if args.apply else "  (dry run)"))
