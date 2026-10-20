@@ -72,7 +72,9 @@ jobs:
       - name: Corpus ingestion and alignment
         # Model-free regression fixtures: malformed transcripts, resumed
         # channel budgets, CTC targets/boundaries, and alignment checkpoints.
+        # numpy for the boundary placement, which reads a loudness envelope.
         run: |
+          pip install numpy
           python tests/test_ingest_pipeline.py
           python tests/test_ingest_channel.py
           python tests/test_refine_boundaries.py
@@ -84,8 +86,11 @@ jobs:
         # What span of audio each clip is pulled from. It decides what every
         # clip sounds like and used to be checkable only by rendering a video
         # and listening -- which is how a tail that ran into the next word
-        # survived until somebody heard "mother like".
-        run: python tests/test_extract_window.py
+        # survived until somebody heard "mother like". numpy, because padding
+        # now stops where the sound does, which is read from the audio.
+        run: |
+          pip install numpy
+          python tests/test_extract_window.py
 
       - name: Phoneme cuts
         # Turning stored phoneme times into a sub-word cut. The times come
