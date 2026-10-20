@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import re
 import uuid
@@ -39,6 +40,16 @@ _SONORANT_MAX = 0.16      # never add more than this
 _SONORANT_QUIET = 0.22    # fraction of the word's own peak that counts as over
 _FINAL_SONORANTS = {"M", "N", "NG", "L", "R", "ER"}
 
+# The pads above reach into whatever silence surrounds a word, and with the
+# word's own boundaries now sitting where its sound starts and stops, all
+# that reach is silence: 180ms after one word, 50ms before the next, and the
+# freeze between them made a 260ms hole in the middle of a sentence -- about
+# where a comma goes. And not at random: clean takes are preferred precisely
+# because they have a pause around them, so the longest holes went with the
+# best takes. The pads now stop this far past the sound itself.
+_TAIL_AIR = 0.03          # after the sound stops: the room's own decay
+_LEAD_AIR = 0.015         # before it starts: enough for a click-free fade
+_AIR_QUIET = 0.1          # fraction of the word's peak that counts as stopped
 
 _BLEED_TAIL = 0.16   # bigger tail gap when a run ends on a word whose next source
                      # word is an adjacent vowel — its onset glide bleeds backward
@@ -1511,6 +1522,41 @@ def _sound_ends(source_file: str, start: float, stored_end: float) -> float:
     return min(limit, stored_end + max(_SONORANT_TAIL, extra))
 
 
+@lru_cache(maxsize=4096)
+def _envelope(source_file: str, a: float, b: float) -> tuple[float, ...]:
+    """Loudness of a source from *a* to *b* in 10ms windows; () if unreadable.
+
+    Cached: the timeline and the encoder both place every word, and asked
+    for the same few hundred milliseconds of audio each time.
+    """
+    try:
+        from app.ytpmv.pitch import loudness    # in here: numpy missing is audio unread
+        return tuple(loudness(source_file, a, b - a, 160).tolist())
+    except Exception:
+        return ()
+
+
+def _heard(source_file: str, a: float, start: float, end: float, b: float) -> tuple[float, float] | None:
+    """Where the sound of a word stored at *start*-*end* begins and stops,
+    looking no further than *a* and *b*. None when the audio cannot be read."""
+    a, b = round(a, 3), round(b, 3)
+    env = _envelope(source_file, a, b)
+    hop = 160 / 16000.0
+    i = max(0, int((start - a) / hop))
+    j = min(len(env), int(math.ceil((end - a) / hop)))
+    if j <= i:
+        return None
+    peak = max(env[i:j])
+    if peak <= 0:
+        return None
+    floor = peak * _AIR_QUIET
+    while i > 0 and env[i - 1] >= floor:
+        i -= 1
+    while j < len(env) and env[j] >= floor:
+        j += 1
+    return a + i * hop, a + j * hop
+
+
 def _ends_in_sonorant(seg: dict[str, Any]) -> bool:
     """Does this clip end on a sound that fades rather than stops?"""
     word = (seg.get("word") or "").strip().split()
@@ -1784,6 +1830,15 @@ def extract_window(seg: dict[str, Any], pad_end: float = _PAD_END) -> tuple[floa
     # unit still carries.
     if not edited and not seg.get("subword") and _ends_in_sonorant(seg):
         want = max(want, _sound_ends(seg["source_file"], seg["start_time"], stored_end))
+    # Then give back the silence those reached into. Only ever inwards, and
+    # never into the clip: where the sound is still going -- a word cut early,
+    # a corpus never refined -- nothing is taken.
+    if not edited and not seg.get("subword"):
+        heard = _heard(seg["source_file"], start, seg["start_time"], stored_end, want)
+        if heard is not None:
+            onset, stop = heard
+            start = max(start, min(seg["start_time"], onset - _LEAD_AIR))
+            want = min(want, max(stored_end, stop + _TAIL_AIR))
 
     # Where we must stop: clear of the next word -- but never before the end
     # of the clip itself, which is what the stored boundary says the word is.

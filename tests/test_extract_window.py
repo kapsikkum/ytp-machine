@@ -122,6 +122,28 @@ bleed = clip(word="hot", start_time=10.0, end_time=10.4, next_start=10.5,
 _s, end = g.extract_window(bleed)
 check("bleed risk keeps further clear", end, max(10.4, 10.5 - g._BLEED_TAIL))
 
+# ── padding stops at the silence, not 180ms into it ───────────────────────
+# A word that sounds from 1.0 to 1.4 with silence either side: the pads used
+# to reach 50ms before and 180ms after it, which between two words was a
+# quarter-second hole. Now they stop a few tens of ms past the sound.
+import subprocess
+import tempfile
+
+tmp = tempfile.mkdtemp(prefix="extract_window_")
+quiet_word = os.path.join(tmp, "word.wav")
+subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                "aevalsrc='0.4*sin(2*PI*180*t)*between(t,1.0,1.4)':s=16000:d=3",
+                quiet_word], check=True)
+s, e = g.extract_window(clip(source_file=quiet_word, start_time=1.0, end_time=1.4))
+check("the lead-in stops just before the sound", s, 1.0 - g._LEAD_AIR, tol=0.011)
+check("the tail stops just after it", e, 1.4 + g._TAIL_AIR, tol=0.011)
+# Stored too early: the sound runs on to 1.4 though the clip says 1.25. The
+# tail must still reach it -- only silence is ever taken away.
+s, e = g.extract_window(clip(source_file=quiet_word, start_time=1.0, end_time=1.25))
+check("a word still sounding keeps its tail", e >= 1.4, True)
+s, e = g.extract_window(clip(source_file=quiet_word, start_time=1.0, end_time=1.4, edited=1))
+check("an edited clip is still taken as stored", (round(s, 4), round(e, 4)), (1.0, 1.4))
+
 # ── the window is always usable ────────────────────────────────────────────
 for name, c in [("plain", plain), ("mother", mother), ("unit", unit),
                 ("overlap", overlap), ("edited", edited)]:
