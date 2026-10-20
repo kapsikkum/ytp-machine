@@ -71,6 +71,8 @@ _LEAD_REACH = 0.3
 # and its speech: relative, because a room recording and a studio one have
 # floors 30dB apart.
 _QUIET_SHARE = 0.25
+# Dips within this many dB of the quietest count as equally good (see dip).
+_DIP_TIE = 3.0
 
 # A word whose letters the model scores below this on average was not heard
 # where Whisper put it. Mostly that is a noise transcribed as a word -- clicks
@@ -88,6 +90,10 @@ _QUIET_SHARE = 0.25
 # and they are listed for review among the low-confidence clips.
 _MIN_CONFIDENCE = 0.02
 _UNHEARD_REPORTS = 3            # 0.2 ** 3: under one pick in a hundred
+
+# A clip whose length changes by more than this has its phoneme times
+# measured again rather than shifted (see refine_source).
+_PHONES_KEEP = 0.03
 
 
 def _group_words(words: list[dict], window: float) -> list[list[int]]:
@@ -164,13 +170,22 @@ class Envelope:
         """
         return self.quiet(i) and self.quiet(i + step)
 
-    def dip(self, a: float, b: float) -> float:
-        """The quietest point between *a* and *b*, as a frame edge."""
+    def dip(self, a: float, b: float, early: bool = False) -> float:
+        """The quietest point between *a* and *b*, as a frame edge.
+
+        *early* takes the first of near-equal dips, for when *b* is the first
+        letter of a word that starts on a vowel, which CTC fires late:
+        "stands up" had a dip where the "u" began and another, as deep, just
+        before the aligner's U, and cutting at the second left "stands"
+        saying "stands u". Elsewhere the quietest wins; taking the first
+        everywhere moved a third of all cuts, some into the word before.
+        """
         import numpy as np
         i, j = self.frame(a), self.frame(b)
         if j - i < 2 or j > len(self.db):
             return (a + b) / 2
-        k = i + int(np.argmin(self.db[i:j]))
+        seg = self.db[i:j]
+        k = i + int(np.argmax(seg <= seg.min() + _DIP_TIE) if early else np.argmin(seg))
         return min(max((k + 0.5) * _FRAME, a), b)
 
     def sound_ends(self, after: float, limit: float) -> float | None:
@@ -484,9 +499,11 @@ def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
                 new_end = min(new_end, max(core_end, nxt - 0.02), nxt)
         else:
             # Never inside the letters themselves, whatever the audio says.
-            new_start = min(onset, max(0.0, _place_start(envelope, onset, prv, shared_prev)))
+            new_start = min(onset, max(0.0, _place_start(
+                envelope, onset, prv, shared_prev, _vowel_first(word))))
             new_end = max(core_end, min(duration, _place_end(
-                envelope, core_end, nxt, duration, shared_next)))
+                envelope, core_end, nxt, duration, shared_next,
+                i + 1 < len(words) and _vowel_first(words[i + 1]))))
         placed[i] = (new_start, new_end)
 
     # The two sides of a gap are placed separately and can reach past each
@@ -508,7 +525,12 @@ def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
     return updates, shifts
 
 
-def _place_start(env: Envelope, onset: float, prv: float | None, shared: bool) -> float:
+def _vowel_first(word: dict) -> bool:
+    return word.get("word", "")[:1].lower() in "aeiou"
+
+
+def _place_start(env: Envelope, onset: float, prv: float | None, shared: bool,
+                 vowel: bool = False) -> float:
     """Where a word whose first letter fires at *onset* begins.
 
     *prv* is where the previous word's sound is last known to be, and
@@ -522,21 +544,23 @@ def _place_start(env: Envelope, onset: float, prv: float | None, shared: bool) -
     if prv is not None and onset - prv < _LEAD_REACH:
         # Run together with the word before. Stored times of a word this one
         # cannot move are a wall, and the cut stays clear of it.
-        return env.dip(prv, onset) if shared else max(prv, env.dip(prv, onset))
+        cut = env.dip(prv, onset, vowel)
+        return cut if shared else max(prv, cut)
     # Sound all the way back, and nothing near: a music bed or a noisy room.
     # Back off from the spike by about a plosive's closure.
     return max(limit, onset - 0.03)
 
 
 def _place_end(env: Envelope, core_end: float, nxt: float | None, duration: float,
-               shared: bool) -> float:
+               shared: bool, vowel_next: bool = False) -> float:
     """Where a word whose last letter fires at *core_end* ends."""
     limit = duration if nxt is None else max(nxt, core_end)
     quiet = env.sound_ends(core_end, limit)
     if quiet is not None:
         return max(quiet, core_end)
     if nxt is not None and nxt - core_end < _TAIL_REACH:
-        return env.dip(core_end, nxt) if shared else min(nxt, env.dip(core_end, nxt))
+        cut = env.dip(core_end, nxt, vowel_next)
+        return cut if shared else min(nxt, cut)
     return min(limit, core_end + 0.30)
 
 
@@ -546,16 +570,17 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
         src = conn.execute("SELECT source_file FROM sources WHERE id=?", (sid,)).fetchone()
         # A word the second opinion (second_opinion.py) did not hear is left
         # where it is and out of the alignment: asked to find a word that is
-        # not there, the aligner takes it from its neighbours' sound.
+        # not there, the aligner takes it from its neighbours' sound. It still
+        # bounds its neighbours, below -- it may well be there after all.
         try:
             disputed = {r[0] for r in conn.execute(
                 "SELECT clip_id FROM boundary_reports WHERE kind='disputed'")}
         except sqlite3.OperationalError:     # a corpus from before boundary reports
             disputed = set()
-        words = [dict(r) for r in conn.execute(
+        everything = [dict(r) for r in conn.execute(
             "SELECT id, word, start_time, end_time, edited FROM word_clips "
-            "WHERE source_id=? ORDER BY start_time", (sid,)).fetchall()
-            if r["id"] not in disputed]
+            "WHERE source_id=? ORDER BY start_time", (sid,)).fetchall()]
+        words = [w for w in everything if w["id"] not in disputed]
     if not src or not words:
         return (0, 0, 0.0)
 
@@ -612,19 +637,37 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
         if not any(f is not None for f in fa):
             return (0, len(words), 0.0)
 
-        # Words the audio does not bear out are marked, kept where they are,
-        # and not left as a wall their neighbours have to stop at. A
-        # hand-edited clip is not marked: somebody listened to it.
+        # Words the audio does not bear out are marked and kept where they
+        # are. A hand-edited clip is not marked: somebody listened to it.
         doubtful = [w for w, f in zip(words, fa) if f is not None and len(f) > 2
                     and f[2] < _MIN_CONFIDENCE and not w.get("edited")]
         for w, f in zip(words, fa):
             if w in doubtful:
                 print(f"    unheard: {w['word']!r} at {w['start_time']:.2f}s "
                       f"(clip {w['id']}, confidence {f[2]:.4f})")
-        kept = [(w, f) for w, f in zip(words, fa) if w not in doubtful]
-        words, fa = [w for w, _f in kept], [f for _w, f in kept]
 
-        updates, shifts = _boundary_updates(words, fa, total_samples / _SR, _envelope(wav))
+        # Neither a doubtful word nor a disputed one moves, but both still
+        # bound their neighbours, like a hand-edited clip: often enough they
+        # are real -- an "all" said so fast the aligner barely scores it --
+        # and a neighbour that ignored them walked over their sound. "right"
+        # came out "alright". A doubtful word stands where the aligner put
+        # it, in order; a disputed one, which it never saw, at its stored times.
+        aligned = {w["id"]: f for w, f in zip(words, fa)}
+        doubted = {w["id"] for w in doubtful}
+        placing, pfa = [], []
+        for w in everything:
+            f = aligned.get(w["id"])
+            if w["id"] in disputed or w["id"] in doubted:
+                wall = dict(w, edited=1)
+                if f is not None and w["id"] in doubted:
+                    wall.update(start_time=f[0], end_time=f[1])
+                placing.append(wall)
+                pfa.append(None)
+            else:
+                placing.append(w)
+                pfa.append(f)
+
+        updates, shifts = _boundary_updates(placing, pfa, total_samples / _SR, _envelope(wav))
 
         if apply and doubtful:
             with get_db() as conn:
@@ -643,13 +686,22 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                 # aligned corpus without this and every sub-word cut is out by
                 # however far the boundary moved -- silently, because the
                 # times are still there and still look reasonable.
+                #
+                # Shifted only while the clip keeps its length. Times measured
+                # in a window that was too short are squeezed into it --
+                # "anthology" cut to 0.3s had all eight phonemes in that 0.3s,
+                # and once the word ran its full 0.7s the "-gy" a spliced "G"
+                # takes from it was the middle of the word. A clip that grew
+                # or shrank is measured again by align_phones.py instead.
                 from app.phone_align import outside, shift_stored
+                before = {w["id"]: w["end_time"] - w["start_time"] for w in words}
                 for (new_start, _e, cid), moved in zip(updates, shifts):
                     row = conn.execute(
                         "SELECT phones FROM word_clips WHERE id=?", (cid,)).fetchone()
                     if row and row["phones"]:
                         shifted = shift_stored(row["phones"], -moved)
-                        if outside(shifted, _e - new_start):
+                        if (outside(shifted, _e - new_start)
+                                or abs((_e - new_start) - before.get(cid, _e - new_start)) > _PHONES_KEEP):
                             shifted = None
                         conn.execute(
                             "UPDATE word_clips SET phones=? WHERE id=?",

@@ -147,6 +147,24 @@ class RefineTests(unittest.TestCase):
         self.assertEqual(e1, s2)
         self.assertAlmostEqual(e1, 0.62, delta=0.011)
 
+    def test_a_word_starting_on_a_vowel_is_cut_at_the_first_dip(self):
+        import numpy as np
+        # "stands up": a dip as the "u" begins (0.70) and one as deep before
+        # the aligner's late U (0.84). Before a vowel the first is the cut;
+        # elsewhere the quietest.
+        x = np.full(rb._SR * 2, 1e-4, np.float32)
+        x[int(0.30 * rb._SR):int(1.20 * rb._SR)] = 0.3
+        x[int(0.69 * rb._SR):int(0.71 * rb._SR)] = 0.05
+        x[int(0.83 * rb._SR):int(0.85 * rb._SR)] = 0.045
+        env = rb.Envelope(x)
+        words = [word(1, 0.3, 0.84, text="stands"), word(2, 0.84, 1.2, text="up")]
+        fa = [(0.35, 0.66), (0.86, 1.1)]
+        (_s1, e1, _), _ = rb._boundary_updates(words, fa, 2.0, env)[0]
+        self.assertAlmostEqual(e1, 0.70, delta=0.011)
+        words[1]["word"] = "pup"
+        (_s1, e1, _), _ = rb._boundary_updates(words, fa, 2.0, env)[0]
+        self.assertAlmostEqual(e1, 0.84, delta=0.011)
+
     def test_cut_never_moves_inside_the_aligned_letters(self):
         import numpy as np
         env = rb.Envelope(np.zeros(rb._SR * 2, np.float32))
@@ -358,6 +376,32 @@ class DatabaseRefineTests(unittest.TestCase):
         self.assertEqual(reports, [(1, "start", 1), (1, "unheard", rb._UNHEARD_REPORTS)])
         # And it is not moved: its letters were not found, so there is nothing to move it to.
         self.assertEqual(start, (0.1, 0.35))
+
+    def test_a_word_left_unplaced_still_bounds_its_neighbours(self):
+        # "said all right": the "all" said too fast to score. It is marked
+        # and not moved, but "right" -- here "cat" before it -- must not run
+        # on over its sound: that made "right" say "alright".
+        with contextlib.closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute("UPDATE word_clips SET edited=0 WHERE id=2")
+            conn.execute("CREATE TABLE boundary_reports (clip_id INTEGER, kind TEXT, count INTEGER, "
+                         "PRIMARY KEY (clip_id, kind))")
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)),                 patch.object(rb, "_envelope", return_value=None),                 patch.object(rb, "_align_window", return_value=[
+                    (0.15, 0.3, 0.9), (0.42, 0.55, 0.001), (0.75, 0.95, 0.9)]):
+            rb.refine_source(1, apply=True)
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            cat = conn.execute("SELECT end_time FROM word_clips WHERE id=1").fetchone()[0]
+            dog = conn.execute("SELECT start_time, end_time FROM word_clips WHERE id=2").fetchone()
+        self.assertLessEqual(cat, 0.42)
+        self.assertEqual(dog, (0.4, 0.6))              # not moved
+        # And one the second opinion disputed bounds them at its stored times.
+        with contextlib.closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute("DELETE FROM boundary_reports")
+            conn.execute("INSERT INTO boundary_reports VALUES (2, 'disputed', 3)")
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)),                 patch.object(rb, "_envelope", return_value=None),                 patch.object(rb, "_align_window", return_value=[(0.15, 0.3, 0.9), (0.75, 0.95, 0.9)]):
+            rb.refine_source(1, apply=True)
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            cat = conn.execute("SELECT end_time FROM word_clips WHERE id=1").fetchone()[0]
+        self.assertLessEqual(cat, 0.4)
 
     def test_dry_run_marks_nothing(self):
         with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
