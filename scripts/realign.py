@@ -65,7 +65,7 @@ def realign_source(source: dict, model_name: str, device: str | None = None,
         if fingerprint(conn) != previous:
             raise ValueError("Source changed during transcription; existing clips were kept")
         old = {row[0]: row for row in previous}
-        for table in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings"):
+        for table in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings", "clip_tone"):
             conn.execute(f"DELETE FROM {table} WHERE clip_id IN "
                          "(SELECT id FROM word_clips WHERE source_id=?)", (source["id"],))
         # Remove old clips for this source

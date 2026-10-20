@@ -17,7 +17,8 @@ each child is the honest way to point the work at a named corpus.
 
 Everything is resumable. Videos already in the corpus are skipped, so a run
 interrupted at video 25 of 40 picks up where it stopped, and finished stages
-can be left out with --skip-ingest / --skip-refine / --skip-align / --skip-pack.
+can be left out with --skip-ingest / --skip-refine / --skip-align / --skip-tone /
+--skip-pack.
 
 Not included: correct.py (needs a real transcript to compare against) and
 find_noises.py (curated by hand, per speaker). Neither can be driven from a
@@ -251,6 +252,9 @@ def main() -> int:
     ap.add_argument("--skip-align", action="store_true",
                     help="Do not measure where each phoneme falls (sub-word "
                          "splices then guess it from the spelling)")
+    ap.add_argument("--skip-tone", action="store_true",
+                    help="Do not measure each take's tone (sentences then pick "
+                         "takes without matching their delivery)")
     ap.add_argument("--skip-pack", action="store_true", help="Stop before the bundle")
     from app.device import add_argument as _device_arg
     _device_arg(ap)
@@ -330,7 +334,7 @@ def main() -> int:
         # Refinement moves word boundaries. Align once after that, in its own
         # process, instead of keeping Whisper and the phone model on one GPU.
         argv += ["--no-align"]
-        _run("1/4  Download and transcribe", argv, env)
+        _run("1/5  Download and transcribe", argv, env)
 
     if not args.skip_refine:
         # Whisper's boundaries run early and wander by 100-350ms, which is
@@ -339,7 +343,7 @@ def main() -> int:
         argv = ["scripts/refine_boundaries.py", "--all", "--apply"]
         if args.device:
             argv += ["--device", args.device]
-        _run("2/4  Sharpen word boundaries", argv, env)
+        _run("2/5  Sharpen word boundaries", argv, env)
 
     if not args.skip_align:
         # Where each phoneme actually falls, so a sub-word splice can cut on a
@@ -350,8 +354,14 @@ def main() -> int:
         # The slow stage after transcription: a model pass per clip. It is
         # also the one that cannot run on the server, whose container is
         # smaller than the model.
-        _run("3/4  Measure where each phoneme falls",
+        _run("3/5  Measure where each phoneme falls",
              ["scripts/align_phones.py", "--all"], env)
+
+    if not args.skip_tone:
+        # How each take sounds, so a sentence can be put together in one tone
+        # rather than a different mood per word. Inside the final boundaries,
+        # so after refinement; no model, so minutes.
+        _run("4/5  Measure the tone of every take", ["scripts/measure_tone.py"], env)
 
     if not args.skip_ingest or not args.skip_refine:
         # Start the corpus's dictionary before packing, so the bundle carries
@@ -365,7 +375,7 @@ def main() -> int:
               "--show", "12"], env)
 
     if not args.skip_pack:
-        _run("4/4  Pack the bundle",
+        _run("5/5  Pack the bundle",
              ["scripts/corpus.py", "pack", "--corpus", slug, "--out", out], env)
 
     print(f"\n{'=' * 64}\nBuilt '{slug}' in {(time.time() - started) / 60:.0f} min.")

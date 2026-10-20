@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Project root (parent of app/).
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -418,10 +418,41 @@ def init_db() -> None:
             )
             current = 1
 
+        # v2: how each take sounds (app/prosody.py). Tables only, added and
+        # never altered, so a v2 corpus still opens in code that knows v1 --
+        # it reads past tables it has never heard of -- and a v1 corpus here
+        # is v2 with nothing measured yet, which selects as v1 always did.
+        # Whether a corpus has been measured is its row count, not this number.
+        if current < 2:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS clip_tone (
+                    clip_id     INTEGER PRIMARY KEY,
+                    pitch       REAL,
+                    pitch_start REAL,
+                    pitch_end   REAL,
+                    movement    REAL,
+                    loudness    REAL,
+                    pace        REAL,
+                    brightness  REAL,
+                    category    INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS tone_categories (
+                    id       INTEGER PRIMARY KEY,
+                    name     TEXT NOT NULL,
+                    centroid TEXT NOT NULL,
+                    size     INTEGER NOT NULL
+                );
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('schema_version', '2')"
+            )
+            current = 2
+
         # Future migrations would go here:
-        # if current < 2:
-        #     ... migrate v1 -> v2 ...
-        #     conn.execute("UPDATE settings SET value='2' WHERE key='schema_version'")
+        # if current < 3:
+        #     ... migrate v2 -> v3 ...
+        #     conn.execute("UPDATE settings SET value='3' WHERE key='schema_version'")
 
     _ready.add(db)
 
@@ -519,8 +550,14 @@ def corpus_meta() -> dict:
                 aligned = conn.execute("SELECT COUNT(*) FROM clip_alignments").fetchone()[0]
             except sqlite3.Error:
                 pass
+            # Tone coverage: the schema can be v2 with nothing measured yet.
+            toned = 0
+            try:
+                toned = conn.execute("SELECT COUNT(*) FROM clip_tone").fetchone()[0]
+            except sqlite3.Error:
+                pass
     except sqlite3.Error:
-        clips = words = sources = aligned = 0
+        clips = words = sources = aligned = toned = 0
     return {
         "schema_version": v,
         "current_version": SCHEMA_VERSION,
@@ -529,5 +566,6 @@ def corpus_meta() -> dict:
         "unique_words": words,
         "sources": sources,
         "aligned_clips": aligned,
+        "tone_clips": toned,
         "corpus_gop": int(get_setting("corpus_gop", "25") or 25),
     }

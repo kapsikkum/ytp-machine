@@ -10,6 +10,7 @@ from functools import lru_cache
 from contextvars import copy_context
 from typing import Any
 
+from app import prosody
 from app.database import active, clean_word, get_db
 
 log = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ _SONORANT_MAX = 0.16      # never add more than this
 _SONORANT_QUIET = 0.22    # fraction of the word's own peak that counts as over
 _FINAL_SONORANTS = {"M", "N", "NG", "L", "R", "ER"}
 
+
 _BLEED_TAIL = 0.16   # bigger tail gap when a run ends on a word whose next source
                      # word is an adjacent vowel — its onset glide bleeds backward
                      # (e.g. "full of" + "oil" leaking the "oi"); cut well clear of it
@@ -63,6 +65,7 @@ OPTIONS = {
     "stretch":        (0.09, 0.02, 0.35),  # seconds added per extra letter: loooong
     "clean_takes":    (True, None, None),  # prefer takes with a pause around them
     "phrases":        (True, None, None),  # use real spoken runs of several words
+    "tone_match":     (0.6, 0.0, 1.0),     # pick takes that sound alike; see app/prosody.py
     "sing":           (False, None, None), # every word hard-tuned onto a tune; see app/sing.py
     "sing_key":       (0.0, 0.0, 11.0),    # C to B
     "sing_shape":     (0.0, 0.0, 4.0),     # index into sing.SHAPES
@@ -337,6 +340,7 @@ def _pool(corpus: dict) -> dict[str, Any]:
             settings = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")}
         except Exception:
             settings = {}
+        tone = prosody.load(conn)            # {} for a corpus never measured
 
     # Per-source raw counts (for a quality score) and the cleaned ordered list.
     src_total: dict[int, int] = {}
@@ -347,6 +351,9 @@ def _pool(corpus: dict) -> dict[str, Any]:
         clip["source_file"] = here(clip["source_file"])   # → absolute
         if clip["source_file"] is None:
             continue
+        measured = tone.get(clip["id"])
+        if measured is not None:
+            clip["tone"], clip["tone_cat"] = measured
         sid  = clip["source_id"]
         dur  = clip["end_time"] - clip["start_time"]
         src_total[sid] = src_total.get(sid, 0) + 1
@@ -1263,6 +1270,7 @@ def pick_clip(rows: list[dict], word: str, clean: bool = True) -> dict[str, Any]
         # kept coming back no matter how often it was rated down.
         scores = _splice_scores or {}
         key = word.lower()
+        tone_ctx = prosody.current.get()
         weights = []
         for r in good:
             w = _source_quality.get(r["source_id"], 1.0) ** 3 if _source_quality else 1.0
@@ -1275,6 +1283,8 @@ def pick_clip(rows: list[dict], word: str, clean: bool = True) -> dict[str, Any]
                 w *= _vote_weight(scores.get((key, int(cid)), 0))
                 # Reported as cut in the wrong place: a fifth as likely per report.
                 w *= 0.2 ** _boundary_reports.get(int(cid), 0)
+            # Sounding like the rest of the sentence, when there is one.
+            w *= prosody.weight(tone_ctx, r)
             weights.append(max(w, 1e-6))
         if sum(weights) > 0:
             return random.choices(good, weights=weights, k=1)[0]
@@ -2497,9 +2507,11 @@ def resolve_text(text: str, progress=None,
     back in place afterwards -- a failure halfway through a borrowed sentence
     included."""
     with _voice_lock:
+        tone_reset = prosody.current.set(None)
         try:
             return _resolve_text(text, progress, options)
         finally:
+            prosody.current.reset(tone_reset)
             _use_voice(None)
 
 
@@ -2557,10 +2569,22 @@ def _resolve_text(text: str, progress=None,
     voice, borrowed = None, False
     pool = own_pool = _use_voice(None)
     mode, units_cap = splice_mode(pool["settings"]), max_units(pool["settings"])
+    # The sentence's tone: which category to lean to, and the take just used.
+    # Every pick below reads it, the splicer's included; resolve_text puts
+    # back whatever was there before.
+    tone_ctx = prosody.context(options["tone_match"])
+    prosody.current.set(tone_ctx)
     i = 0
     n = len(words)
     while i < n:
         _say("resolving", i, n)
+        if tone_ctx is not None and (i == 0 or ends[i - 1]):
+            # A new sentence: the category the most of its words can be said in.
+            j = i
+            while j < n and not ends[j]:
+                j += 1
+            tone_ctx["target"] = prosody.target(
+                [[c for c in cbw.get(w) or [] if not _vetoed(w, c)] for w in words[i:j + 1]])
         # Characters talking: these words in another corpus's voice. The
         # clips, runs, pauses and splice settings are all that voice's own.
         if fx[i].get("voice") != voice:
@@ -2569,6 +2593,9 @@ def _resolve_text(text: str, progress=None,
             borrowed = pool is not own_pool
             cbw = _clips_by_word_cache  # type: ignore[assignment]
             mode, units_cap = splice_mode(pool["settings"]), max_units(pool["settings"])
+            if tone_ctx is not None:
+                # Another voice is measured on its own scale and categories.
+                tone_ctx["prev"] = tone_ctx["target"] = None
         seg_before = len(segments)
         tok_before = len(tokens)
         used_run = False
@@ -2663,6 +2690,7 @@ def _resolve_text(text: str, progress=None,
                 log.info("  RUN      %-22s  %d words  (%s)", merged["word"], cap, fname)
                 last_idx = i + cap - 1
                 used_run = True
+                prosody.follow(tone_ctx, _rseq[s + cap - 1])
 
         if not used_run:
             cap = 1
@@ -2726,6 +2754,8 @@ def _resolve_text(text: str, progress=None,
                     tokens.append({"word": word, "status": "missing"})
                     log.warning("  MISSING  %s", word)
             last_idx = i
+            prosody.follow(tone_ctx, next((sg for sg in reversed(segments[seg_before:])
+                                           if sg.get("tone") is not None), None))
 
         if any(is_rev[i:i + cap]):
             for seg in segments[seg_before:]:

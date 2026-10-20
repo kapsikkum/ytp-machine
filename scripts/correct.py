@@ -180,6 +180,8 @@ def _apply(corrections: list[dict]) -> None:
                          (c["new"], c["id"]))
             conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (c["id"],))
             conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (c["id"],))
+            # Pace is per phoneme of the word, which just changed.
+            conn.execute("DELETE FROM clip_tone WHERE clip_id=?", (c["id"],))
             changed.append(c["id"])
 
     if changed:

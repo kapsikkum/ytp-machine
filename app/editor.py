@@ -514,6 +514,8 @@ def edit_clip(clip_id: int, edit: ClipEdit, kind: str = "word"):
             # character or rendered metadata for the previous one.
             conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (clip_id,))
             conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (clip_id,))
+            # Measured inside the old window; measure_tone.py fills it back in.
+            conn.execute("DELETE FROM clip_tone WHERE clip_id=?", (clip_id,))
         if moved and kind == "word":
             # Moved by hand, against the waveform: whatever was reported
             # about where it was cut is answered.
@@ -625,6 +627,7 @@ def delete_clip(clip_id: int, kind: str = "word"):
             conn.execute("DELETE FROM boundary_reports WHERE clip_id=?", (clip_id,))
             conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (clip_id,))
             conn.execute("DELETE FROM clip_cache WHERE clip_id=?", (clip_id,))
+            conn.execute("DELETE FROM clip_tone WHERE clip_id=?", (clip_id,))
     _invalidate(clip_id, alignments=kind == "word", rendered=kind == "word")
     log.info("DELETE  clip %s (%s)", clip_id, row["word"])
     return {"deleted": clip_id, "word": row["word"]}

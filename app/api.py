@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import jobs
 from app.database import (max_units as _max_units_setting,
-                          SPLICE_MODES, active, get_db, init_db,
+                          SCHEMA_VERSION, SPLICE_MODES, active, get_db, init_db,
                           list_corpora, set_active, set_setting, splice_mode)
 
 router = APIRouter()
@@ -649,7 +649,7 @@ def stats():
         "corpus": current["slug"],
         "corpus_name": current["name"],
         "schema_version": totals.get("schema_version", 0),
-        "needs_upgrade": totals.get("schema_version", 0) < 1,
+        "needs_upgrade": totals.get("schema_version", 0) < SCHEMA_VERSION,
     }
 
 

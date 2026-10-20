@@ -453,6 +453,9 @@
     { key: 'pause_style', name: 'at a full stop', min: 0, max: 2, step: 1, def: 0,
       fmt: v => ['silent clip', 'freeze frame', 'no pause'][v],
       hint: 'What happens for the length of the full-stop pause: footage of the speaker being quiet, the last frame held still, or straight on to the next sentence.' },
+    { key: 'tone_match', name: 'same tone', min: 0, max: 1, step: 0.05, def: 0.6,
+      fmt: v => v <= 0 ? 'off' : v >= 1 ? 'strict' : `${Math.round(v * 100)}%`,
+      hint: 'Prefer takes said in the same tone of voice — pitch, loudness, pace — and from the same recording, so a sentence does not jump between moods. Needs a corpus whose tone has been measured.' },
     { key: 'stretch', name: 'held letter', min: 0.02, max: 0.35, step: 0.01, def: 0.09, fmt: v => `${Math.round(v * 1000)} ms a letter`,
       hint: 'Type a letter several times — loooong — and it is held this much longer for every extra one.' },
     { key: 'sing_amount', name: 'tune strength', min: 0, max: 1, step: 0.05, def: 1, sing: true,
@@ -485,7 +488,7 @@
   Object.assign(DEFAULTS, { sing_midi: '', sing_part: '' });
   const PRESETS = [
     { name: 'natural', opts: {} },
-    { name: 'choppy', opts: { phrases: false, clean_takes: false, word_gap: 0.12, sentence_pause: 0.3 } },
+    { name: 'choppy', opts: { phrases: false, clean_takes: false, tone_match: 0, word_gap: 0.12, sentence_pause: 0.3 } },
     { name: 'rapid fire', opts: { speed: 1.35, word_gap: 0, sentence_pause: 0.15 } },
     { name: 'chipmunk', opts: { pitch: 7, speed: 1.2 } },
     { name: 'slow and low', opts: { pitch: -5, speed: 0.75, sentence_pause: 0.9 } },
