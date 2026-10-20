@@ -103,18 +103,57 @@ class RefineTests(unittest.TestCase):
         cpu.cpu.return_value = cpu
         functional.forced_align = Mock(return_value=([cpu], [cpu]))
         functional.merge_tokens = Mock(return_value=[
-            types.SimpleNamespace(start=0, end=1), types.SimpleNamespace(start=2, end=3)])
+            types.SimpleNamespace(start=0, end=1, score=0.0),
+            types.SimpleNamespace(start=2, end=3, score=0.0)])
         with patch.dict(sys.modules, {"torch": torch, "torchaudio": torchaudio,
                                       "torchaudio.functional": functional}), \
                 patch.object(rb, "_model", Mock(return_value=(emission, None))):
             got = rb._align_window(Audio(960), [word(1, text="aa")])
-            self.assertEqual(got, [(0.0, 0.06)])
+            self.assertEqual(got, [(0.0, 0.06, 1.0)])
             emission.log_softmax.assert_called_once_with(dim=-1)
             self.assertIs(functional.forced_align.call_args.args[0], logp)
             functional.forced_align.reset_mock()
             emission.size.return_value = 2  # two A's require a blank too
             self.assertEqual(rb._align_window(Audio(640), [word(1, text="aa")]), [None])
             functional.forced_align.assert_not_called()
+
+    def test_cuts_follow_the_audio_not_the_letter_spikes(self):
+        import numpy as np
+        # Two words with a pause: sound 0.30-0.70 and 0.90-1.30. CTC fires
+        # inside each (0.36-0.60, 0.98-1.20), late on the onset and early on
+        # the tail, the way it does.
+        x = np.full(rb._SR * 2, 1e-4, np.float32)
+        for a, b in ((0.30, 0.70), (0.90, 1.30)):
+            x[int(a * rb._SR):int(b * rb._SR)] = 0.3
+        env = rb.Envelope(x)
+        updates, _ = rb._boundary_updates([word(1, 0.36, 0.96), word(2, 0.98, 1.4)],
+                                          [(0.36, 0.60), (0.98, 1.20)], 2.0, env)
+        (s1, e1, _), (s2, e2, _) = updates
+        self.assertAlmostEqual(s1, 0.30, delta=0.011)
+        self.assertAlmostEqual(e1, 0.70, delta=0.011)
+        self.assertAlmostEqual(s2, 0.90, delta=0.011)
+        self.assertAlmostEqual(e2, 1.30, delta=0.011)
+
+    def test_connected_words_share_the_dip_between_them(self):
+        import numpy as np
+        # No pause, only a dip at 0.62 between the two words' sound.
+        x = np.full(rb._SR * 2, 1e-4, np.float32)
+        x[int(0.30 * rb._SR):int(1.30 * rb._SR)] = 0.3
+        x[int(0.61 * rb._SR):int(0.63 * rb._SR)] = 0.05
+        env = rb.Envelope(x)
+        updates, _ = rb._boundary_updates([word(1, 0.36, 0.66), word(2, 0.68, 1.4)],
+                                          [(0.36, 0.55), (0.70, 1.20)], 2.0, env)
+        (_s1, e1, _), (s2, _e2, _) = updates
+        self.assertEqual(e1, s2)
+        self.assertAlmostEqual(e1, 0.62, delta=0.011)
+
+    def test_cut_never_moves_inside_the_aligned_letters(self):
+        import numpy as np
+        env = rb.Envelope(np.zeros(rb._SR * 2, np.float32))
+        updates, _ = rb._boundary_updates([word(1, 0.5, 0.9)], [(0.5, 0.9)], 2.0, env)
+        start, end, _ = updates[0]
+        self.assertLessEqual(start, 0.5)
+        self.assertGreaterEqual(end, 0.9)
 
     def test_load_model_uses_evaluation_mode(self):
         model = Mock()
@@ -144,6 +183,7 @@ class DatabaseRefineTests(unittest.TestCase):
                 CREATE TABLE word_clips (id INTEGER PRIMARY KEY, source_id INTEGER,
                     word TEXT, start_time REAL, end_time REAL, edited INTEGER, phones TEXT);
                 CREATE TABLE clip_alignments (clip_id INTEGER PRIMARY KEY, alignment TEXT);
+                CREATE TABLE clip_tone (clip_id INTEGER PRIMARY KEY, pitch REAL);
                 INSERT INTO sources VALUES (1, 'downloads/test.mp4');
             """)
             conn.executemany("INSERT INTO word_clips VALUES (?, 1, ?, ?, ?, ?, ?)", [
@@ -152,6 +192,7 @@ class DatabaseRefineTests(unittest.TestCase):
                 (3, "end", 0.7, 1.0, 0, json.dumps([["EH", 0.0, 0.8]])),
             ])
             conn.executemany("INSERT INTO clip_alignments VALUES (?, 'cached')", [(1,), (2,), (3,)])
+            conn.executemany("INSERT INTO clip_tone VALUES (?, 50.0)", [(1,), (2,), (3,)])
 
         @contextlib.contextmanager
         def get_db():
@@ -171,6 +212,7 @@ class DatabaseRefineTests(unittest.TestCase):
     def test_apply_preserves_edits_and_updates_phone_origin(self):
         with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)), \
+                patch.object(rb, "_envelope", return_value=None), \
                 patch.object(rb, "_align_window", return_value=[(0.15, 0.3), (0.5, 0.65), (0.75, 0.95)]) as align:
             updated, total, _median = rb.refine_source(1, apply=True)
         self.assertEqual((updated, total), (2, 3))
@@ -184,6 +226,40 @@ class DatabaseRefineTests(unittest.TestCase):
         self.assertEqual(rows[2][:3], (3, 0.75, 1.0))
         self.assertIsNone(rows[2][3])  # old phone extends beyond the shortened clip
         self.assertEqual(cached, [(2,)])
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            toned = conn.execute("SELECT clip_id FROM clip_tone").fetchall()
+        self.assertEqual(toned, [(2,)])     # measured inside windows that moved
+
+    def test_noise_heard_as_a_word_is_removed_with_what_hangs_off_it(self):
+        with contextlib.closing(sqlite3.connect(self.db)) as conn, conn:
+            for table in ("clip_cache", "boundary_reports", "splice_ratings"):
+                conn.execute(f"CREATE TABLE {table} (clip_id INTEGER)")
+
+                conn.execute(f"INSERT INTO {table} VALUES (1)")
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
+                patch.object(rb, "_load_wav", return_value=Audio(rb._SR)), \
+                patch.object(rb, "_envelope", return_value=None), \
+                patch.object(rb, "_align_window", return_value=[
+                    (0.15, 0.3, 0.001), (0.5, 0.65, 0.001), (0.75, 0.95, 0.9)]):
+            rb.refine_source(1, apply=True)
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            ids = [r[0] for r in conn.execute("SELECT id FROM word_clips ORDER BY id")]
+            leftovers = [conn.execute(f"SELECT count(*) FROM {t} WHERE clip_id=1").fetchone()[0]
+                         for t in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings",
+                                   "clip_tone")]
+        # Clip 2 scored as badly but was edited by hand, so it stays.
+        self.assertEqual(ids, [2, 3])
+        self.assertEqual(leftovers, [0, 0, 0, 0, 0])
+
+    def test_dry_run_removes_nothing(self):
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
+                patch.object(rb, "_load_wav", return_value=Audio(rb._SR)), \
+                patch.object(rb, "_envelope", return_value=None), \
+                patch.object(rb, "_align_window", return_value=[
+                    (0.15, 0.3, 0.001), (0.5, 0.65, 0.9), (0.75, 0.95, 0.9)]):
+            rb.refine_source(1, apply=False)
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM word_clips").fetchone()[0], 3)
 
     def test_decode_error_cleans_temporary_wav_and_does_not_write(self):
         paths = []

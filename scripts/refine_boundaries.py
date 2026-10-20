@@ -6,7 +6,9 @@ Whisper/stable-whisper word timestamps are shifted early and vary by 100-350ms,
 so short clips grab the previous word's tail.  This re-aligns each source's word
 sequence to its audio with wav2vec2 forced alignment (frame-accurate) and
 rewrites start_time/end_time in the DB — fixing short-word offset and making
-splices land cleanly.
+splices land cleanly. The cuts themselves are placed from the audio around
+the aligned letters (see _FRAME), and clips the aligner cannot find their
+word in -- noises Whisper heard as words -- are removed (see _MIN_CONFIDENCE).
 
 Usage:
     python scripts/refine_boundaries.py --source-id 36          # one source (dry run)
@@ -42,6 +44,38 @@ _WINDOW_SECONDS = 40.0
 # Extra audio at each end of a window, so a word sitting on the boundary is not
 # asked to align against a sound that has been cut in half.
 _WINDOW_PAD = 0.5
+
+# The aligner says which stretch of sound is which word; it does not say where
+# the cut between two words should go. CTC fires a letter as a spike, usually
+# a frame or two into its sound, so a word "begins" on its first spike -- after
+# a plosive's burst, part way into an S -- and "ends" on its last, before the
+# vowel or the final consonant has finished. Cutting there clipped every
+# onset, and since each clip then ran up to its neighbour's late onset, it
+# carried the start of the next word with it. Measured on older-rosen, three
+# quarters of the cuts between connected words sat 20-90ms away from the dip
+# between them, and half the words after a pause started within 10dB of their
+# loudest.
+#
+# So the cut is placed from the audio, inside the gap the aligner leaves:
+# where there is a pause, a word ends where the quiet begins and the next
+# starts where it ends; where there is none, both share the quietest point.
+_FRAME = 0.01
+# How far a word may reach from its aligned letters to find the quiet: the
+# tail of a sonorant rings on well past its last spike, an onset rarely leads
+# its first by more than a plosive's closure.
+_TAIL_REACH = 0.5
+_LEAD_REACH = 0.3
+# Quiet is the bottom quarter of the range between the source's noise floor
+# and its speech: relative, because a room recording and a studio one have
+# floors 30dB apart.
+_QUIET_SHARE = 0.25
+
+# A word whose letters the model scores below this on average was not heard
+# where Whisper put it. Mostly that is a noise transcribed as a word -- clicks
+# as "chk chk chk", a breath as "uh" or "a" -- and occasionally a word Whisper
+# stretched over seconds of something else. Either way the clip does not say
+# the word it is filed under. Real words, even swallowed ones, score far above.
+_MIN_CONFIDENCE = 0.02
 
 
 def _group_words(words: list[dict], window: float) -> list[list[int]]:
@@ -87,6 +121,63 @@ def _load_wav(path):
     with wave.open(path, "rb") as w:
         d = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype("float32") / 32768.0
     return torch.from_numpy(d).unsqueeze(0)
+
+
+class Envelope:
+    """Loudness in 10ms frames, and what counts as quiet in this source."""
+
+    def __init__(self, samples):
+        import numpy as np
+        hop = int(_SR * _FRAME)
+        n = len(samples) // hop
+        frames = np.asarray(samples[:n * hop], dtype=np.float32).reshape(n, hop)
+        self.db = 10.0 * np.log10((frames ** 2).mean(axis=1) + 1e-10)
+        if n:
+            floor, speech = np.percentile(self.db, [5, 95])
+            self.threshold = floor + _QUIET_SHARE * (speech - floor)
+        else:
+            self.threshold = 0.0
+
+    def frame(self, t: float) -> int:
+        return min(max(int(round(t / _FRAME)), 0), len(self.db))
+
+    def quiet(self, i: int) -> bool:
+        return 0 <= i < len(self.db) and self.db[i] < self.threshold
+
+    def pause(self, i: int, step: int) -> bool:
+        """Quiet for two frames from *i* on, in the direction of *step*.
+
+        One quiet frame is not a pause: the dip between two syllables, or
+        inside a stop, can be that short and is still the word.
+        """
+        return self.quiet(i) and self.quiet(i + step)
+
+    def dip(self, a: float, b: float) -> float:
+        """The quietest point between *a* and *b*, as a frame edge."""
+        import numpy as np
+        i, j = self.frame(a), self.frame(b)
+        if j - i < 2 or j > len(self.db):
+            return (a + b) / 2
+        k = i + int(np.argmin(self.db[i:j]))
+        return min(max((k + 0.5) * _FRAME, a), b)
+
+    def sound_ends(self, after: float, limit: float) -> float | None:
+        """Where the sound running at *after* first falls quiet, before *limit*."""
+        for i in range(self.frame(after), self.frame(min(limit, after + _TAIL_REACH))):
+            if self.pause(i, 1):
+                return i * _FRAME
+        return None
+
+    def sound_starts(self, before: float, limit: float) -> float | None:
+        """Where the sound running at *before* began, walking back to *limit*."""
+        for i in range(self.frame(before) - 1, self.frame(max(limit, before - _LEAD_REACH)) - 1, -1):
+            if self.pause(i, -1):
+                return (i + 1) * _FRAME
+        return None
+
+
+def _envelope(wav):
+    return Envelope(wav[0].numpy())
 
 
 def _alignment_text(word: str) -> str | None:
@@ -135,8 +226,12 @@ def _ctc_targets(words: list[dict]) -> tuple[list[int], list[tuple[int, int] | N
     return chars, ranges
 
 
-def _align_window(segment, words: list[dict]) -> list[tuple[float, float] | None]:
-    """Align one audio window; return window-relative word cores."""
+def _align_window(segment, words: list[dict]) -> list[tuple[float, float, float] | None]:
+    """Align one audio window; return window-relative word cores.
+
+    Each core is (first letter, last letter, confidence), the confidence being
+    the mean probability of the word's letters along the forced path.
+    """
     import torch
     import torchaudio
     from torchaudio.functional import merge_tokens
@@ -161,41 +256,110 @@ def _align_window(segment, words: list[dict]) -> list[tuple[float, float] | None
     if len(spans) != len(chars):
         return empty
     ratio = segment.size(1) / emission.size(1) / _SR
-    return [(spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio)
+    return [(spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio,
+             sum(math.exp(s.score) for s in spans[rng[0]:rng[1]]) / (rng[1] - rng[0]))
             if rng is not None else None for rng in ranges]
 
 
-def _boundary_updates(words: list[dict], fa: list[tuple[float, float] | None],
-                      duration: float) -> tuple[list[tuple[float, float, int]], list[float]]:
-    """Pad aligned cores within the source and the immediate next word.
+def _core(word: dict, aligned) -> tuple[float, float] | None:
+    """The aligned letters of an automatic clip, if they are usable."""
+    if aligned is None or word.get("edited"):
+        return None
+    onset, core_end = aligned[0], aligned[1]
+    if not all(math.isfinite(t) for t in (onset, core_end)) or core_end <= onset:
+        return None
+    return onset, core_end
+
+
+def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
+                      duration: float, envelope: Envelope | None = None,
+                      ) -> tuple[list[tuple[float, float, int]], list[float]]:
+    """Place each aligned word's cut within the source and its neighbours.
 
     Hand-edited clips still supply transcript context, but their boundaries
-    are final and also constrain the automatic clip immediately before them.
+    are final and also constrain the automatic clips either side of them; so
+    does a word the aligner could not place, at its stored times.
+
+    Without an *envelope* the aligned letters are padded by rule. With one,
+    the cuts are taken from the audio -- see _FRAME.
     """
+    cores = [_core(w, a) for w, a in zip(words, fa)]
+    placed: list[tuple[float, float] | None] = [None] * len(words)
+    for i, (word, core) in enumerate(zip(words, cores)):
+        if core is None:
+            continue
+        onset, core_end = core
+        # Where the neighbours' sound is known to be: their letters, or the
+        # times they are stored with when nothing better is known.
+        prv = nxt = None
+        if i > 0:
+            prv = cores[i - 1][1] if cores[i - 1] is not None else words[i - 1]["end_time"]
+        if i + 1 < len(words):
+            nxt = cores[i + 1][0] if cores[i + 1] is not None else words[i + 1]["start_time"]
+        if envelope is None:
+            new_start = max(0.0, onset)
+            # Preserve the core where there is less than 20ms between words, but
+            # never let a minimum tail override the next word's onset or EOF.
+            new_end = min(core_end + 0.30, duration)
+            if nxt is not None:
+                new_end = min(new_end, max(core_end, nxt - 0.02), nxt)
+        else:
+            # Never inside the letters themselves, whatever the audio says.
+            new_start = min(onset, max(0.0, _place_start(
+                envelope, onset, prv, i > 0 and cores[i - 1] is not None)))
+            new_end = max(core_end, min(duration, _place_end(
+                envelope, core_end, nxt, duration, i + 1 < len(words) and cores[i + 1] is not None)))
+        placed[i] = (new_start, new_end)
+
+    # The two sides of a gap are placed separately and can reach past each
+    # other where one finds a pause the other is too far away to see.
+    for i in range(len(words) - 1):
+        a, b = placed[i], placed[i + 1]
+        if a is not None and b is not None and a[1] > b[0]:
+            cut = max(cores[i][1], b[0])
+            placed[i] = (a[0], cut)
+            placed[i + 1] = (max(b[0], min(cut, cores[i + 1][0])), b[1])
+
     updates: list[tuple[float, float, int]] = []
     shifts: list[float] = []
-    for i, (word, aligned) in enumerate(zip(words, fa)):
-        if aligned is None or word.get("edited"):
+    for word, span in zip(words, placed):
+        if span is None or span[1] - span[0] < 0.04:
             continue
-        onset, core_end = aligned
-        if not all(math.isfinite(t) for t in (onset, core_end)) or core_end <= onset:
-            continue
-        nxt = None
-        if i + 1 < len(words):
-            successor = words[i + 1]
-            nxt = (fa[i + 1][0] if fa[i + 1] is not None and not successor.get("edited")
-                   else successor["start_time"])
-        new_start = max(0.0, onset)
-        # Preserve the core where there is less than 20ms between words, but
-        # never let a minimum tail override the next word's onset or EOF.
-        new_end = min(core_end + 0.30, duration)
-        if nxt is not None:
-            new_end = min(new_end, max(core_end, nxt - 0.02), nxt)
-        if new_end - new_start < 0.04:
-            continue
-        shifts.append(new_start - word["start_time"])
-        updates.append((round(new_start, 4), round(new_end, 4), word["id"]))
+        shifts.append(span[0] - word["start_time"])
+        updates.append((round(span[0], 4), round(span[1], 4), word["id"]))
     return updates, shifts
+
+
+def _place_start(env: Envelope, onset: float, prv: float | None, shared: bool) -> float:
+    """Where a word whose first letter fires at *onset* begins.
+
+    *prv* is where the previous word's sound is last known to be, and
+    *shared* says whether that word is being placed by the same rule -- if
+    so, with no quiet between them, both cuts land on the same dip.
+    """
+    limit = 0.0 if prv is None else min(prv, onset)
+    quiet = env.sound_starts(onset, limit)
+    if quiet is not None:
+        return min(quiet, onset)
+    if prv is not None and onset - prv < _LEAD_REACH:
+        # Run together with the word before. Stored times of a word this one
+        # cannot move are a wall, and the cut stays clear of it.
+        return env.dip(prv, onset) if shared else max(prv, env.dip(prv, onset))
+    # Sound all the way back, and nothing near: a music bed or a noisy room.
+    # Back off from the spike by about a plosive's closure.
+    return max(limit, onset - 0.03)
+
+
+def _place_end(env: Envelope, core_end: float, nxt: float | None, duration: float,
+               shared: bool) -> float:
+    """Where a word whose last letter fires at *core_end* ends."""
+    limit = duration if nxt is None else max(nxt, core_end)
+    quiet = env.sound_ends(core_end, limit)
+    if quiet is not None:
+        return max(quiet, core_end)
+    if nxt is not None and nxt - core_end < _TAIL_REACH:
+        return env.dip(core_end, nxt) if shared else min(nxt, env.dip(core_end, nxt))
+    return min(limit, core_end + 0.30)
 
 
 def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
@@ -255,12 +419,31 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
             for idx, aligned in zip(group, _align_window(segment, [words[i] for i in group])):
                 if aligned is None:
                     continue
-                fa[idx] = (s0 / _SR + aligned[0], s0 / _SR + aligned[1])
+                fa[idx] = (s0 / _SR + aligned[0], s0 / _SR + aligned[1], *aligned[2:])
 
         if not any(f is not None for f in fa):
             return (0, len(words), 0.0)
 
-        updates, shifts = _boundary_updates(words, fa, total_samples / _SR)
+        # Words the audio does not bear out go, and are not left behind as a
+        # wall their neighbours have to stop at. A hand-edited clip stays:
+        # somebody listened to it.
+        doubtful = [w for w, f in zip(words, fa) if f is not None and len(f) > 2
+                    and f[2] < _MIN_CONFIDENCE and not w.get("edited")]
+        for w in doubtful:
+            print(f"    not a word: {w['word']!r} at {w['start_time']:.2f}s (clip {w['id']})")
+        kept = [(w, f) for w, f in zip(words, fa) if w not in doubtful]
+        words, fa = [w for w, _f in kept], [f for _w, f in kept]
+
+        updates, shifts = _boundary_updates(words, fa, total_samples / _SR, _envelope(wav))
+
+        if apply and doubtful:
+            with get_db() as conn:
+                # As the editor's delete does: what hangs off a clip goes with it.
+                for w in doubtful:
+                    for table in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings",
+                                  "clip_tone"):
+                        conn.execute(f"DELETE FROM {table} WHERE clip_id=?", (w["id"],))
+                    conn.execute("DELETE FROM word_clips WHERE id=?", (w["id"],))
 
         if apply and updates:
             with get_db() as conn:
@@ -286,6 +469,8 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
                     # Character times use the same relative origin, but this
                     # table has no shifting helper. Recompute after a change.
                     conn.execute("DELETE FROM clip_alignments WHERE clip_id=?", (cid,))
+                    # Tone is measured inside the window, which just moved.
+                    conn.execute("DELETE FROM clip_tone WHERE clip_id=?", (cid,))
 
         import statistics
         med = statistics.median(shifts) * 1000 if shifts else 0.0
@@ -344,6 +529,12 @@ def main() -> None:
             pass
     print(f"\n{tot_u} clips {'updated' if args.apply else '(dry run)'}. "
           f"{'Call POST /api/reload.' if args.apply else 'Add --apply to write.'}")
+    if args.apply and tot_u:
+        # Phoneme times that no longer fit their moved clip were dropped, and
+        # so was every moved clip's tone; until both are measured again the
+        # splicer guesses cuts from spelling and sentences pick blind to tone.
+        print("Boundaries moved: run scripts/align_phones.py --all and "
+              "scripts/measure_tone.py next (build_corpus.py does both).")
 
 
 if __name__ == "__main__":
