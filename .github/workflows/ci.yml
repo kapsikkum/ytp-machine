@@ -199,12 +199,24 @@ jobs:
       - name: Effects on a phrase
         # Words sharing effects stay one real recording, split where the
         # effects change, and a stretched run's highlights move with it.
-        run: python tests/test_run_fx.py
+        # Against the real voice, which is not in the repo: the published
+        # bundle is installed first, so this also proves the release unpacks.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download corpus --pattern michael-rosen.tar.zst --dir "$RUNNER_TEMP"
+          python scripts/corpus.py install "$RUNNER_TEMP/michael-rosen.tar.zst" --name michael-rosen
+          python tests/test_run_fx.py
 
       - name: Voices talking
         # A word given another corpus's voice comes from that corpus's clips
         # and files, while the active corpus never moves.
         run: python tests/test_voices.py
+
+      - name: One tone of voice
+        # Takes are measured and grouped by tone, a sentence keeps to one
+        # where it can, and a v1 corpus migrates by gaining tables only.
+        run: python tests/test_prosody.py
 
       - name: Hardening
         # A corpus pointing outside itself, the cache dropped mid-sentence,

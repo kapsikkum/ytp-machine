@@ -19,8 +19,9 @@ From a clone:
 docker compose up
 ```
 
-Open <http://localhost:8765> and type a sentence. That is the whole thing — the
-Michael Rosen corpus is committed, so a fresh clone already works.
+Open <http://localhost:8765> and type a sentence. That is the whole thing — on
+first start the container downloads the published Michael Rosen corpus into its
+volume, so a fresh clone already works.
 
 That pulls the published image. Add `--build` only when you have changed the
 code, which saves compiling 3 GB that already exists on GHCR.
@@ -35,7 +36,7 @@ It carries **no corpus** — one has to be mounted, because a voice is 100 MB to
 2 GB of video and does not belong inside an image. So point it at one:
 
 ```bash
-docker run -p 127.0.0.1:8765:8765 -v ytp-data:/app/data -v ./corpora/michael-rosen:/corpus:ro ghcr.io/kapsikkum/ytp-machine:latest
+docker run -p 127.0.0.1:8765:8765 -v ytp-data:/app/data -v ./corpora/some-voice:/corpus:ro ghcr.io/kapsikkum/ytp-machine:latest
 ```
 
 Any of three sources works: a corpus directory or a `.tar.zst` bundle mounted at
@@ -43,16 +44,15 @@ Any of three sources works: a corpus directory or a `.tar.zst` bundle mounted at
 HTTP. With none of them it says exactly that and stops, rather than serving an
 app that answers everything with "no clips found".
 
-With no clone at all, `CORPUS_URL` is the way in — the **corpus** workflow packs
-a corpus and attaches it to a release, which is the only place a 100 MB+ bundle
-can sit at a stable public URL:
+With no corpus of your own, `CORPUS_URL` is the way in. The shipped voice is a
+bundle on the `corpus` release, which is the only place a 100 MB+ bundle can sit
+at a stable public URL:
 
 ```bash
 docker run -p 127.0.0.1:8765:8765 -v ytp-data:/app/data -e CORPUS_URL=https://github.com/kapsikkum/ytp-machine/releases/download/corpus/michael-rosen.tar.zst ghcr.io/kapsikkum/ytp-machine:latest
 ```
 
-Run it from the Actions tab, or push a `corpus-*` tag. It packs, unpacks the
-result to prove it is whole, and uploads it.
+The bundle is packed and uploaded by hand (see [The shipped corpus](#the-shipped-corpus)).
 
 Pin the tag for anything you care about — `:latest` moves under you on the next
 push, and every commit is also tagged by its full sha:
@@ -199,13 +199,27 @@ transcripts.
 
 ## The shipped corpus
 
-Already here. `corpora/michael-rosen/` is committed, so a clone is a working
-install; compose mounts it read-only at `/corpus` and the entrypoint copies it
-into the volume on first start.
+Not in the repo. The Michael Rosen voice is published as a bundle on the
+`corpus` release, and that bundle is the only copy that ships: compose and the
+image seed from it, and CI installs it to test against. A clone has no
+`corpora/` at all; `corpora/` is ignored, so nothing built locally ends up in
+history.
 
-It's committed as loose files rather than a bundle only because the bundle is
-103 MB and GitHub rejects files over 100 MB. As 49 files, none over 9 MB, it
-goes in fine and avoids Git LFS.
+To get it locally:
+
+```bash
+gh release download corpus --pattern michael-rosen.tar.zst
+python scripts/corpus.py install michael-rosen.tar.zst --name michael-rosen
+```
+
+The release is made by hand, from a corpus that has been checked: refine its
+boundaries, listen, then pack and upload over the old asset.
+
+```bash
+python scripts/corpus.py pack --corpus michael-rosen --out michael-rosen.tar.zst
+python scripts/corpus.py info michael-rosen.tar.zst
+gh release upload corpus michael-rosen.tar.zst --clobber
+```
 
 To move one somewhere else:
 
@@ -318,8 +332,28 @@ python scripts/refine_boundaries.py --source-id 3       # CTC alignment, dry run
 python scripts/refine_boundaries.py --all --apply       # frame-accurate, everything
 ```
 
-`refine_boundaries` matters most for splice quality. It needs `--all` or a
-`--source-id` to pick targets and `--apply` to write.
+`refine_boundaries` matters most for splice quality. The aligner decides which
+stretch of sound is which word; the cut itself is then placed from the audio —
+at the edges of a pause, or the quietest point between two words that run
+together — because CTC fires late on a word's first letter and early on its
+last. It also drops clips whose letters the aligner cannot find where Whisper
+put them: noises transcribed as words ("chk chk chk", a breath as "a"). Hand-
+edited clips are never moved or dropped. A dry run prints what it would drop.
+It needs `--all` or a `--source-id` to pick targets and `--apply` to write.
+
+```bash
+python scripts/measure_tone.py                         # after refining: tone of every take
+```
+
+`measure_tone` describes how each take sounds — pitch, where its pitch starts
+and ends, how much it moves, loudness against its own recording, pace and
+brightness — and groups the corpus into a few tone categories. The generator
+then keeps a sentence in one tone where the words allow it, joins takes that
+start near where the last one ended, and stays in the same recording: the
+**same tone** setting, 0 to turn it off. It runs at build time, takes a minute
+or two, needs no model, and must be re-run after boundaries move (refining or
+editing clears the rows it measured). Corpus schema v2 carries it; v1 corpora
+upgrade on open and pick exactly as before until measured.
 
 Re-transcription refuses sources with hand-edited clips unless you pass
 `--replace-edited`. It also aborts if clips or the recording change during the
@@ -979,7 +1013,8 @@ scripts/build_corpus.py       channel link -> packed corpus, one command
 scripts/ingest.py             download, transcribe, store word clips
 scripts/ingest_channel.py     the same, for a whole channel
 scripts/realign.py            better word timestamps via stable-ts
-scripts/refine_boundaries.py  frame-accurate boundaries via CTC alignment
+scripts/refine_boundaries.py  word boundaries from CTC alignment and the audio; drops noise-words
+scripts/measure_tone.py       each take's tone (pitch, loudness, pace...), grouped into categories
 scripts/correct.py            relabel misheard words from a real transcript
 scripts/find_noises.py        pull non-verbal noises out of the gaps
 app/editor.py                 the corpus editor's API (the only writer

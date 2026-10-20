@@ -20,9 +20,8 @@ mkdir -p "$DATA/output" "$DATA/corpora"
 SEED_DIR="$DATA/corpora/${CORPUS_NAME:-michael-rosen}"
 
 seed() {
-  # A loose corpus directory mounted at /corpus wins: that is what a clone of
-  # this repo has, since the database and the videos are committed and a single
-  # packed bundle is not (103 MB, and GitHub refuses anything over 100).
+  # A loose corpus directory mounted at /corpus wins: a corpus somebody has
+  # built or installed locally, mounted as it is.
   #
   # corpus.db is the name every corpus uses now; michael_rosen.db is accepted
   # so a volume seeded from an older checkout still works.

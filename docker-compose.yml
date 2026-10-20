@@ -1,8 +1,8 @@
 # `docker compose up --build`, then open http://localhost:8765
 #
-# Nothing to set up first: the corpus is committed, so a clone has everything.
-# The database and videos are mounted read-only and copied into the volume the
-# first time the container finds no database.
+# Nothing to set up first: the first time the container finds no database it
+# downloads the published corpus bundle into the volume. To seed from a local
+# corpus instead, mount its directory (or a bundle) at /corpus.
 services:
   app:
     # Named, so `docker compose pull` can fetch the published build instead of
@@ -18,16 +18,15 @@ services:
       # HTTPS proxies must be explicitly trusted so browser Origin checks see
       # their external scheme. Set this to the proxy's address as seen here.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      # Seeds an empty volume and is ignored once a corpus exists. The repo
+      # carries no corpus; this is the bundle published on the release.
+      CORPUS_URL: ${CORPUS_URL:-https://github.com/kapsikkum/ytp-machine/releases/download/corpus/michael-rosen.tar.zst}
     ports:
       # The API includes corpus editing/import and has no built-in login.
       # Opt into remote binding explicitly, behind an authenticated proxy.
       - "${MRS_BIND_ADDRESS:-127.0.0.1}:8765:8765"
     volumes:
       - ytp-data:/app/data
-      # Seeds an empty volume and is ignored once a corpus exists, so it is
-      # safe to leave mounted. One corpus directory, mounted whole -- a packed
-      # bundle dropped in here works the same way.
-      - ./corpora/michael-rosen:/corpus:ro
       # Drop more bundles in packs/ to add voices. Each is installed as a
       # corpus named after the file, once, and selectable in the UI.
       - ./packs:/packs:ro
