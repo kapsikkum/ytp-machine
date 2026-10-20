@@ -8,7 +8,8 @@ sequence to its audio with wav2vec2 forced alignment (frame-accurate) and
 rewrites start_time/end_time in the DB — fixing short-word offset and making
 splices land cleanly. The cuts themselves are placed from the audio around
 the aligned letters (see _FRAME), and clips the aligner cannot find their
-word in -- noises Whisper heard as words -- are removed (see _MIN_CONFIDENCE).
+word in -- mostly noises Whisper heard as words -- are marked so they are
+rarely picked (see _MIN_CONFIDENCE).
 
 Usage:
     python scripts/refine_boundaries.py --source-id 36          # one source (dry run)
@@ -72,10 +73,20 @@ _QUIET_SHARE = 0.25
 
 # A word whose letters the model scores below this on average was not heard
 # where Whisper put it. Mostly that is a noise transcribed as a word -- clicks
-# as "chk chk chk", a breath as "uh" or "a" -- and occasionally a word Whisper
-# stretched over seconds of something else. Either way the clip does not say
-# the word it is filed under. Real words, even swallowed ones, score far above.
+# as "chk chk chk", a breath as "uh" or "a" -- or a word Whisper stretched
+# over seconds of something else.
+#
+# Mostly, not always, so these are marked rather than removed. They were
+# removed at first, and checked against michael-rosen's real transcripts a
+# third of what went were words that are there: short ones, "i", "he", "it",
+# said so quickly or placed so slightly off that the model cannot find their
+# letters. Their scores were no different from the noise's, so no threshold
+# separates the two. A mark is the editor's own "badly cut" report, which
+# makes a take five times less likely per count: a word with better takes
+# all but never uses one of these, a word with no other take still has it,
+# and they are listed for review among the low-confidence clips.
 _MIN_CONFIDENCE = 0.02
+_UNHEARD_REPORTS = 3            # 0.2 ** 3: under one pick in a hundred
 
 
 def _group_words(words: list[dict], window: float) -> list[list[int]]:
@@ -424,13 +435,15 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
         if not any(f is not None for f in fa):
             return (0, len(words), 0.0)
 
-        # Words the audio does not bear out go, and are not left behind as a
-        # wall their neighbours have to stop at. A hand-edited clip stays:
-        # somebody listened to it.
+        # Words the audio does not bear out are marked, kept where they are,
+        # and not left as a wall their neighbours have to stop at. A
+        # hand-edited clip is not marked: somebody listened to it.
         doubtful = [w for w, f in zip(words, fa) if f is not None and len(f) > 2
                     and f[2] < _MIN_CONFIDENCE and not w.get("edited")]
-        for w in doubtful:
-            print(f"    not a word: {w['word']!r} at {w['start_time']:.2f}s (clip {w['id']})")
+        for w, f in zip(words, fa):
+            if w in doubtful:
+                print(f"    unheard: {w['word']!r} at {w['start_time']:.2f}s "
+                      f"(clip {w['id']}, confidence {f[2]:.4f})")
         kept = [(w, f) for w, f in zip(words, fa) if w not in doubtful]
         words, fa = [w for w, _f in kept], [f for _w, f in kept]
 
@@ -438,12 +451,10 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
 
         if apply and doubtful:
             with get_db() as conn:
-                # As the editor's delete does: what hangs off a clip goes with it.
-                for w in doubtful:
-                    for table in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings",
-                                  "clip_tone"):
-                        conn.execute(f"DELETE FROM {table} WHERE clip_id=?", (w["id"],))
-                    conn.execute("DELETE FROM word_clips WHERE id=?", (w["id"],))
+                conn.executemany(
+                    "INSERT INTO boundary_reports (clip_id, kind, count) VALUES (?, 'unheard', ?) "
+                    "ON CONFLICT(clip_id, kind) DO UPDATE SET count = excluded.count",
+                    [(w["id"], _UNHEARD_REPORTS) for w in doubtful])
 
         if apply and updates:
             with get_db() as conn:

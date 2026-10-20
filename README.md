@@ -336,9 +336,12 @@ python scripts/refine_boundaries.py --all --apply       # frame-accurate, everyt
 stretch of sound is which word; the cut itself is then placed from the audio —
 at the edges of a pause, or the quietest point between two words that run
 together — because CTC fires late on a word's first letter and early on its
-last. It also drops clips whose letters the aligner cannot find where Whisper
-put them: noises transcribed as words ("chk chk chk", a breath as "a"). Hand-
-edited clips are never moved or dropped. A dry run prints what it would drop.
+last. Clips whose letters the aligner cannot find where Whisper put them --
+mostly noises transcribed as words ("chk chk chk", a breath as "a") -- are
+marked with an "unheard" boundary report rather than removed, since some are
+real words said too quickly to score: a marked take is rarely picked, still
+there when a word has no other, and listed for review in the editor. Hand-
+edited clips are never moved or marked. A dry run prints what it would mark.
 It needs `--all` or a `--source-id` to pick targets and `--apply` to write.
 
 ```bash
@@ -1013,7 +1016,7 @@ scripts/build_corpus.py       channel link -> packed corpus, one command
 scripts/ingest.py             download, transcribe, store word clips
 scripts/ingest_channel.py     the same, for a whole channel
 scripts/realign.py            better word timestamps via stable-ts
-scripts/refine_boundaries.py  word boundaries from CTC alignment and the audio; drops noise-words
+scripts/refine_boundaries.py  word boundaries from CTC alignment and the audio; marks noise-words
 scripts/measure_tone.py       each take's tone (pitch, loudness, pace...), grouped into categories
 scripts/correct.py            relabel misheard words from a real transcript
 scripts/find_noises.py        pull non-verbal noises out of the gaps

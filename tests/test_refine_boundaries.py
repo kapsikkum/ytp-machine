@@ -230,28 +230,28 @@ class DatabaseRefineTests(unittest.TestCase):
             toned = conn.execute("SELECT clip_id FROM clip_tone").fetchall()
         self.assertEqual(toned, [(2,)])     # measured inside windows that moved
 
-    def test_noise_heard_as_a_word_is_removed_with_what_hangs_off_it(self):
+    def test_noise_heard_as_a_word_is_marked_not_removed(self):
         with contextlib.closing(sqlite3.connect(self.db)) as conn, conn:
-            for table in ("clip_cache", "boundary_reports", "splice_ratings"):
-                conn.execute(f"CREATE TABLE {table} (clip_id INTEGER)")
-
-                conn.execute(f"INSERT INTO {table} VALUES (1)")
-        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
-                patch.object(rb, "_load_wav", return_value=Audio(rb._SR)), \
-                patch.object(rb, "_envelope", return_value=None), \
-                patch.object(rb, "_align_window", return_value=[
+            conn.execute("CREATE TABLE boundary_reports (clip_id INTEGER, kind TEXT, count INTEGER, "
+                         "PRIMARY KEY (clip_id, kind))")
+            conn.execute("INSERT INTO boundary_reports VALUES (1, 'start', 1)")
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)),                 patch.object(rb, "_envelope", return_value=None),                 patch.object(rb, "_align_window", return_value=[
                     (0.15, 0.3, 0.001), (0.5, 0.65, 0.001), (0.75, 0.95, 0.9)]):
             rb.refine_source(1, apply=True)
+            rb.refine_source(1, apply=True)        # a second run does not pile on
         with contextlib.closing(sqlite3.connect(self.db)) as conn:
             ids = [r[0] for r in conn.execute("SELECT id FROM word_clips ORDER BY id")]
-            leftovers = [conn.execute(f"SELECT count(*) FROM {t} WHERE clip_id=1").fetchone()[0]
-                         for t in ("clip_alignments", "clip_cache", "boundary_reports", "splice_ratings",
-                                   "clip_tone")]
-        # Clip 2 scored as badly but was edited by hand, so it stays.
-        self.assertEqual(ids, [2, 3])
-        self.assertEqual(leftovers, [0, 0, 0, 0, 0])
+            reports = conn.execute("SELECT clip_id, kind, count FROM boundary_reports ORDER BY clip_id, kind").fetchall()
+            start = conn.execute("SELECT start_time, end_time FROM word_clips WHERE id=1").fetchone()
+        # Nothing is removed: a third of these were real words when checked.
+        self.assertEqual(ids, [1, 2, 3])
+        # Clip 1 is marked, beside the report it already had; clip 2 scored as
+        # badly but was edited by hand, so it is not.
+        self.assertEqual(reports, [(1, "start", 1), (1, "unheard", rb._UNHEARD_REPORTS)])
+        # And it is not moved: its letters were not found, so there is nothing to move it to.
+        self.assertEqual(start, (0.1, 0.35))
 
-    def test_dry_run_removes_nothing(self):
+    def test_dry_run_marks_nothing(self):
         with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \
                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)), \
                 patch.object(rb, "_envelope", return_value=None), \
