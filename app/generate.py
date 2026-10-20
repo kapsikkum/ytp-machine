@@ -49,7 +49,10 @@ _FINAL_SONORANTS = {"M", "N", "NG", "L", "R", "ER"}
 # best takes. The pads now stop this far past the sound itself.
 _TAIL_AIR = 0.03          # after the sound stops: the room's own decay
 _LEAD_AIR = 0.015         # before it starts: enough for a click-free fade
-_AIR_QUIET = 0.1          # fraction of the word's peak that counts as stopped
+_AIR_QUIET = 0.1          # fraction of the word's peak that counts as stopped...
+_AIR_FLOOR = 2.0          # ...unless the room's floor is lower: within 6dB of it
+_AIR_ROOM = 0.5           # seconds either side read to find that floor
+_RING_MAX = 0.40          # a tail still sounding may run this far past the word
 
 _BLEED_TAIL = 0.16   # bigger tail gap when a run ends on a word whose next source
                      # word is an adjacent vowel — its onset glide bleeds backward
@@ -1538,23 +1541,41 @@ def _envelope(source_file: str, a: float, b: float) -> tuple[float, ...]:
 
 def _heard(source_file: str, a: float, start: float, end: float, b: float) -> tuple[float, float] | None:
     """Where the sound of a word stored at *start*-*end* begins and stops,
-    looking no further than *a* and *b*. None when the audio cannot be read."""
+    looking no further than *a* and *b*. None when the audio cannot be read.
+
+    Stopped means back down near the room's own floor, not merely well below
+    the word's peak. A shouted "HA" in a hard room rings on 25-30dB under its
+    peak for a third of a second, plainly audible, and a peak-relative rule
+    cut the echo off the moment it began. Whichever threshold is lower wins,
+    so a recording whose floor cannot be told from its speech is cut no
+    tighter than the peak rule cut it.
+    """
     a, b = round(a, 3), round(b, 3)
-    env = _envelope(source_file, a, b)
+    lo = max(0.0, round(a - _AIR_ROOM, 3))
+    env = _envelope(source_file, lo, round(b + _AIR_ROOM, 3))
     hop = 160 / 16000.0
-    i = max(0, int((start - a) / hop))
-    j = min(len(env), int(math.ceil((end - a) / hop)))
+    off = int(round((a - lo) / hop))
+    first, last = off, min(len(env), off + int(math.ceil((b - a) / hop)))
+    i = max(first, off + int((start - a) / hop))
+    j = min(last, off + int(math.ceil((end - a) / hop)))
     if j <= i:
         return None
     peak = max(env[i:j])
     if peak <= 0:
         return None
-    floor = peak * _AIR_QUIET
-    while i > 0 and env[i - 1] >= floor:
+    room = sorted(env)[len(env) // 10]
+    # Digital silence has no floor to be near; 60dB down stands in for one.
+    quiet = min(peak * _AIR_QUIET, max(room * _AIR_FLOOR, peak * 0.001))
+
+    def still(k):
+        return k < len(env) and env[k] >= quiet
+
+    # Two quiet frames in a row, so a flutter in an echo does not end it.
+    while i > first and (env[i - 1] >= quiet or (i > first + 1 and env[i - 2] >= quiet)):
         i -= 1
-    while j < len(env) and env[j] >= floor:
+    while j < last and (still(j) or still(j + 1)):
         j += 1
-    return a + i * hop, a + j * hop
+    return lo + i * hop, lo + j * hop
 
 
 def _ends_in_sonorant(seg: dict[str, Any]) -> bool:
@@ -1830,15 +1851,17 @@ def extract_window(seg: dict[str, Any], pad_end: float = _PAD_END) -> tuple[floa
     # unit still carries.
     if not edited and not seg.get("subword") and _ends_in_sonorant(seg):
         want = max(want, _sound_ends(seg["source_file"], seg["start_time"], stored_end))
-    # Then give back the silence those reached into. Only ever inwards, and
-    # never into the clip: where the sound is still going -- a word cut early,
-    # a corpus never refined -- nothing is taken.
+    # Then let the sound decide how far the tail goes: back from silence the
+    # pads reached into, or on past them while it is still ringing -- an
+    # echo, a long release -- up to _RING_MAX. Never into the clip itself, and
+    # the next word's clamp below still has the last say.
     if not edited and not seg.get("subword"):
-        heard = _heard(seg["source_file"], start, seg["start_time"], stored_end, want)
+        reach = max(want, stored_end + _RING_MAX)
+        heard = _heard(seg["source_file"], start, seg["start_time"], stored_end, reach)
         if heard is not None:
             onset, stop = heard
             start = max(start, min(seg["start_time"], onset - _LEAD_AIR))
-            want = min(want, max(stored_end, stop + _TAIL_AIR))
+            want = min(reach, max(stored_end, stop + _TAIL_AIR))
 
     # Where we must stop: clear of the next word -- but never before the end
     # of the clip itself, which is what the stored boundary says the word is.

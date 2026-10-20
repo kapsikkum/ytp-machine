@@ -141,6 +141,17 @@ check("the tail stops just after it", e, 1.4 + g._TAIL_AIR, tol=0.011)
 # tail must still reach it -- only silence is ever taken away.
 s, e = g.extract_window(clip(source_file=quiet_word, start_time=1.0, end_time=1.25))
 check("a word still sounding keeps its tail", e >= 1.4, True)
+# A shout in a hard room: the word, then its echo 26dB down for 300ms, over a
+# faint hiss. Far below the word's peak and plainly audible -- the tail has to
+# keep it, and stop where it fades into the room.
+echo = os.path.join(tmp, "echo.wav")
+subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                "aevalsrc='0.4*sin(2*PI*180*t)*between(t,1.0,1.4)"
+                "+0.02*sin(2*PI*180*t)*between(t,1.4,1.7)+0.0005*(random(0)-0.5)':s=16000:d=3",
+                echo], check=True)
+s, e = g.extract_window(clip(source_file=echo, start_time=1.0, end_time=1.4))
+check("an echo is kept to where it fades into the room", e, 1.7 + g._TAIL_AIR, tol=0.021)
+check("the lead-in still stops at the hiss", s, 1.0 - g._LEAD_AIR, tol=0.011)
 s, e = g.extract_window(clip(source_file=quiet_word, start_time=1.0, end_time=1.4, edited=1))
 check("an edited clip is still taken as stored", (round(s, 4), round(e, 4)), (1.0, 1.4))
 
