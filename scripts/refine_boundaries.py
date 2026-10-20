@@ -269,11 +269,71 @@ def _align_window(segment, words: list[dict]) -> list[tuple[float, float, float]
         return empty
     ratio = segment.size(1) / emission.size(1) / _SR
     foreign = _foreign_letters(logp, spans, ranges)
-    return [(spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio,
-             sum(math.exp(s.score) for s in spans[rng[0]:rng[1]]) / (rng[1] - rng[0]),
-             None if after is None else after * ratio,
-             None if before is None else before * ratio)
-            if rng is not None else None for rng, (after, before) in zip(ranges, foreign)]
+    cores = [(spans[rng[0]].start * ratio, (end or spans[rng[1] - 1].end) * ratio,
+              sum(math.exp(s.score) for s in spans[rng[0]:rng[1]]) / (rng[1] - rng[0]),
+              None if after is None else after * ratio,
+              None if before is None else before * ratio)
+             if rng is not None else None for rng, (after, before, end) in zip(ranges, foreign)]
+    if hasattr(segment, "cpu"):
+        cores = _split_at_pauses(cores, segment, logp, spans, ranges, ratio)
+    return cores
+
+
+# The aligner can stretch a word across a pause on to speech the transcript
+# does not have: "Brian", a breath, and an unwritten "and", all one word. A
+# pause inside a word is not enough to say so -- a stop's closure is one --
+# so it takes a pause with a letter the word does not have on one side of it.
+# The word is then the side its own letters are heard on.
+_INNER_PAUSE = 2 * _FRAME
+
+
+def _split_at_pauses(cores, segment, logp, spans, ranges, ratio):
+    """Cores cut down to one side of any long pause inside them (window-relative)."""
+    env = Envelope(segment[0].detach().cpu().numpy())
+    if logp.dim() == 3:
+        logp = logp[0]
+    best = logp.max(dim=-1)
+    ids = best.indices.cpu().tolist()
+    sure = (best.values > math.log(_FOREIGN_PROB)).cpu().tolist()
+    need = int(round(_INNER_PAUSE / _FRAME))
+    out = []
+    for core, rng in zip(cores, ranges):
+        if core is None:
+            out.append(core)
+            continue
+        s, e = core[0], core[1]
+        pieces, a, run = [], s, 0
+        for i in range(env.frame(s), env.frame(e)):
+            if env.quiet(i):
+                run += 1
+                continue
+            if run >= need and (i - run) * _FRAME > a:
+                pieces.append((a, (i - run) * _FRAME))
+                a = i * _FRAME
+            run = 0
+        pieces.append((a, e))
+        if len(pieces) < 2:
+            out.append(core)
+            continue
+        own = {spans[k].token for k in range(*rng)}
+
+        def heard(p, mine=True):
+            lo, hi = int(p[0] / ratio), min(int(p[1] / ratio) + 1, len(ids))
+            return sum(1 for t in range(lo, hi)
+                       if sure[t] and ids[t] not in (0, _DICT["|"]) and (ids[t] in own) == mine
+                       and (t == 0 or ids[t - 1] != ids[t]))
+
+        k = max(range(len(pieces)), key=lambda j: (heard(pieces[j]) - heard(pieces[j], False), -j))
+        if heard(pieces[k]) < 2 or not any(heard(p, False) for j, p in enumerate(pieces) if j != k):
+            out.append(core)
+            continue
+        a, b = pieces[k]
+        after = min((t for t in (core[3], pieces[k + 1][0] if k + 1 < len(pieces) else None)
+                     if t is not None and t >= b), default=None)
+        before = max((t for t in (core[4], pieces[k - 1][1] if k > 0 else None)
+                      if t is not None and t <= a), default=None)
+        out.append((a, b, core[2], after, before))
+    return out
 
 
 # Letters the model hears between two words that the transcript does not
@@ -281,14 +341,22 @@ def _align_window(segment, words: list[dict]) -> list[tuple[float, float, float]
 # The tail used to walk on through it to the pause after, and the clip said
 # "Brian, erm". A letter the word itself ends with (or its neighbour starts
 # with) is not counted: CTC often fires a word's last letter twice.
+#
+# The aligner can also stretch a word over it: "Brian"'s N heard at 151.70,
+# the erm's M at 151.98, and the forced path putting its one N at 152.00 so
+# the erm is inside the word. When the model heard the word's last letter
+# and then a letter the word does not have, before the forced last letter,
+# the word ended at the first, and what follows is not it.
 _FOREIGN_PROB = 0.5
+_FOREIGN_GAP = 0.10
 
 
-def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None]]:
+def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None, int | None]]:
     """Per word, the frames where unwritten speech starts after it and ends before it.
 
     (first frame of it after the word's letters, frame just past it before
-    them), each None where the gap holds nothing the model recognises.
+    them, where the word really ends if the aligner stretched it over some),
+    each None where there is nothing of the kind.
     """
     if logp.dim() == 3:
         logp = logp[0]
@@ -307,18 +375,38 @@ def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None]]
         return [t for t in range(max(a, 0), min(b, len(letter)))
                 if letter[t] and ids[t] not in own and (t == 0 or ids[t - 1] != ids[t])]
 
-    out: list[tuple[int | None, int | None]] = []
+    def stretched(r) -> tuple[int, int] | None:
+        """(true end, first foreign frame) if the last letter was dragged over other speech."""
+        if r[1] - r[0] < 2:
+            return None
+        own = {spans[i].token for i in range(r[0], r[1])}
+        last = spans[r[1] - 1]
+        heard_end = None
+        for t in range(spans[r[1] - 2].end, last.end):
+            if not letter[t]:
+                continue
+            if ids[t] == last.token:
+                heard_end = t + 1
+            elif ids[t] not in own and heard_end is not None:
+                return heard_end, t
+        return None
+
+    out: list[tuple[int | None, int | None, int | None]] = []
     k = 0
-    for w in words:
+    for w, r in zip(words, ranges):
         if w is None:
-            out.append((None, None))
+            out.append((None, None, None))
             continue
         prv = placed[k - 1] if k > 0 else None
         nxt = placed[k + 1] if k + 1 < len(placed) else None
         k += 1
+        cut = stretched(r)
+        if cut is not None:
+            out.append((cut[1], None, cut[0]))
+            continue
         after = spikes(w[1], nxt[0] if nxt else len(letter), {w[3]} | ({nxt[2]} if nxt else set()))
         before = spikes(prv[1] if prv else 0, w[0], {w[2]} | ({prv[3]} if prv else set()))
-        out.append((after[0] if after else None, before[-1] + 1 if before else None))
+        out.append((after[0] if after else None, before[-1] + 1 if before else None, None))
     return out
 
 
@@ -361,11 +449,18 @@ def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
         shared_next = i + 1 < len(words) and cores[i + 1] is not None
         # Unwritten speech either side is a wall like a word that cannot move:
         # the cut stops at the dip before it rather than walking through it.
+        # The model only marks it where a letter fires, often late in it --
+        # the M of "erm", after the "er" -- so the wall is also kept within
+        # _FOREIGN_GAP of the word's own letters.
         after, before = (tuple(fa[i][3:5]) + (None, None))[:2]
-        if after is not None and after > core_end and (nxt is None or after < nxt):
-            nxt, shared_next = after, False
-        if before is not None and before < onset and (prv is None or before > prv):
-            prv, shared_prev = before, False
+        if after is not None and after > core_end:
+            after = min(after, core_end + _FOREIGN_GAP)
+            if nxt is None or after < nxt:
+                nxt, shared_next = after, False
+        if before is not None and before < onset:
+            before = max(before, onset - _FOREIGN_GAP)
+            if prv is None or before > prv:
+                prv, shared_prev = before, False
         if envelope is None:
             new_start = max(0.0, onset)
             # Preserve the core where there is less than 20ms between words, but

@@ -107,7 +107,7 @@ class RefineTests(unittest.TestCase):
             types.SimpleNamespace(start=2, end=3, score=0.0)])
         with patch.dict(sys.modules, {"torch": torch, "torchaudio": torchaudio,
                                       "torchaudio.functional": functional}), \
-                patch.object(rb, "_model", Mock(return_value=(emission, None))),                 patch.object(rb, "_foreign_letters", Mock(return_value=[(None, None)])):
+                patch.object(rb, "_model", Mock(return_value=(emission, None))),                 patch.object(rb, "_foreign_letters", Mock(return_value=[(None, None, None)])):
             got = rb._align_window(Audio(960), [word(1, text="aa")])
             self.assertEqual(got, [(0.0, 0.06, 1.0, None, None)])
             emission.log_softmax.assert_called_once_with(dim=-1)
@@ -189,7 +189,63 @@ class RefineTests(unittest.TestCase):
                  for t, ch in [(0, "B"), (1, "R"), (2, "I"), (3, "A"), (4, "N"), (14, "I")]]
         got = rb._foreign_letters(logp, spans, [(0, 5), (5, 6)])
         # The second N is Brian's own letter fired again; E is the erm.
-        self.assertEqual(got, [(9, None), (None, 12)])
+        self.assertEqual(got, [(9, None, None), (None, 12, None)])
+        # The aligner stretched Brian's N over the erm: it put its N at
+        # frame 11, though the model heard the N at 4 and an E at 6.
+        frames = "BRIAN.E.M..N.I"
+        logp = torch.full((len(frames), len(self.vocab) + 1), -20.0)
+        for t, ch in enumerate(frames):
+            logp[t, blank if ch == "." else self.vocab[ch]] = 0.0
+        spans = [types.SimpleNamespace(start=t, end=t + 1, token=self.vocab[ch])
+                 for t, ch in [(0, "B"), (1, "R"), (2, "I"), (3, "A"), (11, "N"), (13, "I")]]
+        got = rb._foreign_letters(logp, spans, [(0, 5), (5, 6)])
+        self.assertEqual(got[0], (6, None, 5))
+        # Or put its N on the very frame the erm's M is heard in.
+        frames = "BRIAN......M.I"
+        logp = torch.full((len(frames), len(self.vocab) + 1), -20.0)
+        for t, ch in enumerate(frames):
+            logp[t, blank if ch == "." else self.vocab[ch]] = 0.0
+        spans = [types.SimpleNamespace(start=t, end=t + 1, token=self.vocab[ch])
+                 for t, ch in [(0, "B"), (1, "R"), (2, "I"), (3, "A"), (11, "N"), (13, "I")]]
+        self.assertEqual(rb._foreign_letters(logp, spans, [(0, 5), (5, 6)])[0], (11, None, 5))
+
+    def test_a_word_stretched_over_a_pause_keeps_the_side_it_is_heard_on(self):
+        try:
+            import numpy as np
+            import torch
+        except ImportError:
+            self.skipTest("torch")
+        # "Brian" 0.20-0.60, half a second of silence, an unwritten "and"
+        # 1.10-1.40. The aligner stretched the word from 0.22 to 1.30; the
+        # model heard B, R, A, N in the first sound and A, N, D in the second.
+        x = np.full(rb._SR * 2, 1e-4, np.float32)
+        for a, b in ((0.20, 0.60), (1.10, 1.40)):
+            x[int(a * rb._SR):int(b * rb._SR)] = 0.3
+        frames = ["."] * 100                      # 20ms frames
+        for t, ch in ((11, "B"), (13, "R"), (20, "A"), (27, "N"), (57, "A"), (60, "N"), (65, "D")):
+            frames[t] = ch
+        logp = torch.full((100, len(self.vocab) + 1), -20.0)
+        for t, ch in enumerate(frames):
+            logp[t, 0 if ch == "." else self.vocab[ch]] = 0.0
+        spans = [types.SimpleNamespace(start=t, end=t + 1, token=self.vocab[ch])
+                 for t, ch in [(11, "B"), (13, "R"), (20, "I"), (57, "A"), (64, "N")]]
+        core = (0.22, 1.30, 0.5, None, None)
+        got = rb._split_at_pauses([core], torch.from_numpy(x)[None], logp, spans, [(0, 5)], 0.02)
+        a, b, _conf, after, _before = got[0]
+        self.assertAlmostEqual(a, 0.22)
+        self.assertAlmostEqual(b, 0.60, delta=0.011)
+        self.assertAlmostEqual(after, 1.10, delta=0.011)
+        # A pause with nothing foreign beyond it -- a stop's closure -- is
+        # the word's own.
+        clean = logp.clone()
+        clean[65, self.vocab["D"]] = -20.0
+        clean[65, 0] = 0.0
+        self.assertEqual(rb._split_at_pauses([core], torch.from_numpy(x)[None], clean, spans,
+                                             [(0, 5)], 0.02), [core])
+        # No pause inside: left exactly as it was.
+        x[int(0.60 * rb._SR):int(1.10 * rb._SR)] = 0.3
+        self.assertEqual(rb._split_at_pauses([core], torch.from_numpy(x)[None], logp, spans,
+                                             [(0, 5)], 0.02), [core])
 
     def test_load_model_uses_evaluation_mode(self):
         model = Mock()
