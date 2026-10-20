@@ -11,15 +11,25 @@ and then played one with none. An 80ms clip of a 150Hz buzz, built the way a
 take is, stands in for Morshu's.
 """
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Any corpus will do -- the takes below are made here, not looked up -- so an
+# empty one of its own rather than the real voice, which a checkout no longer
+# carries.
+_data = tempfile.mkdtemp(prefix="sample_pitch_data_")
+os.makedirs(os.path.join(_data, "corpora", "pitch"))
+sqlite3.connect(os.path.join(_data, "corpora", "pitch", "corpus.db")).close()
+os.environ["MRS_DATA_DIR"] = _data
+os.environ["MRS_CORPUS"] = "pitch"
+
 from app import database  # noqa: E402
 
-database.set_active("michael-rosen")
+database.set_active("pitch")
 
 from app.ytpmv import samples  # noqa: E402
 from app.ytpmv.pitch import SR  # noqa: E402
