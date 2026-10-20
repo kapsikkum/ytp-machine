@@ -36,7 +36,9 @@ import math
 from contextvars import ContextVar
 from typing import Any
 
-import numpy as np
+# numpy is imported where something is measured, not here: the generator
+# imports this module to choose takes, which is arithmetic on a few floats,
+# and the generator must import without numpy (see the tokeniser check).
 
 SR = 16000
 
@@ -60,12 +62,13 @@ _JOIN_WIDTH = 0.35        # a join this many standard units apart costs e^-0.5
 
 # ── Measuring ─────────────────────────────────────────────────────────────────
 
-def measure_source(x: np.ndarray, clips: list[dict], phones=None) -> dict[int, dict]:
+def measure_source(x, clips: list[dict], phones=None) -> dict[int, dict]:
     """Tone features of every clip in one source, decoded at SR mono.
 
     *phones* maps a word to its phoneme count; without one, pace is per letter
     over three. Clips with too little voicing for a pitch get None there.
     """
+    import numpy as np
     from app.ytpmv.pitch import hz_to_midi, track_f0
 
     x = np.asarray(x, dtype=np.float32)
@@ -115,6 +118,7 @@ _CAP = 3.0                # standard units; past this a take is unusual, not mor
 
 def statistics(rows: list[dict]) -> dict[str, list[float]]:
     """Mean and spread of each feature over the corpus."""
+    import numpy as np
     stats = {}
     for f in FEATURES:
         v = np.array([_scaled(f, r[f]) for r in rows if r.get(f) is not None], dtype=np.float64)
@@ -135,13 +139,14 @@ def standard(row: dict, stats: dict) -> tuple:
                  for f in FEATURES)
 
 
-def _shape(z: tuple) -> np.ndarray:
+def _shape(z: tuple):
     """The category features of a standardised row; missing ones sit at the mean."""
+    import numpy as np
     return np.array([0.0 if z[FEATURES.index(f)] is None else z[FEATURES.index(f)]
                      for f in _SHAPE], dtype=np.float64)
 
 
-def categorise(zs: list[tuple], k: int | None = None, seed: int = 0) -> tuple[list[int], np.ndarray]:
+def categorise(zs: list[tuple], k: int | None = None, seed: int = 0) -> tuple[list[int], Any]:
     """k-means over the delivery features: (label per row, centroids).
 
     Seeded and with k-means++ starts, so the same corpus always gets the same
@@ -149,6 +154,7 @@ def categorise(zs: list[tuple], k: int | None = None, seed: int = 0) -> tuple[li
     a category is only worth leaning a sentence towards if most words have a
     take in it, and five categories of a few dozen takes each would not.
     """
+    import numpy as np
     X = np.array([_shape(z) for z in zs])
     n = len(X)
     if n == 0:
