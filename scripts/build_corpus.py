@@ -17,8 +17,8 @@ each child is the honest way to point the work at a named corpus.
 
 Everything is resumable. Videos already in the corpus are skipped, so a run
 interrupted at video 25 of 40 picks up where it stopped, and finished stages
-can be left out with --skip-ingest / --skip-refine / --skip-align / --skip-tone /
---skip-pack.
+can be left out with --skip-ingest / --skip-second-opinion / --skip-refine /
+--skip-align / --skip-tone / --skip-pack.
 
 Not included: correct.py (needs a real transcript to compare against) and
 find_noises.py (curated by hand, per speaker). Neither can be driven from a
@@ -248,6 +248,9 @@ def main() -> int:
                          "that you sign in to prove you are not a bot "
                          "(chrome, firefox, edge, …)")
     ap.add_argument("--skip-ingest", action="store_true", help="Already ingested")
+    ap.add_argument("--skip-second-opinion", action="store_true",
+                    help="Do not check Whisper's words with Qwen3-ASR (skipped "
+                         "anyway, with a warning, where qwen-asr is not installed)")
     ap.add_argument("--skip-refine", action="store_true", help="Leave boundaries alone")
     ap.add_argument("--skip-align", action="store_true",
                     help="Do not measure where each phoneme falls (sub-word "
@@ -334,7 +337,21 @@ def main() -> int:
         # Refinement moves word boundaries. Align once after that, in its own
         # process, instead of keeping Whisper and the phone model on one GPU.
         argv += ["--no-align"]
-        _run("1/5  Download and transcribe", argv, env)
+        _run("1/6  Download and transcribe", argv, env)
+
+    if not args.skip_second_opinion:
+        # Whisper garbles a stretch now and then and says nothing about it;
+        # the refinement then forces the wrong words on to the audio. A
+        # second transcription catches it, before anything is cut.
+        import importlib.util
+        if importlib.util.find_spec("qwen_asr") is None:
+            print("\nqwen-asr is not installed: Whisper's words go unchecked "
+                  "(pip install qwen-asr, or --skip-second-opinion to silence this).")
+        else:
+            argv = ["scripts/second_opinion.py", "--all", "--apply", "--quiet"]
+            if args.device:
+                argv += ["--device", args.device]
+            _run("2/6  Check the words with a second listener", argv, env)
 
     if not args.skip_refine:
         # Whisper's boundaries run early and wander by 100-350ms, which is
@@ -343,7 +360,7 @@ def main() -> int:
         argv = ["scripts/refine_boundaries.py", "--all", "--apply"]
         if args.device:
             argv += ["--device", args.device]
-        _run("2/5  Sharpen word boundaries", argv, env)
+        _run("3/6  Sharpen word boundaries", argv, env)
 
     if not args.skip_align:
         # Where each phoneme actually falls, so a sub-word splice can cut on a
@@ -354,14 +371,14 @@ def main() -> int:
         # The slow stage after transcription: a model pass per clip. It is
         # also the one that cannot run on the server, whose container is
         # smaller than the model.
-        _run("3/5  Measure where each phoneme falls",
+        _run("4/6  Measure where each phoneme falls",
              ["scripts/align_phones.py", "--all"], env)
 
     if not args.skip_tone:
         # How each take sounds, so a sentence can be put together in one tone
         # rather than a different mood per word. Inside the final boundaries,
         # so after refinement; no model, so minutes.
-        _run("4/5  Measure the tone of every take", ["scripts/measure_tone.py"], env)
+        _run("5/6  Measure the tone of every take", ["scripts/measure_tone.py"], env)
 
     if not args.skip_ingest or not args.skip_refine:
         # Start the corpus's dictionary before packing, so the bundle carries
@@ -375,7 +392,7 @@ def main() -> int:
               "--show", "12"], env)
 
     if not args.skip_pack:
-        _run("5/5  Pack the bundle",
+        _run("6/6  Pack the bundle",
              ["scripts/corpus.py", "pack", "--corpus", slug, "--out", out], env)
 
     print(f"\n{'=' * 64}\nBuilt '{slug}' in {(time.time() - started) / 60:.0f} min.")

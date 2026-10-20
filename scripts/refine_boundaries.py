@@ -21,6 +21,7 @@ import argparse
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import tempfile
 import sys
@@ -267,9 +268,58 @@ def _align_window(segment, words: list[dict]) -> list[tuple[float, float, float]
     if len(spans) != len(chars):
         return empty
     ratio = segment.size(1) / emission.size(1) / _SR
+    foreign = _foreign_letters(logp, spans, ranges)
     return [(spans[rng[0]].start * ratio, spans[rng[1] - 1].end * ratio,
-             sum(math.exp(s.score) for s in spans[rng[0]:rng[1]]) / (rng[1] - rng[0]))
-            if rng is not None else None for rng in ranges]
+             sum(math.exp(s.score) for s in spans[rng[0]:rng[1]]) / (rng[1] - rng[0]),
+             None if after is None else after * ratio,
+             None if before is None else before * ratio)
+            if rng is not None else None for rng, (after, before) in zip(ranges, foreign)]
+
+
+# Letters the model hears between two words that the transcript does not
+# have: an "erm" nobody wrote down, run straight on from "Brian" with no pause.
+# The tail used to walk on through it to the pause after, and the clip said
+# "Brian, erm". A letter the word itself ends with (or its neighbour starts
+# with) is not counted: CTC often fires a word's last letter twice.
+_FOREIGN_PROB = 0.5
+
+
+def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None]]:
+    """Per word, the frames where unwritten speech starts after it and ends before it.
+
+    (first frame of it after the word's letters, frame just past it before
+    them), each None where the gap holds nothing the model recognises.
+    """
+    if logp.dim() == 3:
+        logp = logp[0]
+    best = logp.max(dim=-1)
+    sep = _DICT["|"]
+    letter = ((best.indices != 0) & (best.indices != sep)
+              & (best.values > math.log(_FOREIGN_PROB))).cpu().tolist()
+    ids = best.indices.cpu().tolist()
+    # (first frame, end frame, first letter, last letter) of each placed word
+    words = [(spans[r[0]].start, spans[r[1] - 1].end, spans[r[0]].token, spans[r[1] - 1].token)
+             if r is not None else None for r in ranges]
+    placed = [w for w in words if w is not None]
+
+    def spikes(a: int, b: int, own: set[int]) -> list[int]:
+        """Frames in [a, b) where a letter other than *own* fires."""
+        return [t for t in range(max(a, 0), min(b, len(letter)))
+                if letter[t] and ids[t] not in own and (t == 0 or ids[t - 1] != ids[t])]
+
+    out: list[tuple[int | None, int | None]] = []
+    k = 0
+    for w in words:
+        if w is None:
+            out.append((None, None))
+            continue
+        prv = placed[k - 1] if k > 0 else None
+        nxt = placed[k + 1] if k + 1 < len(placed) else None
+        k += 1
+        after = spikes(w[1], nxt[0] if nxt else len(letter), {w[3]} | ({nxt[2]} if nxt else set()))
+        before = spikes(prv[1] if prv else 0, w[0], {w[2]} | ({prv[3]} if prv else set()))
+        out.append((after[0] if after else None, before[-1] + 1 if before else None))
+    return out
 
 
 def _core(word: dict, aligned) -> tuple[float, float] | None:
@@ -307,6 +357,15 @@ def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
             prv = cores[i - 1][1] if cores[i - 1] is not None else words[i - 1]["end_time"]
         if i + 1 < len(words):
             nxt = cores[i + 1][0] if cores[i + 1] is not None else words[i + 1]["start_time"]
+        shared_prev = i > 0 and cores[i - 1] is not None
+        shared_next = i + 1 < len(words) and cores[i + 1] is not None
+        # Unwritten speech either side is a wall like a word that cannot move:
+        # the cut stops at the dip before it rather than walking through it.
+        after, before = (tuple(fa[i][3:5]) + (None, None))[:2]
+        if after is not None and after > core_end and (nxt is None or after < nxt):
+            nxt, shared_next = after, False
+        if before is not None and before < onset and (prv is None or before > prv):
+            prv, shared_prev = before, False
         if envelope is None:
             new_start = max(0.0, onset)
             # Preserve the core where there is less than 20ms between words, but
@@ -316,10 +375,9 @@ def _boundary_updates(words: list[dict], fa: list[tuple[float, ...] | None],
                 new_end = min(new_end, max(core_end, nxt - 0.02), nxt)
         else:
             # Never inside the letters themselves, whatever the audio says.
-            new_start = min(onset, max(0.0, _place_start(
-                envelope, onset, prv, i > 0 and cores[i - 1] is not None)))
+            new_start = min(onset, max(0.0, _place_start(envelope, onset, prv, shared_prev)))
             new_end = max(core_end, min(duration, _place_end(
-                envelope, core_end, nxt, duration, i + 1 < len(words) and cores[i + 1] is not None)))
+                envelope, core_end, nxt, duration, shared_next)))
         placed[i] = (new_start, new_end)
 
     # The two sides of a gap are placed separately and can reach past each
@@ -377,9 +435,18 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
     """Re-align one source. Returns (updated, total, median_shift_ms)."""
     with get_db() as conn:
         src = conn.execute("SELECT source_file FROM sources WHERE id=?", (sid,)).fetchone()
+        # A word the second opinion (second_opinion.py) did not hear is left
+        # where it is and out of the alignment: asked to find a word that is
+        # not there, the aligner takes it from its neighbours' sound.
+        try:
+            disputed = {r[0] for r in conn.execute(
+                "SELECT clip_id FROM boundary_reports WHERE kind='disputed'")}
+        except sqlite3.OperationalError:     # a corpus from before boundary reports
+            disputed = set()
         words = [dict(r) for r in conn.execute(
             "SELECT id, word, start_time, end_time, edited FROM word_clips "
-            "WHERE source_id=? ORDER BY start_time", (sid,)).fetchall()]
+            "WHERE source_id=? ORDER BY start_time", (sid,)).fetchall()
+            if r["id"] not in disputed]
     if not src or not words:
         return (0, 0, 0.0)
 
@@ -430,7 +497,8 @@ def refine_source(sid: int, apply: bool) -> tuple[int, int, float]:
             for idx, aligned in zip(group, _align_window(segment, [words[i] for i in group])):
                 if aligned is None:
                     continue
-                fa[idx] = (s0 / _SR + aligned[0], s0 / _SR + aligned[1], *aligned[2:])
+                fa[idx] = (s0 / _SR + aligned[0], s0 / _SR + aligned[1], *aligned[2:3],
+                           *(None if t is None else s0 / _SR + t for t in aligned[3:]))
 
         if not any(f is not None for f in fa):
             return (0, len(words), 0.0)

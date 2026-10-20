@@ -107,9 +107,9 @@ class RefineTests(unittest.TestCase):
             types.SimpleNamespace(start=2, end=3, score=0.0)])
         with patch.dict(sys.modules, {"torch": torch, "torchaudio": torchaudio,
                                       "torchaudio.functional": functional}), \
-                patch.object(rb, "_model", Mock(return_value=(emission, None))):
+                patch.object(rb, "_model", Mock(return_value=(emission, None))),                 patch.object(rb, "_foreign_letters", Mock(return_value=[(None, None)])):
             got = rb._align_window(Audio(960), [word(1, text="aa")])
-            self.assertEqual(got, [(0.0, 0.06, 1.0)])
+            self.assertEqual(got, [(0.0, 0.06, 1.0, None, None)])
             emission.log_softmax.assert_called_once_with(dim=-1)
             self.assertIs(functional.forced_align.call_args.args[0], logp)
             functional.forced_align.reset_mock()
@@ -154,6 +154,42 @@ class RefineTests(unittest.TestCase):
         start, end, _ = updates[0]
         self.assertLessEqual(start, 0.5)
         self.assertGreaterEqual(end, 0.9)
+
+    def test_tail_stops_before_speech_nobody_wrote_down(self):
+        import numpy as np
+        # "Brian" (0.30-0.70) runs straight on into an "erm" (0.70-1.10)
+        # with no pause, then quiet, then "I" at 1.40. The model heard
+        # letters from 0.80 that no transcribed word accounts for.
+        x = np.full(rb._SR * 2, 1e-4, np.float32)
+        x[int(0.30 * rb._SR):int(1.10 * rb._SR)] = 0.3
+        x[int(0.74 * rb._SR):int(0.76 * rb._SR)] = 0.1
+        x[int(1.40 * rb._SR):int(1.60 * rb._SR)] = 0.3
+        env = rb.Envelope(x)
+        words = [word(1, 0.30, 1.10), word(2, 1.40, 1.60)]
+        updates, _ = rb._boundary_updates(words, [(0.32, 0.68, 0.9, None, None),
+                                                  (1.42, 1.58, 0.9, None, None)], 2.0, env)
+        self.assertAlmostEqual(updates[0][1], 1.10, delta=0.021)   # unaware: through it
+        updates, _ = rb._boundary_updates(words, [(0.32, 0.68, 0.9, 0.80, None),
+                                                  (1.42, 1.58, 0.9, None, 1.10)], 2.0, env)
+        self.assertAlmostEqual(updates[0][1], 0.75, delta=0.011)   # the dip before it
+        self.assertGreaterEqual(updates[1][0], 1.10)
+
+    def test_foreign_letters_are_ones_no_word_was_given(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch")
+        blank, sep = 0, self.vocab["|"]
+        # Frames: B R I A N . . N . E R M . . I
+        frames = "BRIAN..N.ERM..I"
+        logp = torch.full((len(frames), len(self.vocab) + 1), -20.0)
+        for t, ch in enumerate(frames):
+            logp[t, blank if ch == "." else self.vocab[ch]] = 0.0
+        spans = [types.SimpleNamespace(start=t, end=t + 1, token=self.vocab[ch])
+                 for t, ch in [(0, "B"), (1, "R"), (2, "I"), (3, "A"), (4, "N"), (14, "I")]]
+        got = rb._foreign_letters(logp, spans, [(0, 5), (5, 6)])
+        # The second N is Brian's own letter fired again; E is the erm.
+        self.assertEqual(got, [(9, None), (None, 12)])
 
     def test_load_model_uses_evaluation_mode(self):
         model = Mock()
@@ -208,6 +244,21 @@ class DatabaseRefineTests(unittest.TestCase):
                         patch("app.database.resolve_path", lambda _path: "test.mp4")):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_disputed_clips_are_left_out_of_the_alignment(self):
+        # Asked to find a word that is not there, the aligner takes it from
+        # its neighbours' sound: a word the second opinion did not hear stays
+        # where it is and out of the transcript.
+        with contextlib.closing(sqlite3.connect(self.db)) as conn, conn:
+            conn.execute("CREATE TABLE boundary_reports (clip_id INTEGER, kind TEXT, count INTEGER, "
+                         "PRIMARY KEY (clip_id, kind))")
+            conn.execute("INSERT INTO boundary_reports VALUES (3, 'disputed', 3)")
+        with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)),                 patch.object(rb, "_load_wav", return_value=Audio(rb._SR)),                 patch.object(rb, "_envelope", return_value=None),                 patch.object(rb, "_align_window", return_value=[(0.15, 0.3), (0.5, 0.65)]) as align:
+            rb.refine_source(1, apply=True)
+        self.assertEqual([w["word"] for w in align.call_args.args[1]], ["cat", "dog"])
+        with contextlib.closing(sqlite3.connect(self.db)) as conn:
+            self.assertEqual(conn.execute("SELECT start_time, end_time FROM word_clips WHERE id=3").fetchone(),
+                             (0.7, 1.0))
 
     def test_apply_preserves_edits_and_updates_phone_origin(self):
         with patch.object(rb.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)), \

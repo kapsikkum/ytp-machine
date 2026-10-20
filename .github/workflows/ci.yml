@@ -72,12 +72,14 @@ jobs:
       - name: Corpus ingestion and alignment
         # Model-free regression fixtures: malformed transcripts, resumed
         # channel budgets, CTC targets/boundaries, and alignment checkpoints.
-        # numpy for the boundary placement, which reads a loudness envelope.
+        # numpy for the boundary placement, which reads a loudness envelope;
+        # num2words because the second opinion hears "8th" as "eighth".
         run: |
-          pip install numpy
+          pip install numpy num2words
           python tests/test_ingest_pipeline.py
           python tests/test_ingest_channel.py
           python tests/test_refine_boundaries.py
+          python tests/test_second_opinion.py
           python tests/test_align_pipeline.py
           python tests/test_alignment_cache.py
           python tests/test_numeric_alignment.py

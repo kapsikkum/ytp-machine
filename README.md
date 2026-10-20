@@ -323,7 +323,26 @@ videos. Forced alignment adjusts timings; misheard words still need a better
 transcription or a corrected transcript. Empty transcriptions and invalid word
 durations are rejected, and refinement preserves hand-edited clip boundaries.
 
-**2. Sharpen the timings.** Whisper's word boundaries run early and wander by
+**2. Check the words.** Whisper now and then garbles a stretch without saying
+so — "only thing that happened, I got a rotten headache" came out as "hes all
+down hes all" — and every later stage believes it. A second transcription with
+Qwen3-ASR catches that:
+
+```bash
+pip install qwen-asr                                    # pins its own transformers: a venv of its own is easiest
+python scripts/second_opinion.py --all                  # dry run: every change it would make
+python scripts/second_opinion.py --all --apply          # before refine_boundaries
+```
+
+Where the two agree nothing changes. A word swapped one for one is relabelled
+where it stands; a stretch heard as a different number of words is replaced by
+Qwen's words, which the refinement then places; words only Qwen heard are
+added; words only Whisper heard are kept but marked "disputed" (rarely picked,
+and left out of the refinement's alignment). Spelling variants ("play time" /
+"playtime", -ise / -ize) and anything next to a hand-edited clip are left
+alone. `build_corpus.py` runs it when qwen-asr is installed.
+
+**3. Sharpen the timings.** Whisper's word boundaries run early and wander by
 100–350 ms, so short clips grab the tail of the previous word:
 
 ```bash
@@ -341,7 +360,10 @@ mostly noises transcribed as words ("chk chk chk", a breath as "a") -- are
 marked with an "unheard" boundary report rather than removed, since some are
 real words said too quickly to score: a marked take is rarely picked, still
 there when a word has no other, and listed for review in the editor. Hand-
-edited clips are never moved or marked. A dry run prints what it would mark.
+edited clips are never moved or marked. Nor does a cut run on into speech no
+word accounts for — an unwritten "erm" straight after "Brian" — where the
+aligner's model hears letters there: it stops at the dip before it. A dry run
+prints what it would mark.
 It needs `--all` or a `--source-id` to pick targets and `--apply` to write.
 
 ```bash
@@ -364,7 +386,7 @@ run. Replacement removes stale dependent alignments and votes. Pinned splice
 recipes are remapped when a new clip unambiguously contains the same cut;
 otherwise their clip pin is released while retaining the sound preference.
 
-**3. Fix misheard labels** (optional, needs a real transcript). Relabels only
+**4. Fix misheard labels** (optional, needs a real transcript). Relabels only
 high-confidence phonetically-close swaps, never timestamps. Put the true text
 in the active corpus's `transcripts/<video_id>.txt` (`--transcripts-dir` overrides
 the directory). Relabeling clears the affected character and phoneme alignment
@@ -375,7 +397,7 @@ python scripts/correct.py --all            # dry run
 python scripts/correct.py --all --apply
 ```
 
-**4. Catch non-verbal noises** — clicks, pops, spews — which Whisper skips:
+**5. Catch non-verbal noises** — clicks, pops, spews — which Whisper skips:
 
 ```bash
 python scripts/find_noises.py              # dry run
@@ -386,7 +408,7 @@ Not generic: it carries a hardcoded list of two Michael Rosen videos, because
 scanning everything turned up mostly breaths. For another speaker edit
 `CURATED` at the top of `main()`, or skip the step.
 
-**5. Pack.**
+**6. Pack.**
 
 ```bash
 python scripts/corpus.py pack --corpus <name>
@@ -1016,6 +1038,7 @@ scripts/build_corpus.py       channel link -> packed corpus, one command
 scripts/ingest.py             download, transcribe, store word clips
 scripts/ingest_channel.py     the same, for a whole channel
 scripts/realign.py            better word timestamps via stable-ts
+scripts/second_opinion.py     checks Whisper's words against Qwen3-ASR; fixes or marks disagreements
 scripts/refine_boundaries.py  word boundaries from CTC alignment and the audio; marks noise-words
 scripts/measure_tone.py       each take's tone (pitch, loudness, pace...), grouped into categories
 scripts/correct.py            relabel misheard words from a real transcript
