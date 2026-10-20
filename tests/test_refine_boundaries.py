@@ -180,7 +180,8 @@ class RefineTests(unittest.TestCase):
         except ImportError:
             self.skipTest("torch")
         blank, sep = 0, self.vocab["|"]
-        # Frames: B R I A N . . N . E R M . . I
+        # Frames: B R I A N . . N . E R M . . I  (the erm ends the frame
+        # before the I, and it is two letters, as it must be before a word)
         frames = "BRIAN..N.ERM..I"
         logp = torch.full((len(frames), len(self.vocab) + 1), -20.0)
         for t, ch in enumerate(frames):

@@ -320,11 +320,20 @@ def _split_at_pauses(cores, segment, logp, spans, ranges, ratio):
         def heard(p, mine=True):
             lo, hi = int(p[0] / ratio), min(int(p[1] / ratio) + 1, len(ids))
             return sum(1 for t in range(lo, hi)
-                       if sure[t] and ids[t] not in (0, _DICT["|"]) and (ids[t] in own) == mine
+                       if sure[t] and ids[t] not in (0, _DICT["|"], _DICT.get("'")) and (ids[t] in own) == mine
                        and (t == 0 or ids[t - 1] != ids[t]))
 
+        def complete(p, first, last):
+            lo, hi = int(p[0] / ratio), min(int(p[1] / ratio) + 1, len(ids))
+            got = {ids[t] for t in range(lo, hi) if sure[t]}
+            return first in got and last in got
+
         k = max(range(len(pieces)), key=lambda j: (heard(pieces[j]) - heard(pieces[j], False), -j))
-        if heard(pieces[k]) < 2 or not any(heard(p, False) for j, p in enumerate(pieces) if j != k):
+        # Only a whole word is kept on its own: its first and last letters
+        # both heard on that side. A misheard letter beside a "b" or "th"
+        # closure would otherwise cut "hamburger" down to "burger".
+        if (rng[1] - rng[0] < 2 or not complete(pieces[k], spans[rng[0]].token, spans[rng[1] - 1].token)
+                or not any(heard(p, False) for j, p in enumerate(pieces) if j != k)):
             out.append(core)
             continue
         a, b = pieces[k]
@@ -362,7 +371,9 @@ def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None, 
         logp = logp[0]
     best = logp.max(dim=-1)
     sep = _DICT["|"]
-    letter = ((best.indices != 0) & (best.indices != sep)
+    # The apostrophe is no sound, and clips are stored without one.
+    quote = _DICT.get("'", -1)
+    letter = ((best.indices != 0) & (best.indices != sep) & (best.indices != quote)
               & (best.values > math.log(_FOREIGN_PROB))).cpu().tolist()
     ids = best.indices.cpu().tolist()
     # (first frame, end frame, first letter, last letter) of each placed word
@@ -406,7 +417,10 @@ def _foreign_letters(logp, spans, ranges) -> list[tuple[int | None, int | None, 
             continue
         after = spikes(w[1], nxt[0] if nxt else len(letter), {w[3]} | ({nxt[2]} if nxt else set()))
         before = spikes(prv[1] if prv else 0, w[0], {w[2]} | ({prv[3]} if prv else set()))
-        out.append((after[0] if after else None, before[-1] + 1 if before else None, None))
+        # A word's onset is often heard as a letter it is not spelled with --
+        # "once" as WANCE -- so before a word it takes two to be another sound.
+        out.append((after[0] if after else None,
+                    before[-1] + 1 if len(before) >= 2 else None, None))
     return out
 
 
